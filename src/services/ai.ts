@@ -7,7 +7,9 @@ export const AIService = {
     targetDate: string,
     activities: Activity[],
     provider: 'openai' | 'anthropic' | 'gemini',
-    apiKey: string
+    apiKey: string,
+    personality: string = 'Encouraging Supporter',
+    injuries: any[] = []
   ): Promise<Partial<Goal>> => {
 
     if (!apiKey) {
@@ -15,10 +17,15 @@ export const AIService = {
     }
 
     const recentDistance = activities.slice(0, 14).reduce((sum, act) => sum + (act.distance / 1000), 0);
+    const hasInjury = injuries.length > 0;
+    const injuryContext = hasInjury ? `The user recently reported an injury: ${injuries[0].type}. Adjust the plan to prioritize recovery and low-impact cross-training.` : '';
 
     const prompt = `
-      Act as an elite running coach. I have a user aiming for a goal: "${goalTitle}" by the date ${targetDate}.
+      Act as an elite running coach with a "${personality}" persona.
+      I have a user aiming for a goal: "${goalTitle}" by the date ${targetDate}.
       Over the last 14 days, they have run ${recentDistance.toFixed(2)} km.
+      ${injuryContext}
+      Write the "Phase Description" and "Workout Description" using your persona's tone.
       Generate a training plan structured exactly in this JSON format without any markdown wrappers or additional text:
       {
         "phase": "Phase Name\\nPhase Description",

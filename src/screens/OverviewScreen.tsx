@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet, ScrollView, SafeAreaView } from 'react-native';
+import { View, StyleSheet, ScrollView, SafeAreaView, RefreshControl } from 'react-native';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
@@ -7,10 +7,20 @@ import { HeatmapCalendar } from '../components/HeatmapCalendar';
 import { useStore } from '../store/useStore';
 import { CheckCircle2, Flame, PersonStanding } from 'lucide-react-native';
 
-import { useMemo } from 'react';
+import { useMemo, useState, useCallback } from 'react';
+import * as Haptics from 'expo-haptics';
 
 export default function OverviewScreen() {
   const { userStats, goals, activities } = useStore();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setRefreshing(true);
+    setTimeout(() => {
+      setRefreshing(false);
+    }, 1500);
+  }, []);
 
   const heatmapData = useMemo(() => {
     // Map activities to heatmap levels based on distance
@@ -27,7 +37,18 @@ export default function OverviewScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.primary}
+            colors={[theme.colors.primary]}
+          />
+        }
+      >
 
         {/* Top Header Section */}
         <View style={styles.header}>
@@ -101,7 +122,9 @@ export default function OverviewScreen() {
           <Card style={[styles.gridCard, {flex: 1, marginRight: 8}]}>
             <Typography variant="label">Longest</Typography>
             <View style={{flexDirection: 'row', alignItems: 'baseline'}}>
-              <Typography variant="h2" color={theme.colors.success} style={styles.gridStat}>21.3</Typography>
+              <Typography variant="h2" color={theme.colors.success} style={styles.gridStat}>
+                {activities.length ? Math.max(...activities.map(a => a.distance / 1000)).toFixed(1) : 0}
+              </Typography>
               <Typography variant="body" color={theme.colors.textSecondary} style={{marginLeft: 4}}>km</Typography>
             </View>
           </Card>

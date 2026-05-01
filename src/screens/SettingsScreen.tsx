@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet, ScrollView, SafeAreaView, TextInput, TouchableOpacity, Alert } from 'react-native';
+import { View, StyleSheet, ScrollView, SafeAreaView, TextInput, TouchableOpacity, Alert, Switch } from 'react-native';
 import { theme } from '../theme';
 import { Typography } from '../components/Typography';
 import { useStore } from '../store/useStore';
@@ -8,7 +8,7 @@ import * as AuthSession from 'expo-auth-session';
 import { StravaService } from '../services/strava';
 import axios from 'axios';
 import { useEffect, useState } from 'react';
-import { documentDirectory, writeAsStringAsync } from 'expo-file-system/legacy';
+import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -156,6 +156,57 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
+          <Typography variant="h3" style={styles.sectionTitle}>Preferences</Typography>
+
+          <View style={styles.inputGroup}>
+            <Typography variant="label" style={styles.label}>Units</Typography>
+            <View style={styles.providerOptions}>
+              {['metric', 'imperial'].map((u) => (
+                <TouchableOpacity
+                  key={u}
+                  style={[styles.providerButton, settings.unit === u && styles.providerButtonActive]}
+                  onPress={() => updateSettings({ unit: u as any })}
+                >
+                  <Typography variant="caption" color={settings.unit === u ? theme.colors.background : theme.colors.text} style={{textTransform: 'capitalize'}}>
+                    {u}
+                  </Typography>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Typography variant="label" style={styles.label}>Coach Personality</Typography>
+            <View style={{flexDirection: 'column', gap: 8}}>
+              {['Strict Drill Sergeant', 'Encouraging Supporter', 'Data-Driven Analyst'].map((personality) => (
+                <TouchableOpacity
+                  key={personality}
+                  style={[styles.providerButton, settings.coachPersonality === personality && styles.providerButtonActive, { paddingVertical: 12 }]}
+                  onPress={() => updateSettings({ coachPersonality: personality as any })}
+                >
+                  <Typography variant="caption" color={settings.coachPersonality === personality ? theme.colors.background : theme.colors.text}>
+                    {personality}
+                  </Typography>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={[styles.inputGroup, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+            <View>
+              <Typography variant="label" style={styles.label}>Privacy Zones</Typography>
+              <Typography variant="caption" color={theme.colors.textSecondary}>Hide start/end locations on export</Typography>
+            </View>
+            <Switch
+              value={settings.privacyZones}
+              onValueChange={(val) => updateSettings({ privacyZones: val })}
+              trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
+              thumbColor="#fff"
+            />
+          </View>
+        </View>
+
+        <View style={styles.section}>
           <Typography variant="h3" style={styles.sectionTitle}>Data Management</Typography>
           <Typography variant="caption" style={{marginBottom: 16}}>Export your activity data to a JSON file.</Typography>
           <TouchableOpacity
@@ -163,12 +214,12 @@ export default function SettingsScreen() {
             onPress={async () => {
               try {
                 const activities = useStore.getState().activities;
-                const fileUri = documentDirectory ? `${documentDirectory}activities.json` : '';
-                if (!fileUri) throw new Error('No document directory');
-                await writeAsStringAsync(fileUri, JSON.stringify(activities, null, 2));
+                if (!Paths.document) throw new Error('No document directory');
+                const file = new File(Paths.document, 'activities.json');
+                await file.write(JSON.stringify(activities, null, 2));
 
                 if (await Sharing.isAvailableAsync()) {
-                  await Sharing.shareAsync(fileUri);
+                  await Sharing.shareAsync(file.uri);
                 } else {
                   Alert.alert('Error', 'Sharing is not available on this device');
                 }

@@ -33,12 +33,18 @@ export default function GoalsScreen() {
       const targetDateObj = new Date(newGoalDate);
       const daysRemaining = differenceInDays(targetDateObj, new Date());
 
+      // The store handles the injuries array which we will add next
+      const storeState = useStore.getState();
+      const injuries = (storeState as any).injuries || [];
+
       const generatedPlan = await AIService.generateTrainingPlan(
         newGoalTitle,
         newGoalDate,
         activities,
         settings.llmProvider,
-        settings.llmApiKey
+        settings.llmApiKey,
+        settings.coachPersonality,
+        injuries
       );
 
       const finalGoal: Goal = {
@@ -140,8 +146,18 @@ export default function GoalsScreen() {
                 <Typography variant="label" style={{marginLeft: 8}}>KEY WORKOUT THIS PHASE</Typography>
               </View>
               <Typography variant="body" style={{marginBottom: 4}}>{goal.keyWorkout.split('\n')[0]}</Typography>
-              <Typography variant="caption">{goal.keyWorkout.split('\n')[1]}</Typography>
+              <Typography variant="caption">{goal.keyWorkout.substring(goal.keyWorkout.indexOf('\n') + 1)}</Typography>
             </View>
+
+            {goal.title.toLowerCase().includes('hyrox') && (
+               <View style={[styles.workoutBox, { borderLeftColor: theme.colors.error, marginTop: 8 }]}>
+                 <Typography variant="label" style={{marginBottom: 8}} color={theme.colors.error}>HYROX STATION GUIDE</Typography>
+                 <Typography variant="caption" style={{marginBottom: 4}}>1. Ski Erg - Pace yourself, use legs.</Typography>
+                 <Typography variant="caption" style={{marginBottom: 4}}>2. Sled Push - Low body position.</Typography>
+                 <Typography variant="caption" style={{marginBottom: 4}}>3. Sled Pull - Short quick steps.</Typography>
+                 <Typography variant="caption">4. Burpee Broad Jumps - Maintain rhythm.</Typography>
+               </View>
+            )}
 
           </Card>
         ))}

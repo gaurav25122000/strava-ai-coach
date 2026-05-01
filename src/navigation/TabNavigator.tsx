@@ -1,11 +1,12 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Home, BarChart2, Target, Settings, User } from 'lucide-react-native';
+import { Home, BarChart2, Target, Settings, User, ActivitySquare } from 'lucide-react-native';
 import OverviewScreen from '../screens/OverviewScreen';
 import InsightsScreen from '../screens/InsightsScreen';
 import GoalsScreen from '../screens/GoalsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+import GearHealthScreen from '../screens/GearHealthScreen';
 import { theme } from '../theme';
 import { Platform } from 'react-native';
 
@@ -46,6 +47,13 @@ export default function TabNavigator() {
         component={GoalsScreen}
         options={{
           tabBarIcon: ({ color, size }) => <Target color={color} size={size} />,
+        }}
+      />
+      <Tab.Screen
+        name="Health"
+        component={GearHealthScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => <ActivitySquare color={color} size={size} />,
         }}
       />
       <Tab.Screen

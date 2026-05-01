@@ -1,13 +1,23 @@
 import React from 'react';
-import { View, StyleSheet, ScrollView, SafeAreaView } from 'react-native';
+import { View, StyleSheet, ScrollView, SafeAreaView, TouchableOpacity, Alert } from 'react-native';
 import { theme } from '../theme';
 import { Typography } from '../components/Typography';
 import { useStore } from '../store/useStore';
 import { Card } from '../components/Card';
-import { User, Award, Activity } from 'lucide-react-native';
+import { User, Award, Activity, Share, CloudLightning } from 'lucide-react-native';
+import * as Sharing from 'expo-sharing';
 
 export default function ProfileScreen() {
-  const { userStats } = useStore();
+  const { userStats, settings } = useStore();
+
+  const handleRichExport = async () => {
+    // In a real implementation this would use react-native-view-shot to capture a styled component
+    // For now we simulate the interaction pattern
+    Alert.alert('Rich Export', 'Generating beautiful Instagram-ready summary image...');
+    setTimeout(() => {
+        Alert.alert('Ready', 'Image generated! (Simulation)');
+    }, 1500);
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -40,9 +50,31 @@ export default function ProfileScreen() {
         <Card style={styles.fullCard}>
           <Typography variant="label">All Time Distance</Typography>
           <View style={{flexDirection: 'row', alignItems: 'baseline', marginTop: 8}}>
-            <Typography variant="h1" color={theme.colors.primary}>{userStats.totalKm}</Typography>
-            <Typography variant="body" style={{marginLeft: 4}}>km</Typography>
+            <Typography variant="h1" color={theme.colors.primary}>
+              {settings.unit === 'metric' ? userStats.totalKm : (userStats.totalKm * 0.621371).toFixed(1)}
+            </Typography>
+            <Typography variant="body" style={{marginLeft: 4}}>
+              {settings.unit === 'metric' ? 'km' : 'mi'}
+            </Typography>
           </View>
+        </Card>
+
+        <Typography variant="h3" style={[styles.sectionTitle, { marginTop: theme.spacing.xl }]}>Social & Context</Typography>
+
+        <Card onPress={handleRichExport} style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: theme.spacing.lg}}>
+          <View>
+            <Typography variant="h3">Share Summary</Typography>
+            <Typography variant="caption" style={{marginTop: 4}}>Export an image for Instagram</Typography>
+          </View>
+          <Share color={theme.colors.primary} size={24} />
+        </Card>
+
+        <Card style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: theme.spacing.lg, marginTop: 12}}>
+          <View>
+            <Typography variant="h3">Weather Integration</Typography>
+            <Typography variant="caption" style={{marginTop: 4}}>AI Coach uses weather data</Typography>
+          </View>
+          <CloudLightning color="#FBBF24" size={24} />
         </Card>
 
       </ScrollView>

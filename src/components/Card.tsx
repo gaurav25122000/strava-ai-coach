@@ -1,18 +1,63 @@
 import React from 'react';
-import { View, StyleSheet, ViewProps } from 'react-native';
+import { StyleSheet, ViewProps, TouchableOpacity } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import { theme } from '../theme';
 
 interface CardProps extends ViewProps {
   children: React.ReactNode;
   style?: any;
+  onPress?: () => void;
 }
 
-export const Card = ({ children, style, ...props }: CardProps) => {
-  return (
-    <View style={[styles.card, style]} {...props}>
+export const Card = ({ children, style, onPress, ...props }: CardProps) => {
+  const scale = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: scale.value }],
+    };
+  });
+
+  const handlePressIn = () => {
+    if (onPress) {
+      scale.value = withSpring(0.97, { damping: 10, stiffness: 400 });
+    }
+  };
+
+  const handlePressOut = () => {
+    if (onPress) {
+      scale.value = withSpring(1, { damping: 10, stiffness: 400 });
+    }
+  };
+
+  const handlePress = () => {
+    if (onPress) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      onPress();
+    }
+  };
+
+  const CardContent = (
+    <Animated.View style={[styles.card, style, animatedStyle]} {...props}>
       {children}
-    </View>
+    </Animated.View>
   );
+
+  if (onPress) {
+    return (
+      <TouchableOpacity
+        activeOpacity={1}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        onPress={handlePress}
+      >
+        {CardContent}
+      </TouchableOpacity>
+    );
+  }
+
+  return CardContent;
 };
 
 const styles = StyleSheet.create({
