@@ -1,0 +1,29 @@
+Running 17 checks on your project...
+14/17 checks passed. 3 checks failed. Possible issues detected:
+Use the --verbose flag to see more details about passed checks.
+
+✖ Check dependencies for packages that should not be installed directly
+The package  "@types/react-native" should not be installed directly in your project, as types are included with the "react-native" package.
+Advice:
+Remove these packages from your package.json.
+
+✖ Check that required peer dependencies are installed
+Missing peer dependency: react-native-worklets
+Required by: react-native-reanimated
+Advice:
+Install missing required peer dependency with "npx expo install react-native-worklets"
+Your app may crash outside of Expo Go without this dependency. Native module peer dependencies must be installed directly.
+
+✖ Check that no duplicate dependencies are installed
+Your project contains duplicate native module dependencies, which should be de-duplicated.
+Native builds may only contain one version of any given native module, and having multiple versions of a single Native module installed may lead to unexpected build errors.
+Found duplicates for expo-constants:
+  ├─ expo-constants@18.0.13 (at: node_modules/expo/node_modules/expo-constants)
+  ├─ expo-constants@18.0.13 (at: node_modules/expo-auth-session/node_modules/expo-constants)
+  └─ expo-constants@18.0.13 (at: node_modules/expo-linking/node_modules/expo-constants)
+Advice:
+Your node_modules folder may be corrupted. Multiple copies of the same version exist for: expo-constants.
+- Try deleting your node_modules folders and reinstall your dependencies after.
+- If this error persists, delete your node_modules as well as your lockfile and reinstall.
+Resolve your dependency issues and deduplicate your dependencies. Learn more: https://expo.fyi/resolving-dependency-issues
+
