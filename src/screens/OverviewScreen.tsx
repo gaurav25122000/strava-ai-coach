@@ -1,11 +1,12 @@
 import React from 'react';
-import { View, StyleSheet, ScrollView, SafeAreaView, RefreshControl } from 'react-native';
+import { View, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
 import { HeatmapCalendar } from '../components/HeatmapCalendar';
 import { useStore } from '../store/useStore';
-import { CheckCircle2, Flame, PersonStanding } from 'lucide-react-native';
+import { CheckCircle2, Flame, PersonStanding, Activity, TrendingUp, Calendar, Zap } from 'lucide-react-native';
 
 import { useMemo, useState, useCallback } from 'react';
 import * as Haptics from 'expo-haptics';
@@ -36,7 +37,7 @@ export default function OverviewScreen() {
   }, [activities]);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
@@ -103,14 +104,21 @@ export default function OverviewScreen() {
           </Card>
         ))}
 
-        {/* Bottom Stats Grid */}
+        {/* Recent Trend Panel */}
+        <Typography variant="h3" style={{marginBottom: theme.spacing.md, marginTop: theme.spacing.sm}}>Recent Trend</Typography>
         <View style={styles.statsGrid}>
           <Card style={[styles.gridCard, {flex: 1, marginRight: 8}]}>
-            <Typography variant="label">Total Runs</Typography>
+            <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+              <TrendingUp size={16} color="#3B82F6" />
+              <Typography variant="label" style={{marginLeft: 4}}>Total Runs</Typography>
+            </View>
             <Typography variant="h2" color="#3B82F6" style={styles.gridStat}>{userStats.totalRuns}</Typography>
           </Card>
           <Card style={[styles.gridCard, {flex: 1, marginLeft: 8}]}>
-            <Typography variant="label">Total KM</Typography>
+            <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+              <Activity size={16} color={theme.colors.primary} />
+              <Typography variant="label" style={{marginLeft: 4}}>Total KM</Typography>
+            </View>
             <View style={{flexDirection: 'row', alignItems: 'baseline'}}>
               <Typography variant="h2" color={theme.colors.primary} style={styles.gridStat}>{userStats.totalKm}</Typography>
               <Typography variant="body" color={theme.colors.textSecondary} style={{marginLeft: 4}}>km</Typography>
@@ -118,28 +126,56 @@ export default function OverviewScreen() {
           </Card>
         </View>
 
-        <View style={styles.statsGrid}>
-          <Card style={[styles.gridCard, {flex: 1, marginRight: 8}]}>
-            <Typography variant="label">Longest</Typography>
-            <View style={{flexDirection: 'row', alignItems: 'baseline'}}>
-              <Typography variant="h2" color={theme.colors.success} style={styles.gridStat}>
-                {activities.length ? Math.max(...activities.map(a => a.distance / 1000)).toFixed(1) : 0}
-              </Typography>
-              <Typography variant="body" color={theme.colors.textSecondary} style={{marginLeft: 4}}>km</Typography>
-            </View>
-          </Card>
-          <Card style={[styles.gridCard, {flex: 1, marginLeft: 8}]}>
-            <Typography variant="label">Best Pace</Typography>
-            <Typography variant="h2" color={theme.colors.accent} style={styles.gridStat}>{userStats.bestPace}</Typography>
-          </Card>
-        </View>
-
+        {/* Weekly Summary Panel */}
+        <Typography variant="h3" style={{marginBottom: theme.spacing.md, marginTop: theme.spacing.sm}}>Weekly Summary</Typography>
         <Card style={styles.gridCard}>
-          <Typography variant="label">Top Elev</Typography>
-          <View style={{flexDirection: 'row', alignItems: 'baseline'}}>
-             <Typography variant="h2" color="#FBBF24" style={styles.gridStat}>{userStats.topElev}</Typography>
-             <Typography variant="body" color={theme.colors.textSecondary} style={{marginLeft: 4}}>m</Typography>
-          </View>
+           <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 12}}>
+             <Calendar size={18} color={theme.colors.success} />
+             <Typography variant="label" style={{marginLeft: 8}}>This Week's Activity</Typography>
+           </View>
+           <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12}}>
+             <View>
+               <Typography variant="caption" color={theme.colors.textSecondary}>Distance</Typography>
+               <View style={{flexDirection: 'row', alignItems: 'baseline'}}>
+                 <Typography variant="h2" color={theme.colors.success}>
+                   {activities.slice(0, 7).reduce((sum, act) => sum + act.distance / 1000, 0).toFixed(1)}
+                 </Typography>
+                 <Typography variant="body" color={theme.colors.textSecondary} style={{marginLeft: 4}}>km</Typography>
+               </View>
+             </View>
+             <View>
+               <Typography variant="caption" color={theme.colors.textSecondary}>Time</Typography>
+               <View style={{flexDirection: 'row', alignItems: 'baseline'}}>
+                 <Typography variant="h2" color={theme.colors.accent}>
+                   {Math.floor(activities.slice(0, 7).reduce((sum, act) => sum + act.movingTime, 0) / 3600)}
+                 </Typography>
+                 <Typography variant="body" color={theme.colors.textSecondary} style={{marginLeft: 4}}>hr</Typography>
+               </View>
+             </View>
+           </View>
+           <View style={{height: 1, backgroundColor: theme.colors.border, marginBottom: 12}} />
+           <View style={{flexDirection: 'row', justifyContent: 'space-between'}}>
+             <View style={{flex: 1, alignItems: 'center'}}>
+               <Typography variant="caption" color={theme.colors.textSecondary}>Longest Run</Typography>
+               <Typography variant="h3" color={theme.colors.text} style={{marginTop: 4}}>
+                 {activities.length ? Math.max(...activities.map(a => a.distance / 1000)).toFixed(1) : 0} km
+               </Typography>
+             </View>
+             <View style={{width: 1, backgroundColor: theme.colors.border}} />
+             <View style={{flex: 1, alignItems: 'center'}}>
+               <Typography variant="caption" color={theme.colors.textSecondary}>Best Pace</Typography>
+               <Typography variant="h3" color={theme.colors.text} style={{marginTop: 4}}>
+                 {userStats.bestPace}
+               </Typography>
+             </View>
+             <View style={{width: 1, backgroundColor: theme.colors.border}} />
+             <View style={{flex: 1, alignItems: 'center'}}>
+               <Typography variant="caption" color={theme.colors.textSecondary}>Top Elev</Typography>
+               <Typography variant="h3" color={theme.colors.text} style={{marginTop: 4}}>
+                 {userStats.topElev}m
+               </Typography>
+             </View>
+           </View>
         </Card>
 
       </ScrollView>

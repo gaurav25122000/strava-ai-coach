@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, ScrollView, SafeAreaView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Alert } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
@@ -36,6 +37,7 @@ export default function GoalsScreen() {
       // The store handles the injuries array which we will add next
       const storeState = useStore.getState();
       const injuries = (storeState as any).injuries || [];
+      const userProfile = (storeState as any).userProfile;
 
       const generatedPlan = await AIService.generateTrainingPlan(
         newGoalTitle,
@@ -44,7 +46,8 @@ export default function GoalsScreen() {
         settings.llmProvider,
         settings.llmApiKey,
         settings.coachPersonality,
-        injuries
+        injuries,
+        userProfile
       );
 
       const finalGoal: Goal = {
@@ -73,7 +76,7 @@ export default function GoalsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
 
         <View style={styles.header}>

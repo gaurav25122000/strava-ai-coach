@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, StyleSheet, ScrollView, SafeAreaView, TouchableOpacity, Alert } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, TextInput } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../theme';
 import { Typography } from '../components/Typography';
 import { useStore } from '../store/useStore';
@@ -8,7 +9,7 @@ import { User, Award, Activity, Share, CloudLightning } from 'lucide-react-nativ
 import * as Sharing from 'expo-sharing';
 
 export default function ProfileScreen() {
-  const { userStats, settings } = useStore();
+  const { userStats, settings, userProfile, setUserProfile } = useStore();
 
   const handleRichExport = async () => {
     // In a real implementation this would use react-native-view-shot to capture a styled component
@@ -20,7 +21,7 @@ export default function ProfileScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
 
         <View style={styles.header}>
@@ -56,6 +57,52 @@ export default function ProfileScreen() {
             <Typography variant="body" style={{marginLeft: 4}}>
               {settings.unit === 'metric' ? 'km' : 'mi'}
             </Typography>
+          </View>
+        </Card>
+
+
+        <Typography variant="h3" style={[styles.sectionTitle, { marginTop: theme.spacing.xl }]}>About Me</Typography>
+        <Card style={styles.fullCard}>
+          <View style={styles.inputGroup}>
+            <Typography variant="label" style={styles.label}>Date of Birth</Typography>
+            <TextInput
+              style={styles.input}
+              value={userProfile?.dob}
+              onChangeText={(text) => setUserProfile({ dob: text })}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={theme.colors.textSecondary}
+            />
+          </View>
+          <View style={styles.inputGroup}>
+            <Typography variant="label" style={styles.label}>Height</Typography>
+            <TextInput
+              style={styles.input}
+              value={userProfile?.height}
+              onChangeText={(text) => setUserProfile({ height: text })}
+              placeholder="e.g. 180cm"
+              placeholderTextColor={theme.colors.textSecondary}
+            />
+          </View>
+          <View style={styles.inputGroup}>
+            <Typography variant="label" style={styles.label}>Weight</Typography>
+            <TextInput
+              style={styles.input}
+              value={userProfile?.weight}
+              onChangeText={(text) => setUserProfile({ weight: text })}
+              placeholder="e.g. 75kg"
+              placeholderTextColor={theme.colors.textSecondary}
+            />
+          </View>
+          <View style={styles.inputGroup}>
+            <Typography variant="label" style={styles.label}>Habits & Notes</Typography>
+            <TextInput
+              style={[styles.input, { height: 80, textAlignVertical: 'top' }]}
+              value={userProfile?.habits}
+              onChangeText={(text) => setUserProfile({ habits: text })}
+              placeholder="e.g. Vegetarian, smokes occasionally, sleeps 6 hours"
+              placeholderTextColor={theme.colors.textSecondary}
+              multiline
+            />
           </View>
         </Card>
 
@@ -127,5 +174,19 @@ const styles = StyleSheet.create({
   },
   icon: {
     marginBottom: theme.spacing.sm,
-  }
+  },
+  inputGroup: {
+    marginBottom: theme.spacing.md,
+  },
+  label: {
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: theme.colors.background,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.sm,
+    padding: theme.spacing.sm,
+    color: theme.colors.text,
+  },
 });

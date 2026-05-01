@@ -33,6 +33,13 @@ export const secureSettingsStorage = {
   }
 };
 
+
+export interface UserProfile {
+  dob: string;
+  height: string;
+  weight: string;
+  habits: string;
+}
 export interface Activity {
   id: string;
   type: 'Run' | 'Ride' | 'Workout';
@@ -110,6 +117,8 @@ interface AppState {
   settings: Settings;
   shoes: Shoe[];
   injuries: Injury[];
+  userProfile: UserProfile;
+  setUserProfile: (profile: Partial<UserProfile>) => void;
   setActivities: (activities: Activity[]) => void;
   setGoals: (goals: Goal[]) => void;
   setUserStats: (stats: UserStats) => void;
@@ -154,8 +163,57 @@ export const useStore = create<AppState>()(
            }
         });
 
-        const sorted = [...activities].sort((a,b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+                const sorted = [...activities].sort((a,b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
         const lastRunDate = sorted.length > 0 ? sorted[0].startDate.split('T')[0] : '';
+
+        // Calculate streaks
+        let currentStreak = 0;
+        let bestStreak = 0;
+
+        if (sorted.length > 0) {
+            // Get unique dates
+            const uniqueDatesStr = [...new Set(sorted.map(a => a.startDate.split('T')[0]))];
+            const uniqueDates = uniqueDatesStr.map(d => new Date(d));
+            uniqueDates.sort((a, b) => b.getTime() - a.getTime());
+
+            // Calculate best streak
+            let tempStreak = 1;
+            bestStreak = 1;
+            for (let i = 0; i < uniqueDates.length - 1; i++) {
+                const diffTime = Math.abs(uniqueDates[i].getTime() - uniqueDates[i+1].getTime());
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                if (diffDays === 1) {
+                    tempStreak++;
+                    if (tempStreak > bestStreak) bestStreak = tempStreak;
+                } else {
+                    tempStreak = 1;
+                }
+            }
+
+            // Calculate current streak
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+
+            if (uniqueDates.length > 0) {
+                 const firstDate = new Date(uniqueDates[0]);
+                 firstDate.setHours(0, 0, 0, 0);
+
+                 if (firstDate.getTime() === today.getTime() || firstDate.getTime() === yesterday.getTime()) {
+                     currentStreak = 1;
+                     for (let i = 0; i < uniqueDates.length - 1; i++) {
+                         const diffTime = Math.abs(uniqueDates[i].getTime() - uniqueDates[i+1].getTime());
+                         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                         if (diffDays === 1) {
+                             currentStreak++;
+                         } else {
+                             break;
+                         }
+                     }
+                 }
+            }
+        }
 
         return {
           activities,
@@ -165,6 +223,8 @@ export const useStore = create<AppState>()(
              totalKm: Math.round(totalKm),
              topElev: Math.round(topElev),
              lastRunDate,
+             currentStreak,
+             bestStreak,
              bestPace: bestPace === 999 ? '0:00' : bestPace.toFixed(2).replace('.', ':')
           }
         };
@@ -177,6 +237,16 @@ export const useStore = create<AppState>()(
       })),
       deleteGoal: (id) => set((state) => ({
         goals: state.goals.filter(g => g.id !== id)
+      })),
+
+      userProfile: {
+        dob: '',
+        height: '',
+        weight: '',
+        habits: '',
+      },
+      setUserProfile: (profile) => set((state) => ({
+        userProfile: { ...state.userProfile, ...profile }
       })),
       shoes: [],
       injuries: [],
@@ -209,6 +279,7 @@ export const useStore = create<AppState>()(
         settings: state.settings,
         shoes: state.shoes,
         injuries: state.injuries,
+        userProfile: state.userProfile,
       }),
     }
   )
