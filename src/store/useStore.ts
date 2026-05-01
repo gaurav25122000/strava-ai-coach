@@ -46,6 +46,14 @@ export interface Activity {
   name?: string;
 }
 
+export interface Phase {
+  name: string;
+  description: string;
+  weeklyVolumeTarget: number;
+  longRunTarget: number;
+  keyWorkout: string;
+}
+
 export interface Goal {
   id: string;
   title: string;
@@ -65,12 +73,14 @@ export interface Goal {
   };
   keyWorkout: string;
   targetFinishTime?: string;
+  phases?: Phase[];
 }
 
 interface UserStats {
   currentStreak: number;
   bestStreak: number;
   totalRuns: number;
+  totalWalks: number;
   totalKm: number;
   bestPace: string;
   topElev: number;
@@ -130,10 +140,9 @@ function localDateStr(d: Date): string {
 function computeStreaks(activities: Activity[]): { currentStreak: number; bestStreak: number } {
   if (!activities.length) return { currentStreak: 0, bestStreak: 0 };
 
-  // Get unique dates that had at least one run
+  // Get unique dates that had at least one activity
   const runDates = new Set(
     activities
-      .filter(a => a.type === 'Run')
       .map(a => {
         // Parse ISO string as local date to avoid UTC offset issues
         const raw = a.startDate.split('T')[0];
@@ -190,6 +199,7 @@ interface AppState {
   shoes: Shoe[];
   injuries: Injury[];
   setActivities: (activities: Activity[]) => void;
+  setLifetimeStats: (stats: any) => void;
   setGoals: (goals: Goal[]) => void;
   setUserStats: (stats: UserStats) => void;
   addGoal: (goal: Goal) => void;
@@ -210,6 +220,7 @@ export const useStore = create<AppState>()(
         currentStreak: 0,
         bestStreak: 0,
         totalRuns: 0,
+        totalWalks: 0,
         totalKm: 0,
         bestPace: '0:00',
         topElev: 0,
@@ -232,12 +243,14 @@ export const useStore = create<AppState>()(
       },
       setActivities: (activities) => set((state) => {
         let totalRuns = 0;
+        let totalWalks = 0;
         let totalKm = 0;
         let topElev = 0;
         let bestPace = 999;
 
         activities.forEach(act => {
            if (act.type === 'Run') totalRuns++;
+           if (act.type === 'Walk') totalWalks++;
            totalKm += (act.distance / 1000);
            if (act.totalElevationGain > topElev) topElev = act.totalElevationGain;
 
@@ -257,12 +270,28 @@ export const useStore = create<AppState>()(
           userStats: {
              ...state.userStats,
              totalRuns,
+             totalWalks,
              totalKm: Math.round(totalKm),
              topElev: Math.round(topElev),
              lastRunDate,
              bestPace: bestPace === 999 ? '0:00' : bestPace.toFixed(2).replace('.', ':'),
              currentStreak,
              bestStreak,
+          }
+        };
+      }),
+      setLifetimeStats: (stats: any) => set((state) => {
+        const runDist = (stats.all_run_totals?.distance || 0) / 1000;
+        const rideDist = (stats.all_ride_totals?.distance || 0) / 1000;
+        const swimDist = (stats.all_swim_totals?.distance || 0) / 1000;
+        const totalKm = Math.round(runDist + rideDist + swimDist);
+        const runCount = stats.all_run_totals?.count || 0;
+        
+        return {
+          userStats: {
+            ...state.userStats,
+            totalRuns: runCount > state.userStats.totalRuns ? runCount : state.userStats.totalRuns,
+            totalKm: totalKm > state.userStats.totalKm ? totalKm : state.userStats.totalKm,
           }
         };
       }),

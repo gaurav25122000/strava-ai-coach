@@ -15,7 +15,7 @@ import * as Sharing from 'expo-sharing';
 WebBrowser.maybeCompleteAuthSession();
 
 export default function SettingsScreen() {
-  const { settings, updateSettings, setActivities } = useStore();
+  const { settings, updateSettings, setActivities, setLifetimeStats } = useStore();
   const [isAuthenticated, setIsAuthenticated] = useState(StravaService.isAuthenticated());
 
   useEffect(() => {
@@ -24,7 +24,8 @@ export default function SettingsScreen() {
   }, []);
 
   const redirectUri = AuthSession.makeRedirectUri({
-    scheme: 'aicoachapp'
+    scheme: 'aicoachapp',
+    path: 'localhost'
   });
 
   // Dummy config to satisfy types when clientId is missing
@@ -78,6 +79,14 @@ export default function SettingsScreen() {
     try {
       const activities = await StravaService.syncActivities();
       setActivities(activities);
+      
+      try {
+        const stats = await StravaService.fetchAthleteStats();
+        setLifetimeStats(stats);
+      } catch (statsErr) {
+        console.warn('Could not fetch lifetime stats:', statsErr);
+      }
+
       Alert.alert('Success', `Synced ${activities.length} activities from Strava!`);
     } catch (e) {
       Alert.alert('Error', 'Failed to sync activities');
@@ -94,6 +103,14 @@ export default function SettingsScreen() {
 
         <View style={styles.section}>
           <Typography variant="h3" style={styles.sectionTitle}>Strava Integration</Typography>
+          <View style={styles.infoBox}>
+            <Typography variant="caption" style={{ color: theme.colors.textSecondary, lineHeight: 20 }}>
+              1. Go to Strava Settings {'>'} API{'\n'}
+              2. Create an App{'\n'}
+              3. Set Callback Domain to "localhost"{'\n'}
+              4. Copy Client ID & Secret below
+            </Typography>
+          </View>
           <View style={styles.inputGroup}>
             <Typography variant="label" style={styles.label}>Client ID</Typography>
             <TextInput
@@ -131,6 +148,11 @@ export default function SettingsScreen() {
 
         <View style={styles.section}>
           <Typography variant="h3" style={styles.sectionTitle}>AI Assistant</Typography>
+          <View style={styles.infoBox}>
+            <Typography variant="caption" style={{ color: theme.colors.textSecondary, lineHeight: 20 }}>
+              Get an API key from OpenAI, Anthropic, or Google AI Studio. Your key is securely stored on this device.
+            </Typography>
+          </View>
           <View style={styles.inputGroup}>
             <Typography variant="label" style={styles.label}>LLM Provider</Typography>
             <View style={styles.providerOptions}>
@@ -274,6 +296,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     marginBottom: theme.spacing.md,
     color: theme.colors.primary,
+  },
+  infoBox: {
+    backgroundColor: theme.colors.background,
+    padding: theme.spacing.md,
+    borderRadius: theme.borderRadius.sm,
+    marginBottom: theme.spacing.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   inputGroup: {
     marginBottom: theme.spacing.md,

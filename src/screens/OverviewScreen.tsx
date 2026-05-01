@@ -8,6 +8,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
@@ -55,6 +56,7 @@ function getActivityIcon(type: string, color: string, size = 20) {
   switch (type) {
     case 'Run': return <Footprints color={color} size={size} />;
     case 'Ride': return <Wind color={color} size={size} />;
+    case 'Walk': return <Footprints color={color} size={size} />;
     default: return <Zap color={color} size={size} />;
   }
 }
@@ -63,6 +65,7 @@ function getActivityColor(type: string): string {
   switch (type) {
     case 'Run': return theme.colors.primary;
     case 'Ride': return '#3B82F6';
+    case 'Walk': return '#10B981';
     default: return theme.colors.accent;
   }
 }
@@ -175,7 +178,9 @@ export default function OverviewScreen() {
   // Personal bests
   const personalBests = useMemo(() => {
     const runs = activities.filter(a => a.type === 'Run');
+    const walks = activities.filter(a => a.type === 'Walk');
     const longestRun = runs.reduce((max, a) => a.distance > max ? a.distance : max, 0);
+    const longestWalk = walks.reduce((max, a) => a.distance > max ? a.distance : max, 0);
     const fastestPace = runs.reduce((best, a) => {
       if (a.averageSpeed <= 0) return best;
       const pace = 1000 / a.averageSpeed / 60;
@@ -183,8 +188,37 @@ export default function OverviewScreen() {
     }, 999);
     const mostElevation = activities.reduce((max, a) => a.totalElevationGain > max ? a.totalElevationGain : max, 0);
     const longestTime = activities.reduce((max, a) => a.movingTime > max ? a.movingTime : max, 0);
-    return { longestRun, fastestPace, mostElevation, longestTime };
+    return { longestRun, longestWalk, fastestPace, mostElevation, longestTime };
   }, [activities]);
+
+  const consistencyScore = useMemo(() => {
+    if (!activities.length) return 0;
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 86400000);
+    const daysActive = new Set(
+      activities
+        .filter(a => new Date(a.startDate) >= thirtyDaysAgo)
+        .map(a => a.startDate.split('T')[0])
+    ).size;
+    return Math.round((daysActive / 30) * 100);
+  }, [activities]);
+
+  const racePredictor = useMemo(() => {
+    if (personalBests.fastestPace === 999) return null;
+    const baseTSecs = personalBests.fastestPace * 60;
+    const predict = (distKm: number) => {
+      if (distKm <= 0) return '--';
+      return formatDuration(Math.round(baseTSecs * Math.pow(distKm, 1.06)));
+    };
+    return {
+      fiveK: predict(5),
+      tenK: predict(10),
+      half: predict(21.1),
+      full: predict(42.2)
+    };
+  }, [personalBests.fastestPace]);
+
+  const activeGoal = goals.find(g => g.status === 'active');
 
   // Monthly distance for last 4 months
   const monthlyData = useMemo(() => {
@@ -229,13 +263,16 @@ export default function OverviewScreen() {
         }
       >
         {/* ── Hero Streak Banner ── */}
-        <View style={styles.heroBanner}>
+        <Animated.View entering={FadeInDown.delay(100).springify()} layout={Layout.springify()}>
+          <View style={styles.heroBanner}>
           <View style={styles.heroLeft}>
-            <Typography style={styles.heroLabel}>CURRENT STREAK</Typography>
-            <View style={styles.heroValueRow}>
-              <Flame color={theme.colors.primary} size={32} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <Flame color={theme.colors.primary} size={16} />
+              <Typography style={[styles.heroLabel, { marginBottom: 0 }]}>CURRENT STREAK</Typography>
+            </View>
+            <View style={[styles.heroValueRow, { alignItems: 'flex-end', marginTop: 0 }]}>
               <Typography style={styles.heroNumber}>{userStats.currentStreak}</Typography>
-              <Typography style={styles.heroDays}>days</Typography>
+              <Typography style={[styles.heroDays, { marginBottom: 12 }]}>days</Typography>
             </View>
             <Typography style={styles.heroSub}>
               🏆 Best: {userStats.bestStreak} days
@@ -246,15 +283,56 @@ export default function OverviewScreen() {
               <Trophy color="#FBBF24" size={16} />
               <Typography style={styles.heroPillText}>{userStats.totalRuns} runs</Typography>
             </View>
+            {(userStats.totalWalks || 0) > 0 && (
+              <View style={[styles.heroStatPill, { marginTop: 8 }]}>
+                <Footprints color="#10B981" size={16} />
+                <Typography style={styles.heroPillText}>{userStats.totalWalks} walks</Typography>
+              </View>
+            )}
             <View style={[styles.heroStatPill, { marginTop: 8 }]}>
               <MapPin color={theme.colors.secondary} size={16} />
               <Typography style={styles.heroPillText}>{userStats.totalKm} km total</Typography>
             </View>
+            <View style={[styles.heroStatPill, { marginTop: 8 }]}>
+              <Activity color={theme.colors.accent} size={16} />
+              <Typography style={styles.heroPillText}>{consistencyScore}% consistent</Typography>
+            </View>
           </View>
         </View>
+        </Animated.View>
+
+        {/* ── Current Focus ── */}
+        {activeGoal && (
+          <Animated.View entering={FadeInDown.delay(150).springify()} layout={Layout.springify()}>
+            <Card style={[styles.card, { marginTop: 16, borderLeftWidth: 4, borderLeftColor: theme.colors.primary }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View>
+                  <Typography style={{ fontSize: 12, color: theme.colors.textSecondary, fontWeight: '700', textTransform: 'uppercase' }}>
+                    Current Focus
+                  </Typography>
+                  <Typography style={{ fontSize: 18, color: theme.colors.text, fontWeight: '800', marginTop: 4 }}>
+                    {activeGoal.title}
+                  </Typography>
+                </View>
+                <Target color={theme.colors.primary} size={24} />
+              </View>
+              {activeGoal.phases && activeGoal.phases.length > 0 && (
+                <View style={{ marginTop: 12, padding: 12, backgroundColor: theme.colors.background, borderRadius: 8 }}>
+                  <Typography style={{ fontSize: 13, color: theme.colors.primary, fontWeight: '700' }}>
+                    Phase: {activeGoal.phases[0].name}
+                  </Typography>
+                  <Typography style={{ fontSize: 12, color: theme.colors.textSecondary, marginTop: 4, lineHeight: 18 }}>
+                    {activeGoal.phases[0].focus}
+                  </Typography>
+                </View>
+              )}
+            </Card>
+          </Animated.View>
+        )}
 
         {/* ── This Week ── */}
-        <View style={styles.sectionHeader}>
+        <Animated.View entering={FadeInDown.delay(200).springify()} layout={Layout.springify()}>
+          <View style={styles.sectionHeader}>
           <CalendarDays color={theme.colors.primary} size={16} />
           <Typography style={styles.sectionTitle}>This Week</Typography>
           <View style={[styles.trendBadge, { backgroundColor: weekTrend ? '#22C55E22' : '#EF444422' }]}>
@@ -287,18 +365,22 @@ export default function OverviewScreen() {
             icon={<Mountain color="#FBBF24" size={14} />}
           />
         </View>
+        </Animated.View>
 
         {/* ── Activity Heatmap ── */}
-        <View style={[styles.sectionHeader, { marginTop: 20 }]}>
+        <Animated.View entering={FadeInDown.delay(300).springify()} layout={Layout.springify()}>
+          <View style={[styles.sectionHeader, { marginTop: 20 }]}>
           <Activity color={theme.colors.primary} size={16} />
           <Typography style={styles.sectionTitle}>Activity Map</Typography>
         </View>
         <Card style={styles.card}>
           <HeatmapCalendar data={heatmapData} />
         </Card>
+        </Animated.View>
 
         {/* ── Recent Activities ── */}
-        <View style={styles.sectionHeader}>
+        <Animated.View entering={FadeInDown.delay(400).springify()} layout={Layout.springify()}>
+          <View style={styles.sectionHeader}>
           <Timer color={theme.colors.primary} size={16} />
           <Typography style={styles.sectionTitle}>Recent Activities</Typography>
         </View>
@@ -336,10 +418,11 @@ export default function OverviewScreen() {
             );
           })
         )}
+        </Animated.View>
 
         {/* ── Monthly Volume ── */}
         {monthlyData.length > 0 && (
-          <>
+          <Animated.View entering={FadeInDown.delay(500).springify()} layout={Layout.springify()}>
             <View style={styles.sectionHeader}>
               <BarChart3 color={theme.colors.primary} size={16} />
               <Typography style={styles.sectionTitle}>Monthly Volume</Typography>
@@ -362,12 +445,12 @@ export default function OverviewScreen() {
               </View>
               <Typography style={styles.barUnit}>km per month</Typography>
             </Card>
-          </>
+          </Animated.View>
         )}
 
         {/* ── Heart Rate Panel ── */}
         {hrStats && (
-          <>
+          <Animated.View entering={FadeInDown.delay(600).springify()} layout={Layout.springify()}>
             <View style={styles.sectionHeader}>
               <Heart color="#EF4444" size={16} />
               <Typography style={styles.sectionTitle}>Heart Rate</Typography>
@@ -383,11 +466,12 @@ export default function OverviewScreen() {
                 icon={<Zap color="#F97316" size={14} />}
               />
             </View>
-          </>
+          </Animated.View>
         )}
 
         {/* ── Personal Bests ── */}
-        <View style={[styles.sectionHeader, { marginTop: 20 }]}>
+        <Animated.View entering={FadeInDown.delay(700).springify()} layout={Layout.springify()}>
+          <View style={[styles.sectionHeader, { marginTop: 20 }]}>
           <Trophy color="#FBBF24" size={16} />
           <Typography style={styles.sectionTitle}>Personal Bests</Typography>
         </View>
@@ -418,10 +502,46 @@ export default function OverviewScreen() {
             icon={<Clock color={theme.colors.accent} size={14} />}
           />
         </View>
+        {personalBests.longestWalk > 0 && (
+          <View style={[styles.miniRow, { marginTop: 8 }]}>
+            <MiniStatCard
+              label="Longest Walk" value={(personalBests.longestWalk / 1000).toFixed(1)} unit="km"
+              color="#10B981"
+              icon={<Footprints color="#10B981" size={14} />}
+            />
+            <View style={{ width: 8 }} />
+            <MiniStatCard
+              label="Total Walks" value={userStats.totalWalks || 0}
+              color="#10B981"
+              icon={<Activity color="#10B981" size={14} />}
+            />
+          </View>
+        )}
+        </Animated.View>
+
+        {/* ── Race Predictor ── */}
+        {racePredictor && (
+          <Animated.View entering={FadeInDown.delay(750).springify()} layout={Layout.springify()}>
+            <View style={[styles.sectionHeader, { marginTop: 20 }]}>
+              <Zap color="#8B5CF6" size={16} />
+              <Typography style={styles.sectionTitle}>Race Predictor</Typography>
+            </View>
+            <View style={styles.miniRow}>
+              <MiniStatCard label="5K" value={racePredictor.fiveK} color="#8B5CF6" icon={<Flame color="#8B5CF6" size={14}/>} />
+              <View style={{ width: 8 }} />
+              <MiniStatCard label="10K" value={racePredictor.tenK} color="#8B5CF6" icon={<TrendingUp color="#8B5CF6" size={14}/>} />
+            </View>
+            <View style={[styles.miniRow, { marginTop: 8 }]}>
+              <MiniStatCard label="Half Marathon" value={racePredictor.half} color="#8B5CF6" icon={<Trophy color="#8B5CF6" size={14}/>} />
+              <View style={{ width: 8 }} />
+              <MiniStatCard label="Marathon" value={racePredictor.full} color="#8B5CF6" icon={<Trophy color="#8B5CF6" size={14}/>} />
+            </View>
+          </Animated.View>
+        )}
 
         {/* ── Activity Mix ── */}
         {typeDistribution.length > 0 && (
-          <>
+          <Animated.View entering={FadeInDown.delay(800).springify()} layout={Layout.springify()}>
             <View style={[styles.sectionHeader, { marginTop: 20 }]}>
               <Activity color={theme.colors.primary} size={16} />
               <Typography style={styles.sectionTitle}>Activity Mix</Typography>
@@ -443,11 +563,12 @@ export default function OverviewScreen() {
                 );
               })}
             </Card>
-          </>
+          </Animated.View>
         )}
 
         {/* ── Overall Stats Row ── */}
-        <View style={[styles.sectionHeader, { marginTop: 20 }]}>
+        <Animated.View entering={FadeInDown.delay(900).springify()} layout={Layout.springify()}>
+          <View style={[styles.sectionHeader, { marginTop: 20 }]}>
           <BarChart3 color={theme.colors.primary} size={16} />
           <Typography style={styles.sectionTitle}>All-Time Stats</Typography>
         </View>
@@ -462,10 +583,11 @@ export default function OverviewScreen() {
             icon={<Mountain color="#FBBF24" size={14} />}
           />
         </View>
+        </Animated.View>
 
         {/* ── Active Goals ── */}
         {goals.length > 0 && (
-          <>
+          <Animated.View entering={FadeInDown.delay(1000).springify()} layout={Layout.springify()}>
             <View style={[styles.sectionHeader, { marginTop: 20 }]}>
               <Target color={theme.colors.primary} size={16} />
               <Typography style={styles.sectionTitle}>Active Goals</Typography>
@@ -485,7 +607,7 @@ export default function OverviewScreen() {
                 </View>
               </Card>
             ))}
-          </>
+          </Animated.View>
         )}
 
       </ScrollView>

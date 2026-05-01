@@ -52,6 +52,27 @@ export const StravaService = {
     }
   },
 
+  fetchAthleteStats: async (): Promise<any> => {
+    if (!accessToken) {
+      throw new Error('Not authenticated with Strava');
+    }
+    try {
+      const athleteRes = await axios.get('https://www.strava.com/api/v3/athlete', {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const athleteId = athleteRes.data.id;
+
+      const statsRes = await axios.get(`https://www.strava.com/api/v3/athletes/${athleteId}/stats`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+
+      return statsRes.data;
+    } catch (error) {
+      console.error('Error fetching athlete stats:', error);
+      throw error;
+    }
+  },
+
   disconnect: async () => {
     accessToken = null;
     await secureSettingsStorage.removeSecret('strava_access_token');

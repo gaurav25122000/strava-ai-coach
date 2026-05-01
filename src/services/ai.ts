@@ -56,7 +56,7 @@ function buildPrompt(
   ].filter(Boolean).join('\n      ');
 
   return `
-    You are an elite running coach with a "${personality}" coaching style.
+    You are an elite, world-class running coach with a "${personality}" coaching style. Your job is to create a highly detailed, professional, and structured training plan.
 
     ## ATHLETE PROFILE
     Name: ${userProfile.name || 'Athlete'}
@@ -68,7 +68,7 @@ function buildPrompt(
     - Last 14 days distance: ${last14Km.toFixed(1)} km
     - Longest recent run: ${longestRun.toFixed(1)} km
     - Average running pace: ${avgPaceFmt}
-    - Average heart rate: ${avgHR ? `${avgHR} bpm` : 'not available'}
+    - Average heart rate: ${avgHR ? avgHR + ' bpm' : 'not available'}
     - Total elevation gain (all time): ${Math.round(totalElevation)} m
 
     ## GOAL
@@ -79,17 +79,26 @@ function buildPrompt(
     ${injuryContext}
 
     ## INSTRUCTIONS
-    Using all the above context, write a highly personalised training plan.
-    Tailor the tone, weekly targets, and recovery guidance to the athlete's fitness level, age, and training history.
-    If the athlete is a beginner, be conservative. If advanced, be ambitious.
-    Account for injury history in your plan.
+    Using the context above, write a comprehensive, highly personalised multi-phase training plan.
+    Segregate the plan into logical training phases based on the days remaining (${daysToGoal} days).
+    For each phase, specify the exact weeks it covers (e.g., "Weeks 1-4", "Weeks 5-8").
+    
+    The description MUST be highly detailed (3-5 sentences), explaining the physiological focus, the types of runs (recovery, tempo, intervals), and specific pacing guidance relative to their current average pace (${avgPaceFmt}).
+    
+    The keyWorkout must be extremely precise, providing exact intervals, warmups, recoveries, and paces. 
+    Do NOT give vague advice. Be quantitative and authoritative.
 
-    Respond ONLY with valid JSON — no markdown, no extra text:
+    Respond ONLY with valid JSON matching exactly this schema — no markdown blocks, no extra text:
     {
-      "phase": "Phase Name\\nPhase description (2-3 sentences in your coaching persona)",
-      "weeklyVolumeTarget": <number in km>,
-      "longRunTarget": <number in km>,
-      "keyWorkout": "Workout Title\\nDetailed workout description (sets, paces, recovery)"
+      "phases": [
+        {
+          "name": "Week 1-4: Base Building",
+          "description": "Focus on aerobic capacity...",
+          "weeklyVolumeTarget": <number in km>,
+          "longRunTarget": <number in km>,
+          "keyWorkout": "3x1km VO2 Max Intervals\\nWarmup: 2km easy... Intervals: 3x1km at [Pace] with 90s jog recovery... Cooldown: 2km easy"
+        }
+      ]
     }
   `;
 }
@@ -122,11 +131,13 @@ export const AIService = {
           { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' } }
         );
         const result = JSON.parse(response.data.choices[0].message.content);
+        const firstPhase = result.phases?.[0] || result;
         return {
-          phase: result.phase,
-          weeklyVolume: { current: 0, target: result.weeklyVolumeTarget },
-          longRun: { current: 0, target: result.longRunTarget },
-          keyWorkout: result.keyWorkout,
+          phase: firstPhase.name ? `${firstPhase.name}\n${firstPhase.description}` : result.phase || '',
+          weeklyVolume: { current: 0, target: firstPhase.weeklyVolumeTarget || 0 },
+          longRun: { current: 0, target: firstPhase.longRunTarget || 0 },
+          keyWorkout: firstPhase.keyWorkout || '',
+          phases: result.phases || [],
         };
 
       } else if (provider === 'anthropic') {
@@ -140,11 +151,13 @@ export const AIService = {
           { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' } }
         );
         const result = JSON.parse(response.data.content[0].text);
+        const firstPhase = result.phases?.[0] || result;
         return {
-          phase: result.phase,
-          weeklyVolume: { current: 0, target: result.weeklyVolumeTarget },
-          longRun: { current: 0, target: result.longRunTarget },
-          keyWorkout: result.keyWorkout,
+          phase: firstPhase.name ? `${firstPhase.name}\n${firstPhase.description}` : result.phase || '',
+          weeklyVolume: { current: 0, target: firstPhase.weeklyVolumeTarget || 0 },
+          longRun: { current: 0, target: firstPhase.longRunTarget || 0 },
+          keyWorkout: firstPhase.keyWorkout || '',
+          phases: result.phases || [],
         };
 
       } else {
@@ -158,11 +171,13 @@ export const AIService = {
           { headers: { 'Content-Type': 'application/json', 'X-goog-api-key': apiKey } }
         );
         const result = JSON.parse(response.data.candidates[0].content.parts[0].text);
+        const firstPhase = result.phases?.[0] || result;
         return {
-          phase: result.phase,
-          weeklyVolume: { current: 0, target: result.weeklyVolumeTarget },
-          longRun: { current: 0, target: result.longRunTarget },
-          keyWorkout: result.keyWorkout,
+          phase: firstPhase.name ? `${firstPhase.name}\n${firstPhase.description}` : result.phase || '',
+          weeklyVolume: { current: 0, target: firstPhase.weeklyVolumeTarget || 0 },
+          longRun: { current: 0, target: firstPhase.longRunTarget || 0 },
+          keyWorkout: firstPhase.keyWorkout || '',
+          phases: result.phases || [],
         };
       }
     } catch (error) {

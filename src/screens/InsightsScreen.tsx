@@ -5,6 +5,7 @@ import { theme } from '../theme';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
 import { LineChart, BarChart, PieChart } from 'react-native-gifted-charts';
+import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 import { useStore } from '../store/useStore';
 import { format, parseISO, startOfWeek, endOfWeek, eachWeekOfInterval, subWeeks } from 'date-fns';
 import { TrendingUp, Mountain, Heart, BarChart3, Zap } from 'lucide-react-native';
@@ -37,8 +38,6 @@ const hdr = StyleSheet.create({
 export default function InsightsScreen() {
   const { activities } = useStore();
   const [tab, setTab] = useState<Tab>('pace');
-  const [selPace, setSelPace] = useState<number | null>(null);
-  const [selVol,  setSelVol]  = useState<number | null>(null);
 
   const fmtPace = (v: number) => {
     const m = Math.floor(v); const s = Math.round((v - m) * 60);
@@ -57,8 +56,14 @@ export default function InsightsScreen() {
         const isLast   = i === arr.length - 1;
         return {
           value: Number(minPerKm.toFixed(2)),
-          // show label every 4th run + first + last
-          label: (i % 4 === 0 || isLast) ? format(parseISO(act.startDate), 'MMM d') : '',
+          // show label every 4th run + last
+          labelComponent: (i % 4 === 0 || isLast) ? () => (
+            <View style={{ width: 40, transform: [{ translateX: -10 }] }}>
+              <Typography style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700', textAlign: 'center' }}>
+                {format(parseISO(act.startDate), 'MMM d')}
+              </Typography>
+            </View>
+          ) : undefined,
         };
       });
   }, [activities]);
@@ -71,13 +76,24 @@ export default function InsightsScreen() {
     const now   = new Date();
     const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), 7);
     const end   = endOfWeek(now, { weekStartsOn: 1 });
-    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-8).map(ws => {
+    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-8).map((ws, i, arr) => {
       const we  = endOfWeek(ws, { weekStartsOn: 1 });
       const km  = activities
         .filter(a => { const d = parseISO(a.startDate); return d >= ws && d <= we; })
         .reduce((s, a) => s + a.distance / 1000, 0);
       // e.g. "Jan 5"
-      return { value: Number(km.toFixed(1)), label: format(ws, 'MMM d'), frontColor: km > 0 ? theme.colors.primary : theme.colors.border };
+      const isLast = i === arr.length - 1;
+      return { 
+        value: Number(km.toFixed(1)), 
+        labelComponent: (arr.length - 1 - i) % 2 === 0 ? () => (
+          <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
+            <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
+              {format(ws, 'MMM d')}
+            </Typography>
+          </View>
+        ) : undefined,
+        frontColor: km > 0 ? theme.colors.primary : theme.colors.border 
+      };
     });
   }, [activities]);
 
@@ -134,26 +150,73 @@ export default function InsightsScreen() {
     const maxC = Math.max(...defs.map(b => activities.filter(a => a.totalElevationGain >= b.min && a.totalElevationGain < b.max).length), 1);
     return defs.map(b => {
       const count = activities.filter(a => a.totalElevationGain >= b.min && a.totalElevationGain < b.max).length;
-      return { value: count, label: b.label, frontColor: '#FBBF24', topLabelComponent: () => (
-        <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginBottom: 2 }}>{count}</Typography>
-      )};
+      return { 
+        value: count, 
+        labelComponent: () => (
+          <View style={{ width: 60, transform: [{ translateX: -15 }] }}>
+            <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>{b.label}</Typography>
+          </View>
+        ), 
+        frontColor: '#FBBF24', 
+        topLabelComponent: () => (
+          <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginBottom: 2 }}>{count}</Typography>
+        )
+      };
     });
   }, [activities]);
 
   const ELEV_SPACING = Math.max((CHART_W - 40) / Math.max(elevBuckets.length * 2, 1), 8);
   const ELEV_BAR_W   = Math.min(ELEV_SPACING * 1.5, 46);
 
+  const getPointerConfig = (unit: string, color: string) => ({
+    pointerStripHeight: 160,
+    pointerStripColor: color,
+    pointerStripWidth: 2,
+    pointerColor: color,
+    radius: 6,
+    pointerLabelWidth: 80,
+    pointerLabelHeight: 30,
+    activatePointersOnLongPress: true,
+    autoAdjustPointerLabelPosition: true,
+    pointerLabelComponent: (items: any) => {
+      if (!items || !items[0]) return null;
+      const val = items[0].value;
+      let formatted = val + unit;
+      if (unit === '/km') {
+        const n = parseFloat(val);
+        const m = Math.floor(n);
+        const s = Math.round((n - m) * 60);
+        formatted = `${m}:${s.toString().padStart(2, '0')} /km`;
+      }
+      return (
+        <View style={{
+          height: 30, width: 80, backgroundColor: theme.colors.surface, 
+          borderRadius: 8, justifyContent: 'center', alignItems: 'center',
+          shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5,
+          borderWidth: 1, borderColor: theme.colors.border,
+          marginTop: -30, marginLeft: -40
+        }}>
+          <Typography style={{ color: theme.colors.text, fontSize: 12, fontWeight: '800' }}>
+            {formatted}
+          </Typography>
+        </View>
+      );
+    },
+  });
+
   // shared chart config
   const chartBase = {
     yAxisColor: 'transparent' as const,
     xAxisColor: theme.colors.border,
-    yAxisTextStyle: { color: theme.colors.textSecondary, fontSize: 9 },
-    xAxisLabelTextStyle: { color: theme.colors.textSecondary, fontSize: 9 },
+    yAxisTextStyle: { color: theme.colors.textSecondary, fontSize: 10, fontWeight: '600' as const },
+    xAxisLabelTextStyle: { color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700' as const },
     noOfSections: 4,
-    rulesColor: theme.colors.border + '55',
-    rulesType: 'solid' as const,
+    rulesColor: theme.colors.border + '66',
+    rulesType: 'dashed' as const,
+    dashWidth: 4,
+    dashGap: 4,
     isAnimated: true,
-    animationDuration: 700,
+    animationDuration: 1000,
   };
 
   // Pace y-axis label formatter: 8.5 → "8:30"
@@ -205,7 +268,7 @@ export default function InsightsScreen() {
 
         {/* ════ PACE ════ */}
         {tab === 'pace' && (
-          <>
+          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
             <View style={st.pillRow}>
               <SummaryPill label="Best"    value={bestPace ? fmtPace(bestPace) : '--'} unit="/km" color={theme.colors.secondary} />
               <SummaryPill label="Average" value={avgPace  ? fmtPace(avgPace)  : '--'} unit="/km" color={theme.colors.primary} />
@@ -218,39 +281,33 @@ export default function InsightsScreen() {
                   <LineChart
                     data={paceData}
                     height={200} width={CHART_W}
-                    thickness={2.5}
+                    thickness={4}
                     color={theme.colors.primary}
-                    dataPointsColor={theme.colors.primary}
-                    dataPointsRadius={5}
+                    hideDataPoints
                     maxValue={Math.ceil(Math.max(...paceData.map(d => d.value)) * 1.15)}
                     initialSpacing={12}
                     spacing={Math.max((CHART_W - 12) / Math.max(paceData.length - 1, 1), 18)}
                     curved areaChart
                     startFillColor={theme.colors.primary} endFillColor={theme.colors.background}
-                    startOpacity={0.35} endOpacity={0}
-                    showDataPointOnFocus
-                    focusedDataPointRadius={7} focusedDataPointColor="#fff"
-                    onPress={(_: any, i: number) => setSelPace(i)}
+                    startOpacity={0.6} endOpacity={0}
                     yAxisLabelTexts={Array.from({ length: 5 }, (_, i) => {
                       const max = Math.ceil(Math.max(...paceData.map(d => d.value)) * 1.15);
                       const min = Math.floor(Math.min(...paceData.map(d => d.value)) * 0.9);
                       const v = min + (max - min) * i / 4;
                       return paceYLabel(v.toFixed(2));
                     })}
+                    pointerConfig={getPointerConfig('/km', theme.colors.primary)}
                     {...chartBase}
                   />
                 </View>
               ) : <EmptyChart msg="Sync Strava runs to see your pace trend" />}
-              {selPace !== null && paceData[selPace] && (
-                <Tooltip text={`Run ${selPace + 1} · ${fmtPace(paceData[selPace].value)} /km`} />
-              )}
             </Card>
-          </>
+          </Animated.View>
         )}
 
         {/* ════ VOLUME ════ */}
         {tab === 'volume' && (
-          <>
+          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
             <View style={st.pillRow}>
               <SummaryPill label="8-week total" value={totalVol}              unit="km" color={theme.colors.primary} />
               <SummaryPill label="Peak week"    value={maxWeekVol.toFixed(1)} unit="km" color="#FBBF24" />
@@ -264,28 +321,25 @@ export default function InsightsScreen() {
                     height={200} width={CHART_W}
                     barWidth={BAR_W}
                     roundedTop
+                    roundedBottom={false}
                     maxValue={Math.ceil(maxWeekVol * 1.3)}
                     initialSpacing={BAR_SPACING / 2}
                     spacing={BAR_SPACING}
                     showGradient
-                    gradientColor={theme.colors.primary + '44'}
-                    frontColor={theme.colors.primary}
-                    onPress={(_: any, i: number) => setSelVol(i)}
-                    yAxisLabelSuffix=" km"
+                    gradientColor={theme.colors.primary}
+                    frontColor={theme.colors.primary + '55'}
+                    pointerConfig={getPointerConfig(' km', theme.colors.primary)}
                     {...chartBase}
                   />
                 </View>
               ) : <EmptyChart msg="No activity data yet" />}
-              {selVol !== null && volumeData[selVol] && (
-                <Tooltip text={`Week of ${volumeData[selVol].label} · ${volumeData[selVol].value} km`} />
-              )}
             </Card>
-          </>
+          </Animated.View>
         )}
 
-        {/* ════ HR ZONES ════ */}
+        {/* ════ HEART RATE ════ */}
         {tab === 'heart' && (
-          <>
+          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
             <Card style={st.chartCard}>
               <SectionHeader label="HR Zone Distribution" sub="Based on average HR per activity" />
               {zoneStats.length > 0 ? (
@@ -334,12 +388,12 @@ export default function InsightsScreen() {
                 </View>
               </Card>
             )}
-          </>
+          </Animated.View>
         )}
 
         {/* ════ ELEVATION ════ */}
         {tab === 'elevation' && (
-          <>
+          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
             <View style={st.pillRow}>
               <SummaryPill label="Total climbed" value={totalElev.toLocaleString()} unit="m"  color="#FBBF24" />
               <SummaryPill label="Peak single"   value={Math.round(maxElev)}         unit="m"  color={theme.colors.secondary} />
@@ -351,13 +405,14 @@ export default function InsightsScreen() {
                   <LineChart
                     data={elevData}
                     height={200} width={CHART_W}
-                    thickness={2} color="#FBBF24" hideDataPoints
+                    thickness={4} color="#FBBF24" hideDataPoints
                     initialSpacing={0}
                     spacing={Math.max(CHART_W / Math.max(elevData.length - 1, 1), 4)}
                     curved areaChart
                     startFillColor="#FBBF24" endFillColor={theme.colors.background}
-                    startOpacity={0.4} endOpacity={0}
+                    startOpacity={0.6} endOpacity={0}
                     yAxisLabelSuffix=" m"
+                    pointerConfig={getPointerConfig('m', '#FBBF24')}
                     {...chartBase}
                   />
                 </View>
@@ -380,7 +435,7 @@ export default function InsightsScreen() {
                 />
               </View>
             </Card>
-          </>
+          </Animated.View>
         )}
 
       </ScrollView>
