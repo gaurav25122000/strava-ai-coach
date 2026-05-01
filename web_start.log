@@ -1,0 +1,22 @@
+Starting project at /app
+Starting Metro Bundler
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+Waiting on http://localhost:8081
+Logs for your project will appear below.
+Web ./index.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Web ./index.js ▓▓▓▓▓▓▓▓░░░░░░░░ 51.5% (182/309)
+Web ./index.js ▓▓▓▓▓▓▓▓░░░░░░░░ 51.5% ( 612/2377)
+Web ./index.js ▓▓▓▓▓▓▓▓▓▓░░░░░░ 66.5% (1938/2377)
+Web ./index.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 89.1% (2482/2650)
+Web ./index.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 96.3% (2830/2884)
+Web Bundled 19118ms index.js (3054 modules)
+iOS ./index.js ▓▓░░░░░░░░░░░░░░ 14.9% (111/288)
+iOS ./index.js ▓▓▓▓░░░░░░░░░░░░ 26.7% ( 417/2333)
+iOS ./index.js ▓▓▓▓░░░░░░░░░░░░ 26.7% (1153/2601)
+iOS ./index.js ▓▓▓▓▓▓▓▓▓▓░░░░░░ 63.3% (2080/2615)
+iOS ./index.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 88.4% (2653/2834)
+iOS ./index.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 88.9% (2844/3038)
+iOS ./index.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 92.0% (3071/3202)
+iOS ./index.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 99.0% (3480/3498)
+iOS Bundled 30331ms index.js (3522 modules)
+iOS ./index.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 99.9% (3522/3522)
