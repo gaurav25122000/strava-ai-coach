@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import {
   View,
   StyleSheet,
@@ -6,6 +6,7 @@ import {
   RefreshControl,
   TouchableOpacity,
   Dimensions,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
@@ -32,6 +33,10 @@ import {
   Timer,
   MapPin,
 } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { computeMilestones, computeBestEfforts, computeTrainingLoad, TrainingLoad, getAllMilestoneDefs } from '../services/milestones';
+import { ActivityDetailScreen } from './ActivityDetailScreen';
+import { Activity as ActivityType } from '../store/useStore';
 import * as Haptics from 'expo-haptics';
 import { format, parseISO, startOfWeek, endOfWeek, isWithinInterval, subWeeks } from 'date-fns';
 
@@ -70,57 +75,83 @@ function getActivityColor(type: string): string {
   }
 }
 
-function MiniStatCard({ label, value, unit, color, icon }: {
-  label: string; value: string | number; unit?: string; color: string; icon: React.ReactNode;
+function GradientStatCard({ label, value, unit, colors, icon, sub }: {
+  label: string; value: string | number; unit?: string;
+  colors: [string, string]; icon: React.ReactNode; sub?: string;
 }) {
   return (
-    <View style={miniStyles.card}>
-      <View style={[miniStyles.iconWrap, { backgroundColor: color + '22' }]}>{icon}</View>
+    <LinearGradient
+      colors={colors}
+      start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+      style={miniStyles.card}
+    >
+      <View style={miniStyles.iconWrap}>{icon}</View>
       <Typography style={miniStyles.label}>{label}</Typography>
       <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-        <Typography style={[miniStyles.value, { color }]}>{value}</Typography>
+        <Typography style={miniStyles.value}>{value}</Typography>
         {unit ? <Typography style={miniStyles.unit}>{unit}</Typography> : null}
       </View>
-    </View>
+      {sub ? <Typography style={miniStyles.sub}>{sub}</Typography> : null}
+    </LinearGradient>
   );
 }
 
 const miniStyles = StyleSheet.create({
   card: {
     flex: 1,
-    backgroundColor: theme.colors.surface,
     borderRadius: theme.borderRadius.md,
-    padding: 12,
+    padding: 14,
     alignItems: 'flex-start',
-    borderWidth: 1,
-    borderColor: theme.colors.border,
   },
   iconWrap: {
+    backgroundColor: 'rgba(255,255,255,0.15)',
     borderRadius: 8,
     padding: 6,
-    marginBottom: 8,
+    marginBottom: 10,
   },
   label: {
     fontSize: 10,
-    color: theme.colors.textSecondary,
+    color: 'rgba(255,255,255,0.7)',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    fontWeight: '700',
     marginBottom: 2,
   },
   value: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#fff',
   },
   unit: {
     fontSize: 11,
-    color: theme.colors.textSecondary,
+    color: 'rgba(255,255,255,0.7)',
     marginLeft: 3,
+    fontWeight: '600',
+  },
+  sub: {
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.6)',
+    marginTop: 4,
   },
 });
 
 export default function OverviewScreen() {
-  const { userStats, goals, activities } = useStore();
+  const { userStats, goals, activities, milestones, bestEfforts, setMilestones, setBestEfforts } = useStore();
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedActivity, setSelectedActivity] = useState<ActivityType | null>(null);
+  const [infoSheet, setInfoSheet] = useState<{ title: string; body: string; rows?: { label: string; desc: string }[] } | null>(null);
+
+  // Compute milestones + best efforts whenever activities change
+  useEffect(() => {
+    if (!activities.length) return;
+    const newMilestones = computeMilestones(activities, milestones, userStats);
+    if (newMilestones.length !== milestones.length) setMilestones(newMilestones);
+    const efforts = computeBestEfforts(activities);
+    setBestEfforts(efforts);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activities]);
+
+  const trainingLoad = useMemo<TrainingLoad>(() => computeTrainingLoad(activities), [activities]);
 
   const onRefresh = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -130,13 +161,13 @@ export default function OverviewScreen() {
 
   const heatmapData = useMemo(() => {
     return activities.map(act => {
-      let level: 0 | 1 | 2 | 3 | 4 = 0;
       const km = act.distance / 1000;
+      let level: 0 | 1 | 2 | 3 | 4 = 0;
       if (km > 0) level = 1;
       if (km > 5) level = 2;
       if (km > 10) level = 3;
       if (km > 20) level = 4;
-      return { date: act.startDate, level };
+      return { date: act.startDate, level, type: act.type, km };
     });
   }, [activities]);
 
@@ -154,6 +185,8 @@ export default function OverviewScreen() {
       time: weekActs.reduce((s, a) => s + a.movingTime, 0),
       elev: Math.round(weekActs.reduce((s, a) => s + a.totalElevationGain, 0)),
       runs: weekActs.filter(a => a.type === 'Run').length,
+      calories: Math.round(weekActs.reduce((s, a) => s + (a.calories || 0), 0)),
+      sufferScore: Math.round(weekActs.reduce((s, a) => s + (a.sufferScore || 0), 0)),
     };
   }, [activities]);
 
@@ -218,7 +251,7 @@ export default function OverviewScreen() {
     };
   }, [personalBests.fastestPace]);
 
-  const activeGoal = goals.find(g => g.status === 'active');
+  const activeGoal = goals.length > 0 ? goals[0] : undefined;
 
   // Monthly distance for last 4 months
   const monthlyData = useMemo(() => {
@@ -322,7 +355,7 @@ export default function OverviewScreen() {
                     Phase: {activeGoal.phases[0].name}
                   </Typography>
                   <Typography style={{ fontSize: 12, color: theme.colors.textSecondary, marginTop: 4, lineHeight: 18 }}>
-                    {activeGoal.phases[0].focus}
+                    {activeGoal.phases[0].description}
                   </Typography>
                 </View>
               )}
@@ -333,38 +366,40 @@ export default function OverviewScreen() {
         {/* ── This Week ── */}
         <Animated.View entering={FadeInDown.delay(200).springify()} layout={Layout.springify()}>
           <View style={styles.sectionHeader}>
-          <CalendarDays color={theme.colors.primary} size={16} />
-          <Typography style={styles.sectionTitle}>This Week</Typography>
-          <View style={[styles.trendBadge, { backgroundColor: weekTrend ? '#22C55E22' : '#EF444422' }]}>
-            {weekTrend ? <TrendingUp color="#22C55E" size={12} /> : <TrendingDown color="#EF4444" size={12} />}
-            <Typography style={[styles.trendText, { color: weekTrend ? '#22C55E' : '#EF4444' }]}>
-              {lastWeekKm} km last week
-            </Typography>
+            <CalendarDays color={theme.colors.primary} size={16} />
+            <Typography style={styles.sectionTitle}>This Week</Typography>
+            <View style={[styles.trendBadge, { backgroundColor: weekTrend ? '#22C55E22' : '#EF444422' }]}>
+              {weekTrend ? <TrendingUp color="#22C55E" size={12} /> : <TrendingDown color="#EF4444" size={12} />}
+              <Typography style={[styles.trendText, { color: weekTrend ? '#22C55E' : '#EF4444' }]}>
+                {lastWeekKm} km last week
+              </Typography>
+            </View>
           </View>
-        </View>
 
-        <View style={styles.miniRow}>
-          <MiniStatCard
-            label="Days Active" value={thisWeekStats.days} color={theme.colors.primary}
-            icon={<CalendarDays color={theme.colors.primary} size={14} />}
-          />
-          <View style={{ width: 8 }} />
-          <MiniStatCard
-            label="Distance" value={thisWeekStats.km} unit="km" color="#3B82F6"
-            icon={<MapPin color="#3B82F6" size={14} />}
-          />
-        </View>
-        <View style={[styles.miniRow, { marginTop: 8 }]}>
-          <MiniStatCard
-            label="Time" value={formatDuration(thisWeekStats.time)} color={theme.colors.accent}
-            icon={<Clock color={theme.colors.accent} size={14} />}
-          />
-          <View style={{ width: 8 }} />
-          <MiniStatCard
-            label="Elevation" value={thisWeekStats.elev} unit="m" color="#FBBF24"
-            icon={<Mountain color="#FBBF24" size={14} />}
-          />
-        </View>
+          {/* Row 1 */}
+          <View style={styles.miniRow}>
+            <GradientStatCard label="Days Active" value={thisWeekStats.days} colors={['#6366f1','#8b5cf6']} icon={<CalendarDays color="#fff" size={14} />} />
+            <View style={{ width: 8 }} />
+            <GradientStatCard label="Distance" value={thisWeekStats.km} unit="km" colors={['#0ea5e9','#0284c7']} icon={<MapPin color="#fff" size={14} />} />
+          </View>
+          {/* Row 2 */}
+          <View style={[styles.miniRow, { marginTop: 8 }]}>
+            <GradientStatCard label="Active Time" value={formatDuration(thisWeekStats.time)} colors={['#f59e0b','#d97706']} icon={<Clock color="#fff" size={14} />} />
+            <View style={{ width: 8 }} />
+            <GradientStatCard label="Elevation" value={thisWeekStats.elev} unit="m" colors={['#10b981','#059669']} icon={<Mountain color="#fff" size={14} />} />
+          </View>
+          {/* Row 3 */}
+          <View style={[styles.miniRow, { marginTop: 8 }]}>
+            <GradientStatCard label="Calories" value={thisWeekStats.calories || '--'} unit={thisWeekStats.calories ? 'kcal' : undefined} colors={['#ef4444','#dc2626']} icon={<Flame color="#fff" size={14} />} />
+            <View style={{ width: 8 }} />
+            <GradientStatCard
+              label="Suffer Score"
+              value={thisWeekStats.sufferScore || '--'}
+              colors={['#ec4899','#db2777']}
+              icon={<Heart color="#fff" size={14} />}
+              sub="HR-based training load"
+            />
+          </View>
         </Animated.View>
 
         {/* ── Activity Heatmap ── */}
@@ -393,28 +428,30 @@ export default function OverviewScreen() {
           recentActivities.map(act => {
             const color = getActivityColor(act.type);
             return (
-              <Card key={act.id} style={[styles.activityCard, { borderLeftColor: color }]}>
-                <View style={styles.actRow}>
-                  <View style={[styles.actIconWrap, { backgroundColor: color + '22' }]}>
-                    {getActivityIcon(act.type, color, 18)}
+              <TouchableOpacity key={act.id} onPress={() => setSelectedActivity(act)} activeOpacity={0.8}>
+                <Card style={[styles.activityCard, { borderLeftColor: color }]}>
+                  <View style={styles.actRow}>
+                    <View style={[styles.actIconWrap, { backgroundColor: color + '22' }]}>
+                      {getActivityIcon(act.type, color, 18)}
+                    </View>
+                    <View style={styles.actInfo}>
+                      <Typography style={styles.actName} numberOfLines={1}>
+                        {act.name || act.type}
+                      </Typography>
+                      <Typography style={styles.actDate}>
+                        {format(parseISO(act.startDate), 'EEE, MMM d')}
+                      </Typography>
+                    </View>
+                    <View style={styles.actStats}>
+                      <Typography style={[styles.actStat, { color }]}>
+                        {(act.distance / 1000).toFixed(2)} km
+                      </Typography>
+                      <Typography style={styles.actSubStat}>{formatPace(act.averageSpeed)} /km</Typography>
+                      <Typography style={styles.actSubStat}>{formatDuration(act.movingTime)}</Typography>
+                    </View>
                   </View>
-                  <View style={styles.actInfo}>
-                    <Typography style={styles.actName} numberOfLines={1}>
-                      {act.name || act.type}
-                    </Typography>
-                    <Typography style={styles.actDate}>
-                      {format(parseISO(act.startDate), 'EEE, MMM d')}
-                    </Typography>
-                  </View>
-                  <View style={styles.actStats}>
-                    <Typography style={[styles.actStat, { color }]}>
-                      {(act.distance / 1000).toFixed(2)} km
-                    </Typography>
-                    <Typography style={styles.actSubStat}>{formatPace(act.averageSpeed)} /km</Typography>
-                    <Typography style={styles.actSubStat}>{formatDuration(act.movingTime)}</Typography>
-                  </View>
-                </View>
-              </Card>
+                </Card>
+              </TouchableOpacity>
             );
           })
         )}
@@ -448,7 +485,7 @@ export default function OverviewScreen() {
           </Animated.View>
         )}
 
-        {/* ── Heart Rate Panel ── */}
+        {/* ── Heart Rate ── */}
         {hrStats && (
           <Animated.View entering={FadeInDown.delay(600).springify()} layout={Layout.springify()}>
             <View style={styles.sectionHeader}>
@@ -456,14 +493,14 @@ export default function OverviewScreen() {
               <Typography style={styles.sectionTitle}>Heart Rate</Typography>
             </View>
             <View style={styles.miniRow}>
-              <MiniStatCard
-                label="Avg HR" value={hrStats.avg} unit="bpm" color="#EF4444"
-                icon={<Heart color="#EF4444" size={14} />}
+              <GradientStatCard
+                label="Avg HR" value={hrStats.avg} unit="bpm"
+                colors={['#ef4444','#dc2626']} icon={<Heart color="#fff" size={14} />}
               />
               <View style={{ width: 8 }} />
-              <MiniStatCard
-                label="Max HR" value={hrStats.max} unit="bpm" color="#F97316"
-                icon={<Zap color="#F97316" size={14} />}
+              <GradientStatCard
+                label="Max HR" value={hrStats.max} unit="bpm"
+                colors={['#f97316','#ea580c']} icon={<Zap color="#fff" size={14} />}
               />
             </View>
           </Animated.View>
@@ -472,51 +509,45 @@ export default function OverviewScreen() {
         {/* ── Personal Bests ── */}
         <Animated.View entering={FadeInDown.delay(700).springify()} layout={Layout.springify()}>
           <View style={[styles.sectionHeader, { marginTop: 20 }]}>
-          <Trophy color="#FBBF24" size={16} />
-          <Typography style={styles.sectionTitle}>Personal Bests</Typography>
-        </View>
-        <View style={styles.miniRow}>
-          <MiniStatCard
-            label="Longest Run" value={(personalBests.longestRun / 1000).toFixed(1)} unit="km"
-            color={theme.colors.secondary}
-            icon={<Footprints color={theme.colors.secondary} size={14} />}
-          />
-          <View style={{ width: 8 }} />
-          <MiniStatCard
-            label="Fastest Pace"
-            value={personalBests.fastestPace === 999 ? '--' : formatPace(1000 / (personalBests.fastestPace * 60))}
-            unit="/km" color={theme.colors.primary}
-            icon={<TrendingUp color={theme.colors.primary} size={14} />}
-          />
-        </View>
-        <View style={[styles.miniRow, { marginTop: 8 }]}>
-          <MiniStatCard
-            label="Peak Elevation" value={Math.round(personalBests.mostElevation)} unit="m"
-            color="#FBBF24"
-            icon={<Mountain color="#FBBF24" size={14} />}
-          />
-          <View style={{ width: 8 }} />
-          <MiniStatCard
-            label="Longest Session" value={formatDuration(personalBests.longestTime)}
-            color={theme.colors.accent}
-            icon={<Clock color={theme.colors.accent} size={14} />}
-          />
-        </View>
-        {personalBests.longestWalk > 0 && (
-          <View style={[styles.miniRow, { marginTop: 8 }]}>
-            <MiniStatCard
-              label="Longest Walk" value={(personalBests.longestWalk / 1000).toFixed(1)} unit="km"
-              color="#10B981"
-              icon={<Footprints color="#10B981" size={14} />}
+            <Trophy color="#FBBF24" size={16} />
+            <Typography style={styles.sectionTitle}>Personal Bests</Typography>
+          </View>
+          <View style={styles.miniRow}>
+            <GradientStatCard
+              label="Longest Run" value={(personalBests.longestRun / 1000).toFixed(1)} unit="km"
+              colors={['#7c3aed','#6d28d9']} icon={<Footprints color="#fff" size={14} />}
             />
             <View style={{ width: 8 }} />
-            <MiniStatCard
-              label="Total Walks" value={userStats.totalWalks || 0}
-              color="#10B981"
-              icon={<Activity color="#10B981" size={14} />}
+            <GradientStatCard
+              label="Fastest Pace"
+              value={personalBests.fastestPace === 999 ? '--' : formatPace(1000 / (personalBests.fastestPace * 60))}
+              unit="/km" colors={['#0ea5e9','#0284c7']} icon={<TrendingUp color="#fff" size={14} />}
             />
           </View>
-        )}
+          <View style={[styles.miniRow, { marginTop: 8 }]}>
+            <GradientStatCard
+              label="Peak Elevation" value={Math.round(personalBests.mostElevation)} unit="m"
+              colors={['#f59e0b','#d97706']} icon={<Mountain color="#fff" size={14} />}
+            />
+            <View style={{ width: 8 }} />
+            <GradientStatCard
+              label="Longest Session" value={formatDuration(personalBests.longestTime)}
+              colors={['#10b981','#059669']} icon={<Clock color="#fff" size={14} />}
+            />
+          </View>
+          {personalBests.longestWalk > 0 && (
+            <View style={[styles.miniRow, { marginTop: 8 }]}>
+              <GradientStatCard
+                label="Longest Walk" value={(personalBests.longestWalk / 1000).toFixed(1)} unit="km"
+                colors={['#14b8a6','#0d9488']} icon={<Footprints color="#fff" size={14} />}
+              />
+              <View style={{ width: 8 }} />
+              <GradientStatCard
+                label="Total Walks" value={userStats.totalWalks || 0}
+                colors={['#64748b','#475569']} icon={<Activity color="#fff" size={14} />}
+              />
+            </View>
+          )}
         </Animated.View>
 
         {/* ── Race Predictor ── */}
@@ -527,14 +558,14 @@ export default function OverviewScreen() {
               <Typography style={styles.sectionTitle}>Race Predictor</Typography>
             </View>
             <View style={styles.miniRow}>
-              <MiniStatCard label="5K" value={racePredictor.fiveK} color="#8B5CF6" icon={<Flame color="#8B5CF6" size={14}/>} />
+              <GradientStatCard label="5K" value={racePredictor.fiveK} colors={['#8b5cf6','#7c3aed']} icon={<Flame color="#fff" size={14}/>} />
               <View style={{ width: 8 }} />
-              <MiniStatCard label="10K" value={racePredictor.tenK} color="#8B5CF6" icon={<TrendingUp color="#8B5CF6" size={14}/>} />
+              <GradientStatCard label="10K" value={racePredictor.tenK} colors={['#7c3aed','#6d28d9']} icon={<TrendingUp color="#fff" size={14}/>} />
             </View>
             <View style={[styles.miniRow, { marginTop: 8 }]}>
-              <MiniStatCard label="Half Marathon" value={racePredictor.half} color="#8B5CF6" icon={<Trophy color="#8B5CF6" size={14}/>} />
+              <GradientStatCard label="Half Marathon" value={racePredictor.half} colors={['#6d28d9','#5b21b6']} icon={<Trophy color="#fff" size={14}/>} />
               <View style={{ width: 8 }} />
-              <MiniStatCard label="Marathon" value={racePredictor.full} color="#8B5CF6" icon={<Trophy color="#8B5CF6" size={14}/>} />
+              <GradientStatCard label="Marathon" value={racePredictor.full} colors={['#5b21b6','#4c1d95']} icon={<Trophy color="#fff" size={14}/>} />
             </View>
           </Animated.View>
         )}
@@ -566,23 +597,23 @@ export default function OverviewScreen() {
           </Animated.View>
         )}
 
-        {/* ── Overall Stats Row ── */}
+        {/* ── All-Time Stats ── */}
         <Animated.View entering={FadeInDown.delay(900).springify()} layout={Layout.springify()}>
           <View style={[styles.sectionHeader, { marginTop: 20 }]}>
-          <BarChart3 color={theme.colors.primary} size={16} />
-          <Typography style={styles.sectionTitle}>All-Time Stats</Typography>
-        </View>
-        <View style={styles.miniRow}>
-          <MiniStatCard
-            label="Best Pace" value={userStats.bestPace} unit="/km" color={theme.colors.primary}
-            icon={<TrendingUp color={theme.colors.primary} size={14} />}
-          />
-          <View style={{ width: 8 }} />
-          <MiniStatCard
-            label="Top Elevation" value={userStats.topElev} unit="m" color="#FBBF24"
-            icon={<Mountain color="#FBBF24" size={14} />}
-          />
-        </View>
+            <BarChart3 color={theme.colors.primary} size={16} />
+            <Typography style={styles.sectionTitle}>All-Time Stats</Typography>
+          </View>
+          <View style={styles.miniRow}>
+            <GradientStatCard
+              label="Best Pace" value={userStats.bestPace} unit="/km"
+              colors={['#6366f1','#4f46e5']} icon={<TrendingUp color="#fff" size={14} />}
+            />
+            <View style={{ width: 8 }} />
+            <GradientStatCard
+              label="Top Elevation" value={userStats.topElev} unit="m"
+              colors={['#f59e0b','#d97706']} icon={<Mountain color="#fff" size={14} />}
+            />
+          </View>
         </Animated.View>
 
         {/* ── Active Goals ── */}
@@ -610,7 +641,156 @@ export default function OverviewScreen() {
           </Animated.View>
         )}
 
+        {/* ── Training Load ── */}
+        {trainingLoad.ctl > 0 && (
+          <Animated.View entering={FadeInDown.delay(950).springify()} layout={Layout.springify()}>
+            <TouchableOpacity
+              style={[styles.sectionHeader, { marginTop: 20 }]}
+              activeOpacity={0.7}
+              onPress={() => setInfoSheet({
+                title: 'Training Load',
+                body: 'Based on your Strava Suffer Scores, these three numbers track your fitness and fatigue like elite coaches do.',
+                rows: [
+                  { label: 'ATL — Fatigue', desc: '7-day rolling average of suffer scores. High = you have been training hard recently.' },
+                  { label: 'CTL — Fitness', desc: '42-day rolling average. Higher CTL = more base fitness built over months of consistent training.' },
+                  { label: 'TSB — Form', desc: 'CTL minus ATL. Positive = fresh and ready to race. Negative = fatigued. Aim for +5 to +15 on race day.' },
+                ],
+              })}
+            >
+              <Zap color="#f97316" size={16} />
+              <Typography style={styles.sectionTitle}>Training Load</Typography>
+              <Typography style={{ fontSize: 10, color: theme.colors.textSecondary }}>ⓘ tap to learn more</Typography>
+            </TouchableOpacity>
+            <View style={styles.miniRow}>
+              <GradientStatCard label="ATL (Fatigue)" value={trainingLoad.atl} sub="7-day avg suffer" colors={['#ef4444','#dc2626']} icon={<Heart color="#fff" size={14} />} />
+              <View style={{ width: 8 }} />
+              <GradientStatCard label="CTL (Fitness)" value={trainingLoad.ctl} sub="42-day avg suffer" colors={['#10b981','#059669']} icon={<TrendingUp color="#fff" size={14} />} />
+              <View style={{ width: 8 }} />
+              <GradientStatCard
+                label="TSB (Form)" value={trainingLoad.tsb}
+                sub={trainingLoad.tsb > 5 ? 'Fresh' : trainingLoad.tsb < -10 ? 'Tired' : 'Balanced'}
+                colors={trainingLoad.tsb > 5 ? ['#6366f1','#4f46e5'] : trainingLoad.tsb < -10 ? ['#f97316','#ea580c'] : ['#0ea5e9','#0284c7']}
+                icon={<Zap color="#fff" size={14} />}
+              />
+            </View>
+          </Animated.View>
+        )}
+
+        {/* ── Best Efforts ── */}
+        {Object.keys(bestEfforts).length > 0 && (
+          <Animated.View entering={FadeInDown.delay(960).springify()} layout={Layout.springify()}>
+            <TouchableOpacity
+              style={[styles.sectionHeader, { marginTop: 20 }]}
+              activeOpacity={0.7}
+              onPress={() => setInfoSheet({
+                title: 'Best Efforts',
+                body: 'Your fastest estimated times at each distance, derived from the average pace of your best matching runs.',
+                rows: [
+                  { label: '1 km', desc: 'Best average pace from any run ≥ 1 km, extrapolated to 1 km time.' },
+                  { label: '5 km', desc: 'Best average pace from runs ≥ 4.25 km, extrapolated to 5 km time.' },
+                  { label: '10 km', desc: 'Best average pace from runs ≥ 8.5 km, extrapolated to 10 km time.' },
+                ],
+              })}
+            >
+              <Trophy color="#FBBF24" size={16} />
+              <Typography style={styles.sectionTitle}>Best Efforts</Typography>
+              <Typography style={{ fontSize: 10, color: theme.colors.textSecondary }}>ⓘ tap to learn more</Typography>
+            </TouchableOpacity>
+            <View style={styles.miniRow}>
+              {bestEfforts[1000] && <GradientStatCard label="1 km" value={(() => { const t = bestEfforts[1000].time; return `${Math.floor(t/60)}:${String(t%60).padStart(2,'0')}`; })()} colors={['#8b5cf6','#7c3aed']} icon={<Footprints color="#fff" size={14} />} sub={bestEfforts[1000].date} />}
+              {bestEfforts[1000] && bestEfforts[5000] && <View style={{ width: 8 }} />}
+              {bestEfforts[5000] && <GradientStatCard label="5 km" value={(() => { const t = bestEfforts[5000].time; return `${Math.floor(t/60)}:${String(t%60).padStart(2,'0')}`; })()} colors={['#6366f1','#4f46e5']} icon={<Footprints color="#fff" size={14} />} sub={bestEfforts[5000].date} />}
+            </View>
+            {bestEfforts[10000] && (
+              <View style={[styles.miniRow, { marginTop: 8 }]}>
+                <GradientStatCard label="10 km" value={(() => { const t = bestEfforts[10000].time; const h = Math.floor(t/3600); const m = Math.floor((t%3600)/60); const s = t%60; return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`; })()} colors={['#0ea5e9','#0284c7']} icon={<TrendingUp color="#fff" size={14} />} sub={bestEfforts[10000].date} />
+                <View style={{ width: 8 }} />
+                <View style={{ flex: 1 }} />
+              </View>
+            )}
+          </Animated.View>
+        )}
+
+        {/* ── Milestones ── */}
+        <Animated.View entering={FadeInDown.delay(970).springify()} layout={Layout.springify()}>
+          <View style={[styles.sectionHeader, { marginTop: 20 }]}>
+            <Trophy color="#FBBF24" size={16} />
+            <Typography style={styles.sectionTitle}>Badges</Typography>
+            <Typography style={{ fontSize: 11, color: theme.colors.textSecondary }}>
+              {milestones.length}/{getAllMilestoneDefs().length} unlocked
+            </Typography>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+            {[...getAllMilestoneDefs()].sort((a, b) => {
+              const aEarned = milestones.some(m => m.id === a.id) ? 0 : 1;
+              const bEarned = milestones.some(m => m.id === b.id) ? 0 : 1;
+              return aEarned - bEarned;
+            }).map(def => {
+              const earned = milestones.find(m => m.id === def.id);
+              return (
+                <TouchableOpacity
+                  key={def.id}
+                  style={[styles.badgeCard, !earned && { opacity: 0.4 }]}
+                  activeOpacity={0.75}
+                  onPress={() => setInfoSheet({
+                    title: earned ? `${def.icon}  ${def.title}` : `🔒  ${def.title}`,
+                    body: def.description,
+                    rows: earned
+                      ? [{ label: 'Unlocked', desc: earned.earnedAt.split('T')[0] }, { label: 'Category', desc: def.category.charAt(0).toUpperCase() + def.category.slice(1) }]
+                      : [{ label: 'Status', desc: 'Not yet unlocked. Keep training!' }, { label: 'Category', desc: def.category.charAt(0).toUpperCase() + def.category.slice(1) }],
+                  })}
+                >
+                  <Typography style={{ fontSize: 28 }}>{earned ? def.icon : '🔒'}</Typography>
+                  <Typography style={[styles.badgeTitle, !earned && { color: theme.colors.textSecondary }]}>{def.title}</Typography>
+                  <Typography style={styles.badgeSub}>{earned ? earned.earnedAt.split('T')[0] : 'Locked'}</Typography>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </Animated.View>
+
       </ScrollView>
+
+      {/* ── Activity Detail Modal ── */}
+      <Modal visible={!!selectedActivity} animationType="slide" onRequestClose={() => setSelectedActivity(null)}>
+        {selectedActivity && (
+          <ActivityDetailScreen
+            activity={selectedActivity}
+            onClose={() => setSelectedActivity(null)}
+          />
+        )}
+      </Modal>
+
+      {/* ── Info Bottomsheet ── */}
+      <Modal
+        visible={!!infoSheet}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setInfoSheet(null)}
+      >
+        <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setInfoSheet(null)}>
+          <TouchableOpacity activeOpacity={1} style={styles.sheet}>
+            {/* Handle */}
+            <View style={{ width: 40, height: 4, backgroundColor: theme.colors.border, borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
+            <Typography style={styles.sheetTitle}>{infoSheet?.title}</Typography>
+            <Typography style={styles.sheetBody}>{infoSheet?.body}</Typography>
+            {infoSheet?.rows && (
+              <View style={{ marginTop: 16, gap: 12 }}>
+                {infoSheet.rows.map((row, i) => (
+                  <View key={i} style={styles.sheetRow}>
+                    <Typography style={styles.sheetRowLabel}>{row.label}</Typography>
+                    <Typography style={styles.sheetRowDesc}>{row.desc}</Typography>
+                  </View>
+                ))}
+              </View>
+            )}
+            <TouchableOpacity style={styles.sheetClose} onPress={() => setInfoSheet(null)}>
+              <Typography style={{ color: '#fff', fontWeight: '700' }}>Got it</Typography>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -692,4 +872,30 @@ const styles = StyleSheet.create({
   goalDays: { alignItems: 'center' },
   goalDaysNum: { fontSize: 24, fontWeight: '800', color: theme.colors.primary },
   goalDaysLabel: { fontSize: 10, color: theme.colors.textSecondary },
+
+  badgeCard: {
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: theme.colors.surface, borderRadius: 12,
+    padding: 14, marginRight: 10, minWidth: 90,
+    borderWidth: 1, borderColor: theme.colors.border,
+  },
+  badgeTitle: { fontSize: 11, fontWeight: '700', color: theme.colors.text, marginTop: 6, textAlign: 'center' },
+  badgeSub:   { fontSize: 9, color: theme.colors.textSecondary, marginTop: 2 },
+
+  sheetOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: theme.colors.surface,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    padding: 20, paddingBottom: 34,
+    borderWidth: 1, borderColor: theme.colors.border,
+  },
+  sheetTitle:    { fontSize: 18, fontWeight: '800', color: theme.colors.text, marginBottom: 8 },
+  sheetBody:     { fontSize: 13, color: theme.colors.textSecondary, lineHeight: 20, marginBottom: 4 },
+  sheetRow:      { backgroundColor: theme.colors.background, borderRadius: 10, padding: 12 },
+  sheetRowLabel: { fontSize: 11, fontWeight: '700', color: theme.colors.primary, marginBottom: 3, textTransform: 'uppercase', letterSpacing: 0.4 },
+  sheetRowDesc:  { fontSize: 12, color: theme.colors.text, lineHeight: 18 },
+  sheetClose: {
+    marginTop: 20, backgroundColor: theme.colors.primary,
+    borderRadius: 12, padding: 14, alignItems: 'center',
+  },
 });

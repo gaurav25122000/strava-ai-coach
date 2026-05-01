@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "ai-coach-app",
+    "name": "Streav",
     "scheme": "aicoachapp",
-    "slug": "ai-coach-app",
+    "slug": "Strava AI Coach",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -34,7 +34,15 @@
     "plugins": [
       "expo-secure-store",
       "expo-web-browser",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#FC4C02",
+          "sounds": []
+        }
+      ]
     ],
     "extra": {
       "eas": {

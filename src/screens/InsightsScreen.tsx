@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Dimensions, Modal, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
@@ -8,18 +8,23 @@ import { LineChart, BarChart, PieChart } from 'react-native-gifted-charts';
 import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 import { useStore } from '../store/useStore';
 import { format, parseISO, startOfWeek, endOfWeek, eachWeekOfInterval, subWeeks } from 'date-fns';
-import { TrendingUp, Mountain, Heart, BarChart3, Zap } from 'lucide-react-native';
+import { TrendingUp, Mountain, Heart, BarChart3, Zap, X, Activity, Settings2 } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 // scroll padding 16*2 + card padding 16*2 + gifted-charts yAxis ~44 = 108
 const CHART_W = SCREEN_W - 108;
 
-type Tab = 'pace' | 'volume' | 'heart' | 'elevation';
-const TABS: { key: Tab; label: string }[] = [
+type Tab = 'pace' | 'volume' | 'heart' | 'elevation' | 'steps' | 'time' | 'calories' | 'power';
+const ALL_TABS: { key: Tab; label: string }[] = [
   { key: 'pace',      label: 'Pace'      },
   { key: 'volume',    label: 'Volume'    },
   { key: 'heart',     label: 'HR Zones'  },
   { key: 'elevation', label: 'Elevation' },
+  { key: 'steps',     label: 'Steps'     },
+  { key: 'time',      label: 'Time'      },
+  { key: 'calories',  label: 'Calories'  },
+  { key: 'power',     label: 'Power'     },
 ];
 
 function SectionHeader({ label, sub }: { label: string; sub?: string }) {
@@ -36,8 +41,20 @@ const hdr = StyleSheet.create({
 });
 
 export default function InsightsScreen() {
-  const { activities } = useStore();
-  const [tab, setTab] = useState<Tab>('pace');
+  const { activities, settings, updateSettings } = useStore();
+  const activeKeys = settings.activeGraphs || ['pace', 'volume', 'heart', 'elevation'];
+  const TABS = ALL_TABS.filter(t => activeKeys.includes(t.key));
+  const [tab, setTab] = useState<Tab>(TABS.length > 0 ? TABS[0].key as Tab : 'pace');
+  const [showManageModal, setShowManageModal] = useState(false);
+  
+  const toggleGraph = (key: Tab) => {
+    let newKeys = [...activeKeys];
+    if (newKeys.includes(key)) newKeys = newKeys.filter(k => k !== key);
+    else newKeys.push(key);
+    updateSettings({ activeGraphs: newKeys });
+    if (tab === key && newKeys.length > 0) setTab(newKeys[0] as Tab);
+  };
+
 
   const fmtPace = (v: number) => {
     const m = Math.floor(v); const s = Math.round((v - m) * 60);
@@ -166,6 +183,115 @@ export default function InsightsScreen() {
   }, [activities]);
 
   const ELEV_SPACING = Math.max((CHART_W - 40) / Math.max(elevBuckets.length * 2, 1), 8);
+
+  // ── Steps ─────────────────────────────────────────────────────────
+  const stepsData = useMemo(() => {
+    const now   = new Date();
+    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), 7);
+    const end   = endOfWeek(now, { weekStartsOn: 1 });
+    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-8).map((ws, i, arr) => {
+      const we  = endOfWeek(ws, { weekStartsOn: 1 });
+      const weekActs = activities.filter(a => { const d = parseISO(a.startDate); return d >= ws && d <= we; });
+      let totalSteps = 0;
+      weekActs.forEach(a => {
+        if (a.steps) {
+          totalSteps += a.steps;
+        } else {
+          if (a.type === 'Run') totalSteps += (a.distance / 1.0);
+          else if (a.type === 'Walk') totalSteps += (a.distance / 0.75);
+        }
+      });
+      return {
+        value: Math.round(totalSteps),
+        labelComponent: (arr.length - 1 - i) % 2 === 0 ? () => (
+          <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
+            <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
+              {format(ws, 'MMM d')}
+            </Typography>
+          </View>
+        ) : undefined,
+        frontColor: totalSteps > 0 ? theme.colors.success : theme.colors.border
+      };
+    });
+  }, [activities]);
+  const maxSteps = stepsData.length ? Math.max(...stepsData.map(d => d.value), 1) : 1;
+  const avgSteps = stepsData.length ? Math.round(stepsData.reduce((s,d) => s + d.value, 0) / stepsData.length) : 0;
+
+  // ── Time ──────────────────────────────────────────────────────────
+  const timeData = useMemo(() => {
+    const now   = new Date();
+    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), 7);
+    const end   = endOfWeek(now, { weekStartsOn: 1 });
+    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-8).map((ws, i, arr) => {
+      const we  = endOfWeek(ws, { weekStartsOn: 1 });
+      const hrs = activities
+        .filter(a => { const d = parseISO(a.startDate); return d >= ws && d <= we; })
+        .reduce((s, a) => s + (a.movingTime / 3600), 0);
+      return {
+        value: Number(hrs.toFixed(1)),
+        labelComponent: (arr.length - 1 - i) % 2 === 0 ? () => (
+          <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
+            <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
+              {format(ws, 'MMM d')}
+            </Typography>
+          </View>
+        ) : undefined,
+        frontColor: hrs > 0 ? '#8B5CF6' : theme.colors.border
+      };
+    });
+  }, [activities]);
+  const maxTime = timeData.length ? Math.max(...timeData.map(d => d.value), 1) : 1;
+  const avgTime = timeData.length ? (timeData.reduce((s,d) => s + d.value, 0) / timeData.length).toFixed(1) : 0;
+
+  // ── Calories ──────────────────────────────────────────────────────
+  const caloriesData = useMemo(() => {
+    const now   = new Date();
+    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), 7);
+    const end   = endOfWeek(now, { weekStartsOn: 1 });
+    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-8).map((ws, i, arr) => {
+      const we  = endOfWeek(ws, { weekStartsOn: 1 });
+      const cals = activities
+        .filter(a => { const d = parseISO(a.startDate); return d >= ws && d <= we; })
+        .reduce((s, a) => s + (a.calories || 0), 0);
+      return {
+        value: Math.round(cals),
+        labelComponent: (arr.length - 1 - i) % 2 === 0 ? () => (
+          <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
+            <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
+              {format(ws, 'MMM d')}
+            </Typography>
+          </View>
+        ) : undefined,
+        frontColor: cals > 0 ? '#EF4444' : theme.colors.border
+      };
+    });
+  }, [activities]);
+  const maxCalories = caloriesData.length ? Math.max(...caloriesData.map(d => d.value), 1) : 1;
+  const avgCalories = caloriesData.length ? Math.round(caloriesData.reduce((s,d) => s + d.value, 0) / caloriesData.length) : 0;
+
+  // ── Power ─────────────────────────────────────────────────────────
+  const powerData = useMemo(() => {
+    return [...activities]
+      .filter(a => a.averageWatts && a.averageWatts > 0)
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+      .slice(-20)
+      .map((act, i, arr) => {
+        const isLast = i === arr.length - 1;
+        return {
+          value: Math.round(act.averageWatts || 0),
+          labelComponent: (i % 4 === 0 || isLast) ? () => (
+            <View style={{ width: 40, transform: [{ translateX: -10 }] }}>
+              <Typography style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700', textAlign: 'center' }}>
+                {format(parseISO(act.startDate), 'MMM d')}
+              </Typography>
+            </View>
+          ) : undefined,
+        };
+      });
+  }, [activities]);
+  const maxPower = powerData.length ? Math.max(...powerData.map(d => d.value), 1) : 1;
+  const avgPower = powerData.length ? Math.round(powerData.reduce((s,d) => s + d.value, 0) / powerData.length) : 0;
+
   const ELEV_BAR_W   = Math.min(ELEV_SPACING * 1.5, 46);
 
   const getPointerConfig = (unit: string, color: string) => ({
@@ -231,13 +357,29 @@ export default function InsightsScreen() {
   // Elevation y-axis: "100" → "100m"
   const elevYLabel = (v: string) => `${parseFloat(v).toFixed(0)}m`;
 
-  const SummaryPill = ({ label, value, unit, color }: { label: string; value: string | number; unit?: string; color: string }) => (
-    <View style={st.pill}>
+  const TAB_COLORS: Record<Tab, [string, string]> = {
+    pace:      ['#6366f1', '#8b5cf6'],
+    volume:    ['#0ea5e9', '#0284c7'],
+    heart:     ['#ef4444', '#dc2626'],
+    elevation: ['#f59e0b', '#d97706'],
+    steps:     ['#10b981', '#059669'],
+    time:      ['#8b5cf6', '#7c3aed'],
+    calories:  ['#ef4444', '#dc2626'],
+    power:     ['#f97316', '#ea580c'],
+  };
+  const activeColor = TAB_COLORS[tab] ?? ['#6366f1', '#8b5cf6'];
+
+  const SummaryPill = ({ label, value, unit, gradColors }: { label: string; value: string | number; unit?: string; gradColors?: [string, string] }) => (
+    <LinearGradient
+      colors={gradColors ?? activeColor}
+      start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+      style={st.pill}
+    >
       <Typography style={st.pillLabel}>{label}</Typography>
-      <Typography style={[st.pillValue, { color }]}>
+      <Typography style={st.pillValue}>
         {value}{unit ? <Typography style={st.pillUnit}> {unit}</Typography> : null}
       </Typography>
-    </View>
+    </LinearGradient>
   );
 
   const Tooltip = ({ text }: { text: string }) => (
@@ -255,27 +397,36 @@ export default function InsightsScreen() {
         <Typography style={st.pageTitle}>Insights</Typography>
 
         {/* Tab bar */}
-        <View style={st.tabRow}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }} contentContainerStyle={{ gap: 8 }}>
           {TABS.map(t => {
             const active = tab === t.key;
-            return (
-              <TouchableOpacity key={t.key} style={[st.tab, active && st.tabActive]} onPress={() => setTab(t.key)} activeOpacity={0.7}>
-                <Typography style={[st.tabText, active && st.tabTextActive]}>{t.label}</Typography>
+            const tColors = TAB_COLORS[t.key] ?? ['#6366f1', '#8b5cf6'];
+            return active ? (
+              <LinearGradient key={t.key} colors={tColors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                style={[st.tab, { flex: 0, paddingHorizontal: 18 }]}>
+                <Typography style={[st.tabText, st.tabTextActive]}>{t.label}</Typography>
+              </LinearGradient>
+            ) : (
+              <TouchableOpacity key={t.key} style={[st.tab, { flex: 0, paddingHorizontal: 18, backgroundColor: theme.colors.surface }]} onPress={() => setTab(t.key)} activeOpacity={0.7}>
+                <Typography style={st.tabText}>{t.label}</Typography>
               </TouchableOpacity>
             );
           })}
-        </View>
+          <TouchableOpacity style={[st.tab, { flex: 0, paddingHorizontal: 16, backgroundColor: 'transparent', borderWidth: 1, borderColor: theme.colors.primary }]} onPress={() => setShowManageModal(true)}>
+            <Settings2 size={12} color={theme.colors.primary} />
+            <Typography style={[st.tabText, { color: theme.colors.primary, marginLeft: 4 }]}>Manage</Typography>
+          </TouchableOpacity>
+        </ScrollView>
 
         {/* ════ PACE ════ */}
         {tab === 'pace' && (
           <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
             <View style={st.pillRow}>
-              <SummaryPill label="Best"    value={bestPace ? fmtPace(bestPace) : '--'} unit="/km" color={theme.colors.secondary} />
-              <SummaryPill label="Average" value={avgPace  ? fmtPace(avgPace)  : '--'} unit="/km" color={theme.colors.primary} />
-              <SummaryPill label="Runs"    value={paceData.length}                                  color={theme.colors.accent} />
+              <SummaryPill label="Best"    value={bestPace ? fmtPace(bestPace) : '--'} unit="/km" />
+              <SummaryPill label="Average" value={avgPace  ? fmtPace(avgPace)  : '--'} unit="/km" gradColors={['#8b5cf6','#7c3aed']} />
+              <SummaryPill label="Runs"    value={paceData.length} gradColors={['#0ea5e9','#0284c7']} />
             </View>
-            <Card style={st.chartCard}>
-              <SectionHeader label="Pace Trend" sub="Last 20 runs · min/km (lower = faster)" />
+            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#6366f1' }]}>
               {paceData.length > 1 ? (
                 <View style={{ overflow: 'hidden' }}>
                   <LineChart
@@ -309,11 +460,10 @@ export default function InsightsScreen() {
         {tab === 'volume' && (
           <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
             <View style={st.pillRow}>
-              <SummaryPill label="8-week total" value={totalVol}              unit="km" color={theme.colors.primary} />
-              <SummaryPill label="Peak week"    value={maxWeekVol.toFixed(1)} unit="km" color="#FBBF24" />
+              <SummaryPill label="8-week total" value={totalVol}              unit="km" />
+              <SummaryPill label="Peak week"    value={maxWeekVol.toFixed(1)} unit="km" gradColors={['#f59e0b','#d97706']} />
             </View>
-            <Card style={st.chartCard}>
-              <SectionHeader label="Weekly Volume" sub="km per week · last 8 weeks" />
+            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#0ea5e9' }]}>
               {volumeData.length > 0 ? (
                 <View style={{ overflow: 'hidden' }}>
                   <BarChart
@@ -340,7 +490,7 @@ export default function InsightsScreen() {
         {/* ════ HEART RATE ════ */}
         {tab === 'heart' && (
           <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
-            <Card style={st.chartCard}>
+            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#ef4444' }]}>
               <SectionHeader label="HR Zone Distribution" sub="Based on average HR per activity" />
               {zoneStats.length > 0 ? (
                 <>
@@ -395,10 +545,10 @@ export default function InsightsScreen() {
         {tab === 'elevation' && (
           <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
             <View style={st.pillRow}>
-              <SummaryPill label="Total climbed" value={totalElev.toLocaleString()} unit="m"  color="#FBBF24" />
-              <SummaryPill label="Peak single"   value={Math.round(maxElev)}         unit="m"  color={theme.colors.secondary} />
+              <SummaryPill label="Total climbed" value={totalElev.toLocaleString()} unit="m" />
+              <SummaryPill label="Peak single"   value={Math.round(maxElev)}         unit="m" gradColors={['#f59e0b','#d97706']} />
             </View>
-            <Card style={st.chartCard}>
+            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#f59e0b' }]}>
               <SectionHeader label="Elevation per Activity" sub="Total gain (m)" />
               {elevData.length > 1 ? (
                 <View style={{ overflow: 'hidden' }}>
@@ -438,7 +588,126 @@ export default function InsightsScreen() {
           </Animated.View>
         )}
 
+        {/* ════ STEPS ════ */}
+        {tab === 'steps' && (
+          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
+            <View style={st.pillRow}>
+              <SummaryPill label="Avg Steps/Wk" value={avgSteps} gradColors={['#10b981','#059669']} />
+            </View>
+            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#10b981' }]}>
+              <SectionHeader label="Estimated Steps" sub="Last 8 weeks" />
+              <View style={{ overflow: 'hidden' }}>
+                <BarChart
+                  data={stepsData}
+                  height={200} width={CHART_W}
+                  barWidth={BAR_W} roundedTop
+                  maxValue={Math.ceil(maxSteps * 1.2)}
+                  initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
+                  yAxisLabelTexts={Array.from({length: 5}, (_, i) => Math.round(maxSteps * 1.2 * i / 4 / 1000) + 'k')}
+                  {...chartBase}
+                />
+              </View>
+            </Card>
+          </Animated.View>
+        )}
+
+        {/* ════ TIME ════ */}
+        {tab === 'time' && (
+          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
+            <View style={st.pillRow}>
+              <SummaryPill label="Avg Active Time" value={avgTime} unit="hrs/wk" gradColors={['#8b5cf6','#7c3aed']} />
+            </View>
+            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#8b5cf6' }]}>
+              <SectionHeader label="Active Time" sub="Last 8 weeks (hrs)" />
+              <View style={{ overflow: 'hidden' }}>
+                <BarChart
+                  data={timeData}
+                  height={200} width={CHART_W}
+                  barWidth={BAR_W} roundedTop
+                  maxValue={Math.ceil(maxTime * 1.2)}
+                  initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
+                  {...chartBase}
+                />
+              </View>
+            </Card>
+          </Animated.View>
+        )}
+
+        {/* ════ CALORIES ════ */}
+        {tab === 'calories' && (
+          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
+            <View style={st.pillRow}>
+              <SummaryPill label="Avg Calories/Wk" value={avgCalories} gradColors={['#ef4444','#dc2626']} />
+            </View>
+            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#ef4444' }]}>
+              <SectionHeader label="Calories Burned" sub="Last 8 weeks (kcal)" />
+              <View style={{ overflow: 'hidden' }}>
+                <BarChart
+                  data={caloriesData}
+                  height={200} width={CHART_W}
+                  barWidth={BAR_W} roundedTop
+                  maxValue={Math.ceil(maxCalories * 1.2)}
+                  initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
+                  {...chartBase}
+                />
+              </View>
+            </Card>
+          </Animated.View>
+        )}
+
+        {/* ════ POWER ════ */}
+        {tab === 'power' && (
+          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
+            <View style={st.pillRow}>
+              <SummaryPill label="Avg Power" value={avgPower} unit="W" gradColors={['#f97316','#ea580c']} />
+            </View>
+            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#f97316' }]}>
+              <SectionHeader label="Average Power" sub="Last 20 activities with power" />
+              {powerData.length > 1 ? (
+                <View style={{ overflow: 'hidden' }}>
+                  <LineChart
+                    data={powerData}
+                    height={200} width={CHART_W}
+                    thickness={4} color={theme.colors.accent} hideDataPoints
+                    initialSpacing={12}
+                    spacing={Math.max((CHART_W - 12) / Math.max(powerData.length - 1, 1), 18)}
+                    curved areaChart
+                    startFillColor={theme.colors.accent} endFillColor={theme.colors.background}
+                    startOpacity={0.6} endOpacity={0}
+                    yAxisLabelSuffix=" W"
+                    pointerConfig={getPointerConfig('W', theme.colors.accent)}
+                    {...chartBase}
+                  />
+                </View>
+              ) : <EmptyChart msg="No power data available" />}
+            </Card>
+          </Animated.View>
+        )}
+
       </ScrollView>
+
+      {/* MANAGE GRAPHS MODAL */}
+      <Modal animationType="slide" transparent visible={showManageModal} onRequestClose={() => setShowManageModal(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: theme.colors.surface, padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
+              <Typography variant="h2">Manage Graphs</Typography>
+              <TouchableOpacity onPress={() => setShowManageModal(false)}><X color={theme.colors.textSecondary} /></TouchableOpacity>
+            </View>
+            {ALL_TABS.map(t => (
+              <View key={t.key} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
+                <Typography>{t.label}</Typography>
+                <Switch 
+                  value={activeKeys.includes(t.key)}
+                  onValueChange={() => toggleGraph(t.key)}
+                  trackColor={{ true: theme.colors.primary, false: theme.colors.border }}
+                />
+              </View>
+            ))}
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -459,10 +728,10 @@ const st = StyleSheet.create({
   tabTextActive:{ color: '#fff' },
 
   pillRow:   { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  pill:      { flex: 1, backgroundColor: theme.colors.surface, borderRadius: theme.borderRadius.md, padding: 12, borderWidth: 1, borderColor: theme.colors.border },
-  pillLabel: { fontSize: 10, color: theme.colors.textSecondary, marginBottom: 4, fontWeight: '600', textTransform: 'uppercase' },
-  pillValue: { fontSize: 20, fontWeight: '800' },
-  pillUnit:  { fontSize: 11, color: theme.colors.textSecondary, fontWeight: '400' },
+  pill:      { flex: 1, borderRadius: theme.borderRadius.md, padding: 14, overflow: 'hidden' },
+  pillLabel: { fontSize: 10, color: 'rgba(255,255,255,0.75)', marginBottom: 4, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
+  pillValue: { fontSize: 20, fontWeight: '800', color: '#fff' },
+  pillUnit:  { fontSize: 11, color: 'rgba(255,255,255,0.7)', fontWeight: '400' },
 
   chartCard: { padding: 16, marginBottom: 16 },
 

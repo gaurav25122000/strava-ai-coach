@@ -1,13 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Alert, Platform, KeyboardAvoidingView } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
 import { ProgressBar } from '../components/ProgressBar';
 import { useStore, Goal } from '../store/useStore';
-import { Flame, PersonStanding, Plus, Zap, X, Calendar } from 'lucide-react-native';
+import { Flame, PersonStanding, Plus, Zap, X, Calendar, Trophy, TrendingUp, Clock, Heart, MapPin, Activity } from 'lucide-react-native';
 import { AIService } from '../services/ai';
-import { differenceInDays, parseISO, format } from 'date-fns';
+import { differenceInDays, parseISO, format, getWeek, getMonth, getYear, startOfWeek, startOfMonth, endOfWeek, endOfMonth } from 'date-fns';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
@@ -20,6 +21,11 @@ export default function GoalsScreen() {
   const [newGoalDate, setNewGoalDate] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [goalMode, setGoalMode] = useState<'AI' | 'Simple'>('AI');
+  const [simpleCategory, setSimpleCategory] = useState<'Frequency' | 'Distance' | 'HeartRate' | 'Time'>('Frequency');
+  const [simplePeriod, setSimplePeriod] = useState<'Week' | 'Month'>('Week');
+  const [simpleTarget, setSimpleTarget] = useState('10');
+  const [simpleActivityType, setSimpleActivityType] = useState<'All' | 'Run' | 'Walk' | 'Ride'>('All');
 
   const goalDate = newGoalDate ? new Date(newGoalDate) : new Date();
 
@@ -28,13 +34,100 @@ export default function GoalsScreen() {
     if (selected) setNewGoalDate(selected.toISOString().split('T')[0]);
   };
 
-  // Strip LLM markdown artefacts: **bold**, * bullet, excess whitespace
+  // Strip LLM markdown artefacts
   const stripMd = (text: string) =>
     text
-      .replace(/\*\*(.*?)\*\*/g, '$1')  // **bold** → bold
-      .replace(/^\s*\*\s+/gm, '• ')    // * item → • item
-      .replace(/\\n/g, '\n')           // literal \n → newline
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/^\s*\*\s+/gm, '• ')
+      .replace(/\\n/g, '\n')
       .trim();
+
+  // Compute current period key e.g. "2025-W18" or "2025-04"
+  const getPeriodKey = (period: 'Week' | 'Month') => {
+    const now = new Date();
+    if (period === 'Week') return `${getYear(now)}-W${String(getWeek(now, { weekStartsOn: 1 })).padStart(2, '0')}`;
+    return `${getYear(now)}-${String(getMonth(now) + 1).padStart(2, '0')}`;
+  };
+
+  // On mount: snapshot any simple goals whose period has rolled over
+  useEffect(() => {
+    const now = new Date();
+    goals.forEach(goal => {
+      if (!goal.isSimple) return;
+      const currentKey = getPeriodKey(goal.simplePeriod || 'Week');
+      if (goal.lastSnapshotPeriod === currentKey) return; // already snapshotted this period
+
+      // Calculate what was achieved last period
+      const period = goal.simplePeriod || 'Week';
+      const prevStart = period === 'Week'
+        ? startOfWeek(new Date(now.getTime() - 7 * 86400000), { weekStartsOn: 1 })
+        : startOfMonth(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+      const prevEnd = period === 'Week'
+        ? endOfWeek(prevStart, { weekStartsOn: 1 })
+        : endOfMonth(prevStart);
+
+      const actType = goal.simpleActivityType || 'All';
+      const prevActs = activities.filter(a => {
+        const d = parseISO(a.startDate);
+        return d >= prevStart && d <= prevEnd && (actType === 'All' || a.type === actType);
+      });
+
+      let achieved = 0;
+      if (goal.simpleCategory === 'Frequency') achieved = prevActs.length;
+      else if (goal.simpleCategory === 'Distance') achieved = prevActs.reduce((s, a) => s + a.distance / 1000, 0);
+      else if (goal.simpleCategory === 'Time') achieved = prevActs.reduce((s, a) => s + a.movingTime / 3600, 0);
+      else if (goal.simpleCategory === 'HeartRate') {
+        const hrs = prevActs.filter(a => (a.averageHeartRate || 0) > 0);
+        achieved = hrs.length ? hrs.reduce((s, a) => s + (a.averageHeartRate || 0), 0) / hrs.length : 0;
+      }
+
+      if (goal.lastSnapshotPeriod) {
+        // only archive if there was a previous period key (not first run)
+        const historyEntry = {
+          period: goal.lastSnapshotPeriod,
+          achieved: Number(achieved.toFixed(1)),
+          target: goal.simpleTarget || 0,
+          completed: achieved >= (goal.simpleTarget || 0),
+        };
+        updateGoal({
+          ...goal,
+          lastSnapshotPeriod: currentKey,
+          history: [historyEntry, ...(goal.history || [])].slice(0, 12),
+        });
+      } else {
+        // first time seeing this goal — just record the key
+        updateGoal({ ...goal, lastSnapshotPeriod: currentKey });
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const calculateSimpleGoalProgress = (goal: Goal) => {
+    if (!goal.isSimple) return 0;
+    const now = new Date();
+    const { startOfWeek, startOfMonth, endOfWeek, endOfMonth } = require('date-fns');
+    const start = goal.simplePeriod === 'Week' ? startOfWeek(now, { weekStartsOn: 1 }) : startOfMonth(now);
+    const end   = goal.simplePeriod === 'Week' ? endOfWeek(now, { weekStartsOn: 1 }) : endOfMonth(now);
+    const actType = goal.simpleActivityType || 'All';
+    const relevantActs = activities.filter(a => {
+      const d = parseISO(a.startDate);
+      const inPeriod = d >= start && d <= end;
+      const matchesType = actType === 'All' || a.type === actType;
+      return inPeriod && matchesType;
+    });
+    if (goal.simpleCategory === 'Frequency') {
+      return relevantActs.length;
+    } else if (goal.simpleCategory === 'Distance') {
+      return relevantActs.reduce((sum, a) => sum + (a.distance / 1000), 0);
+    } else if (goal.simpleCategory === 'HeartRate') {
+      const hrActs = relevantActs.filter(a => a.averageHeartRate && a.averageHeartRate > 0);
+      if (!hrActs.length) return 0;
+      return hrActs.reduce((sum, a) => sum + a.averageHeartRate!, 0) / hrActs.length;
+    } else if (goal.simpleCategory === 'Time') {
+      return relevantActs.reduce((sum, a) => sum + (a.movingTime / 3600), 0);
+    }
+    return 0;
+  };
 
   const openEdit = (goal: Goal) => {
     setEditingGoal(goal.id);
@@ -48,9 +141,44 @@ export default function GoalsScreen() {
     setEditingGoal(null);
     setNewGoalTitle('');
     setNewGoalDate('');
+    setGoalMode('AI');
+    setSimpleTarget('10');
+    setSimpleActivityType('All');
   };
 
   const handleAddGoal = async () => {
+    if (goalMode === 'Simple') {
+      const targetVal = parseFloat(simpleTarget);
+      if (isNaN(targetVal) || targetVal <= 0) {
+        Alert.alert('Invalid Target', 'Please enter a valid numeric target.');
+        return;
+      }
+      const unitLabel = simpleCategory === 'Distance' ? 'km' : simpleCategory === 'Time' ? 'hrs' : simpleCategory === 'HeartRate' ? 'bpm avg' : 'sessions';
+      const actLabel = simpleActivityType === 'All' ? '' : ` (${simpleActivityType}s)`;
+      const autoTitle = `${targetVal} ${unitLabel}${actLabel} per ${simplePeriod}`;
+      const finalGoal: Goal = {
+        id: editingGoal || Date.now().toString(),
+        title: newGoalTitle || autoTitle,
+        targetDate: newGoalDate || new Date().toISOString().split('T')[0],
+        daysRemaining: 0,
+        type: 'Simple',
+        isSimple: true,
+        simpleCategory,
+        simplePeriod,
+        simpleTarget: targetVal,
+        simpleActivityType,
+        metric: simpleCategory,
+        progress: 0,
+        phase: 'Ongoing',
+        weeklyVolume: { current: 0, target: 0 },
+        longRun: { current: 0, target: 0 },
+        keyWorkout: '',
+      };
+      if (editingGoal) updateGoal(finalGoal); else addGoal(finalGoal);
+      closeModal();
+      return;
+    }
+
     if (!newGoalTitle || !newGoalDate) {
       Alert.alert('Missing fields', 'Please enter a goal title and pick a target date.');
       return;
@@ -158,15 +286,86 @@ export default function GoalsScreen() {
               </View>
             </View>
 
-            {/* Days out */}
-            <View style={styles.statBox}>
-              <Typography variant="label">DAYS OUT</Typography>
-              <Typography variant="h1" color={goal.id === '1' ? theme.colors.error : theme.colors.success}>{goal.daysRemaining}</Typography>
-              <Typography variant="caption">{Math.floor(goal.daysRemaining / 7)} weeks to go</Typography>
-            </View>
+            {goal.isSimple ? (() => {
+              const prog = calculateSimpleGoalProgress(goal);
+              const targetNum = Number(goal.simpleTarget) || 1;
+              const pct = Math.min(100, (prog / targetNum) * 100);
+              const isDone = pct >= 100;
+              const unit = goal.simpleCategory === 'Distance' ? 'km' : goal.simpleCategory === 'Time' ? 'hrs' : goal.simpleCategory === 'HeartRate' ? 'bpm' : 'sessions';
+              const actTypeLabel = goal.simpleActivityType && goal.simpleActivityType !== 'All' ? ` · ${goal.simpleActivityType}s only` : '';
+              const periodLabel = (goal.simplePeriod || 'Week') === 'Week' ? 'This Week' : 'This Month';
+              const catIcon = goal.simpleCategory === 'Distance' ? <MapPin size={14} color="#fff" /> : goal.simpleCategory === 'Time' ? <Clock size={14} color="#fff" /> : goal.simpleCategory === 'HeartRate' ? <Heart size={14} color="#fff" /> : <Activity size={14} color="#fff" />;
+              const gradColors: [string, string] = isDone ? ['#16a34a', '#15803d'] : pct > 60 ? ['#0ea5e9', '#0284c7'] : ['#7c3aed', '#6d28d9'];
+              return (
+                <>
+                  <LinearGradient
+                    colors={gradColors}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                    style={{ borderRadius: 12, padding: 16, marginTop: 12 }}
+                  >
+                    {/* Header row */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        {catIcon}
+                        <Typography style={{ color: 'rgba(255,255,255,0.8)', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          {periodLabel}{actTypeLabel}
+                        </Typography>
+                      </View>
+                      {isDone && <Typography style={{ fontSize: 18 }}>🎉</Typography>}
+                    </View>
+
+                    {/* Main numbers */}
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 4 }}>
+                      <Typography style={{ fontSize: 44, fontWeight: '900', color: '#fff', lineHeight: 48 }}>
+                        {Number(prog.toFixed(1))}
+                      </Typography>
+                      <Typography style={{ color: 'rgba(255,255,255,0.7)', fontSize: 16, marginBottom: 6, marginLeft: 6 }}>
+                        / {goal.simpleTarget} {unit}
+                      </Typography>
+                    </View>
+
+                    <Typography style={{ color: isDone ? '#bbf7d0' : 'rgba(255,255,255,0.7)', fontSize: 12, marginBottom: 14 }}>
+                      {isDone ? '🏆 Goal crushed! Great work!' : `${Math.round(pct)}% of your ${(goal.simplePeriod || 'week').toLowerCase()}ly target`}
+                    </Typography>
+
+                    {/* Progress bar */}
+                    <View style={{ height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.25)', overflow: 'hidden' }}>
+                      <View style={{ width: `${pct}%`, height: '100%', borderRadius: 4, backgroundColor: isDone ? '#bbf7d0' : '#fff' }} />
+                    </View>
+                  </LinearGradient>
+
+                  {/* History section */}
+                  {(goal.history || []).length > 0 && (
+                    <View style={{ marginTop: 16 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                        <TrendingUp size={14} color={theme.colors.textSecondary} />
+                        <Typography variant="label" style={{ color: theme.colors.textSecondary }}>PAST PERIODS</Typography>
+                      </View>
+                      {(goal.history || []).slice(0, 4).map((h, i) => (
+                        <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
+                          <Typography variant="caption" style={{ color: theme.colors.textSecondary }}>{h.period}</Typography>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Typography variant="caption" style={{ color: h.completed ? theme.colors.success : theme.colors.text }}>
+                              {h.achieved} / {h.target} {unit}
+                            </Typography>
+                            <Typography>{h.completed ? '✅' : '❌'}</Typography>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </>
+              );
+            })() : (
+              <View style={styles.statBox}>
+                <Typography variant="label">DAYS OUT</Typography>
+                <Typography variant="h1" color={goal.id === '1' ? theme.colors.error : theme.colors.success}>{goal.daysRemaining}</Typography>
+                <Typography variant="caption">{Math.floor(goal.daysRemaining / 7)} weeks to go</Typography>
+              </View>
+            )}
 
             {/* Phases Rendering */}
-            {goal.phases && goal.phases.length > 0 ? (
+            {!goal.isSimple && goal.phases && goal.phases.length > 0 ? (
               goal.phases.map((p, idx) => (
                 <View key={idx} style={{ marginTop: idx > 0 ? 24 : 12 }}>
                   <View style={styles.phaseBox}>
@@ -204,7 +403,7 @@ export default function GoalsScreen() {
                   </View>
                 </View>
               ))
-            ) : (
+            ) : !goal.isSimple ? (
               <>
                 <View style={[styles.phaseBox, { marginTop: 12 }]}>
                   <Typography variant="label">PHASE</Typography>
@@ -245,7 +444,7 @@ export default function GoalsScreen() {
                   </Typography>
                 </View>
               </>
-            )}
+            ) : null}
 
             {goal.title.toLowerCase().includes('hyrox') && (
                <View style={[styles.workoutBox, { borderLeftColor: theme.colors.error, marginTop: 8 }]}>
@@ -274,39 +473,129 @@ export default function GoalsScreen() {
           behavior="padding"
         >
           <View style={styles.modalContent}>
+            {/* Drag handle */}
+            <View style={{ width: 40, height: 4, backgroundColor: theme.colors.border, borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
             <View style={styles.modalHeader}>
-              <Typography variant="h2">{editingGoal ? 'Edit Goal' : 'New AI Goal'}</Typography>
+              <Typography variant="h2">{editingGoal ? 'Edit Goal' : 'New Goal'}</Typography>
               <TouchableOpacity onPress={closeModal}>
                 <X size={24} color={theme.colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
-            <Typography variant="body" color={theme.colors.textSecondary} style={{marginBottom: 16}}>
-              Enter your goal and our AI will generate a personalized training plan.
-            </Typography>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
 
-            <View style={styles.inputGroup}>
-              <Typography variant="label" style={{marginBottom: 8}}>GOAL TITLE</Typography>
-              <TextInput
-                style={styles.input}
-                value={newGoalTitle}
-                onChangeText={setNewGoalTitle}
-                placeholder="e.g. Marathon, 10k PB"
-                placeholderTextColor={theme.colors.textSecondary}
-              />
+            <View style={{ flexDirection: 'row', marginBottom: 16, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 4 }}>
+              <TouchableOpacity style={{ flex: 1, paddingVertical: 8, alignItems: 'center', backgroundColor: goalMode === 'AI' ? theme.colors.primary : 'transparent', borderRadius: 6 }} onPress={() => setGoalMode('AI')}>
+                <Typography weight="600">AI Plan</Typography>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ flex: 1, paddingVertical: 8, alignItems: 'center', backgroundColor: goalMode === 'Simple' ? theme.colors.primary : 'transparent', borderRadius: 6 }} onPress={() => setGoalMode('Simple')}>
+                <Typography weight="600">Simple Target</Typography>
+              </TouchableOpacity>
             </View>
 
-            <View style={styles.inputGroup}>
-              <Typography variant="label" style={{marginBottom: 8}}>TARGET DATE</Typography>
-              <TouchableOpacity onPress={() => setShowDatePicker(true)} activeOpacity={0.7}>
-                <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', minHeight: 44 }]}>
-                  <Typography style={{ color: newGoalDate ? theme.colors.text : theme.colors.textSecondary, fontSize: 15, flex: 1 }}>
-                    {newGoalDate || 'Tap to pick a date'}
-                  </Typography>
+            {goalMode === 'AI' ? (
+              <>
+                <Typography variant="body" color={theme.colors.textSecondary} style={{marginBottom: 16}}>
+                  Enter your goal and our AI will generate a personalized training plan.
+                </Typography>
+                <View style={styles.inputGroup}>
+                  <Typography variant="label" style={{marginBottom: 8}}>GOAL TITLE</Typography>
+                  <TextInput style={styles.input} value={newGoalTitle} onChangeText={setNewGoalTitle} placeholder="e.g. Marathon, 10k PB" placeholderTextColor={theme.colors.textSecondary} />
                 </View>
-              </TouchableOpacity>
+                <View style={styles.inputGroup}>
+                  <Typography variant="label" style={{marginBottom: 8}}>TARGET DATE</Typography>
+                  <TouchableOpacity onPress={() => setShowDatePicker(true)} activeOpacity={0.7}>
+                    <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', minHeight: 44 }]}>
+                      <Typography style={{ color: newGoalDate ? theme.colors.text : theme.colors.textSecondary, fontSize: 15, flex: 1 }}>{newGoalDate || 'Tap to pick a date'}</Typography>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                {/* Step 1: What to track */}
+                <Typography variant="label" style={{ marginBottom: 8, color: theme.colors.textSecondary }}>WHAT DO YOU WANT TO TRACK?</Typography>
+                {[
+                  { key: 'Frequency', label: '# of Sessions', desc: 'Count how many runs/walks you complete' },
+                  { key: 'Distance', label: 'Total Distance', desc: 'Kilometres covered across activities' },
+                  { key: 'Time', label: 'Active Time', desc: 'Total hours spent being active' },
+                  { key: 'HeartRate', label: 'Avg Heart Rate', desc: 'Average HR across your activities' },
+                ].map(opt => (
+                  <TouchableOpacity
+                    key={opt.key}
+                    onPress={() => setSimpleCategory(opt.key as any)}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center',
+                      padding: 12, borderRadius: 10, marginBottom: 8,
+                      borderWidth: 1.5,
+                      borderColor: simpleCategory === opt.key ? theme.colors.primary : theme.colors.border,
+                      backgroundColor: simpleCategory === opt.key ? theme.colors.primary + '22' : 'transparent',
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Typography weight="600">{opt.label}</Typography>
+                      <Typography variant="caption" style={{ marginTop: 2 }}>{opt.desc}</Typography>
+                    </View>
+                    {simpleCategory === opt.key && <Typography style={{ color: theme.colors.primary }}>✓</Typography>}
+                  </TouchableOpacity>
+                ))}
 
-              {/* iOS modal */}
+                {/* Step 2: Activity type */}
+                <Typography variant="label" style={{ marginTop: 16, marginBottom: 8, color: theme.colors.textSecondary }}>WHICH ACTIVITY TYPE?</Typography>
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+                  {(['All', 'Run', 'Walk', 'Ride'] as const).map(t => (
+                    <TouchableOpacity
+                      key={t}
+                      onPress={() => setSimpleActivityType(t)}
+                      style={{
+                        flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center',
+                        borderWidth: 1.5,
+                        borderColor: simpleActivityType === t ? theme.colors.accent : theme.colors.border,
+                        backgroundColor: simpleActivityType === t ? theme.colors.accent + '22' : 'transparent',
+                      }}
+                    >
+                      <Typography variant="caption" weight="600" style={{ color: simpleActivityType === t ? theme.colors.accent : theme.colors.textSecondary }}>
+                        {t === 'All' ? 'All' : t === 'Run' ? 'Run' : t === 'Walk' ? 'Walk' : 'Ride'}
+                      </Typography>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Step 3: Period */}
+                <Typography variant="label" style={{ marginBottom: 8, color: theme.colors.textSecondary }}>RESET PERIOD</Typography>
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+                  {(['Week', 'Month'] as const).map(p => (
+                    <TouchableOpacity
+                      key={p}
+                      onPress={() => setSimplePeriod(p)}
+                      style={{
+                        flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center',
+                        borderWidth: 1.5,
+                        borderColor: simplePeriod === p ? theme.colors.primary : theme.colors.border,
+                        backgroundColor: simplePeriod === p ? theme.colors.primary + '22' : 'transparent',
+                      }}
+                    >
+                      <Typography weight="600" style={{ color: simplePeriod === p ? theme.colors.primary : theme.colors.text }}>
+                        {p === 'Week' ? 'Weekly' : 'Monthly'}
+                      </Typography>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Step 4: Target number */}
+                <Typography variant="label" style={{ marginBottom: 8, color: theme.colors.textSecondary }}>
+                  TARGET {simpleCategory === 'Distance' ? '(KM)' : simpleCategory === 'Time' ? '(HOURS)' : simpleCategory === 'HeartRate' ? '(AVG BPM)' : '(# SESSIONS)'}
+                </Typography>
+                <TextInput style={[styles.input, { marginBottom: 16 }]} value={simpleTarget} onChangeText={setSimpleTarget} keyboardType="numeric"
+                  placeholder={simpleCategory === 'Distance' ? 'e.g. 30' : simpleCategory === 'Time' ? 'e.g. 5' : simpleCategory === 'HeartRate' ? 'e.g. 145' : 'e.g. 4'}
+                  placeholderTextColor={theme.colors.textSecondary} />
+
+                <Typography variant="label" style={{ marginBottom: 8, color: theme.colors.textSecondary }}>CUSTOM TITLE (OPTIONAL)</Typography>
+                <TextInput style={styles.input} value={newGoalTitle} onChangeText={setNewGoalTitle} placeholder="Leave blank for auto-generated title" placeholderTextColor={theme.colors.textSecondary} />
+              </>
+            )}
+
+            {/* iOS modal */}
               {showDatePicker && Platform.OS === 'ios' && (
                 <Modal transparent animationType="slide" visible={showDatePicker}>
                   <View style={styles.pickerOverlay}>
@@ -338,7 +627,7 @@ export default function GoalsScreen() {
                   onChange={onDateChange}
                 />
               )}
-            </View>
+            </ScrollView>
 
             <TouchableOpacity
               style={[styles.addButton, { width: '100%', justifyContent: 'center', marginTop: 16 }]}
@@ -348,7 +637,7 @@ export default function GoalsScreen() {
               {isGenerating ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Typography weight="bold" color="#fff">Generate Plan</Typography>
+                <Typography weight="bold" color="#fff">{goalMode === 'AI' ? 'Generate Plan' : 'Save Goal'}</Typography>
               )}
             </TouchableOpacity>
           </View>

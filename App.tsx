@@ -4,6 +4,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import TabNavigator from './src/navigation/TabNavigator';
 import { theme } from './src/theme';
 import { StravaService } from './src/services/strava';
+import { NotificationService } from './src/services/notifications';
+import { useStore } from './src/store/useStore';
 import { useEffect, useState } from 'react';
 import Animated, { FadeOut, FadeIn } from 'react-native-reanimated';
 import { View, StyleSheet } from 'react-native';
@@ -47,6 +49,31 @@ export default function App() {
     StravaService.initialize().then(() => {
       setTimeout(() => setIsReady(true), 1500);
     });
+
+    // Schedule notifications after a short delay (gives store time to hydrate)
+    const notifTimer = setTimeout(async () => {
+      const state = useStore.getState();
+      const { activities, userStats, goals } = state;
+
+      // Weekly recap stats
+      const now = new Date();
+      const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay() + 1);
+      const weekActs = activities.filter(a => new Date(a.startDate) >= weekStart);
+      const weekKm = weekActs.reduce((s, a) => s + a.distance / 1000, 0);
+      const weekDays = new Set(weekActs.map(a => a.startDate.split('T')[0])).size;
+
+      await NotificationService.scheduleWeeklyRecap({ weekKm, weekDays, streak: userStats.currentStreak });
+      await NotificationService.scheduleStreakReminder(userStats.currentStreak);
+
+      // Goal deadline reminders
+      for (const goal of goals) {
+        if (!goal.isSimple && goal.daysRemaining > 0 && goal.daysRemaining <= 7) {
+          await NotificationService.scheduleGoalDeadline(goal.title, goal.daysRemaining);
+        }
+      }
+    }, 3000);
+
+    return () => clearTimeout(notifTimer);
   }, []);
 
   const customDarkTheme = {

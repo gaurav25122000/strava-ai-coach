@@ -33,7 +33,7 @@ export const secureSettingsStorage = {
 
 export interface Activity {
   id: string;
-  type: 'Run' | 'Ride' | 'Workout';
+  type: 'Run' | 'Ride' | 'Workout' | 'Walk';
   distance: number; // in meters
   movingTime: number; // in seconds
   elapsedTime: number;
@@ -43,6 +43,11 @@ export interface Activity {
   maxSpeed: number;
   averageHeartRate?: number;
   maxHeartRate?: number;
+  averageCadence?: number;
+  steps?: number;
+  calories?: number;
+  averageWatts?: number;
+  sufferScore?: number;
   name?: string;
 }
 
@@ -59,7 +64,14 @@ export interface Goal {
   title: string;
   targetDate: string;
   daysRemaining: number;
-  type: 'Race' | 'Volume' | 'Frequency';
+  type: 'Race' | 'Volume' | 'Frequency' | 'Simple';
+  isSimple?: boolean;
+  simpleCategory?: 'Frequency' | 'Distance' | 'HeartRate' | 'Time';
+  simplePeriod?: 'Week' | 'Month';
+  simpleTarget?: number;
+  simpleActivityType?: 'All' | 'Run' | 'Walk' | 'Ride';
+  lastSnapshotPeriod?: string; // "2025-W18" or "2025-04" - tracks which period was last archived
+  history?: Array<{ period: string; achieved: number; target: number; completed: boolean }>;
   metric: string;
   progress: number; // 0-100
   phase: string;
@@ -112,6 +124,7 @@ interface Settings {
   timeFormat: '12h' | '24h';
   coachPersonality: 'Strict Drill Sergeant' | 'Encouraging Supporter' | 'Data-Driven Analyst';
   privacyZones: boolean;
+  activeGraphs?: string[];
 }
 
 interface Shoe {
@@ -126,6 +139,31 @@ interface Injury {
   type: string;
   date: string;
   severity: 'Low' | 'Medium' | 'High';
+}
+
+export interface Milestone {
+  id: string;
+  title: string;
+  description: string;
+  icon: string; // emoji
+  earnedAt: string; // ISO date
+  category: 'distance' | 'streak' | 'speed' | 'elevation' | 'frequency';
+}
+
+export interface BestEffort {
+  distance: number; // metres: 1000, 5000, 10000
+  time: number;     // seconds
+  pace: number;     // min/km
+  date: string;
+  activityName?: string;
+}
+
+export interface WeeklyDigest {
+  weekKey: string; // "2025-W18"
+  generatedAt: string;
+  summary: string;
+  highlight: string;
+  tip: string;
 }
 
 // Get local YYYY-MM-DD string without UTC conversion
@@ -198,6 +236,9 @@ interface AppState {
   settings: Settings;
   shoes: Shoe[];
   injuries: Injury[];
+  milestones: Milestone[];
+  bestEfforts: Record<number, BestEffort>; // keyed by distance in metres
+  weeklyDigest: WeeklyDigest | null;
   setActivities: (activities: Activity[]) => void;
   setLifetimeStats: (stats: any) => void;
   setGoals: (goals: Goal[]) => void;
@@ -209,6 +250,9 @@ interface AppState {
   updateUserProfile: (profile: Partial<UserProfile>) => void;
   addShoe: (shoe: Shoe) => void;
   addInjury: (injury: Injury) => void;
+  setMilestones: (milestones: Milestone[]) => void;
+  setBestEfforts: (efforts: Record<number, BestEffort>) => void;
+  setWeeklyDigest: (digest: WeeklyDigest) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -216,6 +260,9 @@ export const useStore = create<AppState>()(
     (set) => ({
       activities: [],
       goals: [],
+      milestones: [],
+      bestEfforts: {},
+      weeklyDigest: null,
       userStats: {
         currentStreak: 0,
         bestStreak: 0,
@@ -306,6 +353,9 @@ export const useStore = create<AppState>()(
       })),
       shoes: [],
       injuries: [],
+      setMilestones: (milestones) => set({ milestones }),
+      setBestEfforts: (bestEfforts) => set({ bestEfforts }),
+      setWeeklyDigest: (digest) => set({ weeklyDigest: digest }),
       settings: {
         stravaClientId: '',
         stravaClientSecret: '',
@@ -336,6 +386,9 @@ export const useStore = create<AppState>()(
         settings: state.settings,
         shoes: state.shoes,
         injuries: state.injuries,
+        milestones: state.milestones,
+        bestEfforts: state.bestEfforts,
+        weeklyDigest: state.weeklyDigest,
       }),
     }
   )
