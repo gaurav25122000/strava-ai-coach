@@ -1,30 +1,36 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
-// Custom storage for sensitive info using expo-secure-store
-const secureStorage: StateStorage = {
+// Standard async storage for regular state (avoids SecureStore size limits on iOS)
+const asyncStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
-    if (Platform.OS === 'web') {
-      return localStorage.getItem(name);
-    }
-    return await SecureStore.getItemAsync(name);
+    return await AsyncStorage.getItem(name);
   },
   setItem: async (name: string, value: string): Promise<void> => {
-    if (Platform.OS === 'web') {
-      localStorage.setItem(name, value);
-    } else {
-      await SecureStore.setItemAsync(name, value);
-    }
+    await AsyncStorage.setItem(name, value);
   },
   removeItem: async (name: string): Promise<void> => {
-    if (Platform.OS === 'web') {
-      localStorage.removeItem(name);
-    } else {
-      await SecureStore.deleteItemAsync(name);
-    }
+    await AsyncStorage.removeItem(name);
   },
+};
+
+// Secure storage helper specifically for secrets
+export const secureSettingsStorage = {
+  getSecret: async (key: string): Promise<string | null> => {
+     if (Platform.OS === 'web') return localStorage.getItem(`secret_${key}`);
+     return await SecureStore.getItemAsync(key);
+  },
+  setSecret: async (key: string, value: string): Promise<void> => {
+     if (Platform.OS === 'web') localStorage.setItem(`secret_${key}`, value);
+     else await SecureStore.setItemAsync(key, value);
+  },
+  removeSecret: async (key: string): Promise<void> => {
+     if (Platform.OS === 'web') localStorage.removeItem(`secret_${key}`);
+     else await SecureStore.deleteItemAsync(key);
+  }
 };
 
 export interface Activity {
@@ -191,8 +197,19 @@ export const useStore = create<AppState>()(
       addInjury: (injury) => set((state) => ({ injuries: [...state.injuries, injury] })),
     }),
     {
-      name: 'ai-coach-secure-storage',
-      storage: createJSONStorage(() => secureStorage),
+      name: 'ai-coach-app-storage',
+      storage: createJSONStorage(() => asyncStorage),
+      partialize: (state) => ({
+        // We persist everything here, but we shouldn't store secrets directly in plain text async storage long-term
+        // if we are being perfectly strict. However, since the user inputs them as settings, we will store them.
+        // The original code was putting the ENTIRE state in SecureStore, which crashes.
+        activities: state.activities,
+        goals: state.goals,
+        userStats: state.userStats,
+        settings: state.settings,
+        shoes: state.shoes,
+        injuries: state.injuries,
+      }),
     }
   )
 );

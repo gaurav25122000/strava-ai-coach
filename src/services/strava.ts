@@ -1,13 +1,21 @@
-import { Activity, useStore } from '../store/useStore';
+import { Activity, useStore, secureSettingsStorage } from '../store/useStore';
 import axios from 'axios';
 
 let accessToken: string | null = null;
 
 export const StravaService = {
+  initialize: async () => {
+    const token = await secureSettingsStorage.getSecret('strava_access_token');
+    if (token) {
+      accessToken = token;
+    }
+  },
+
   isAuthenticated: () => !!accessToken,
 
-  setToken: (token: string) => {
+  setToken: async (token: string) => {
     accessToken = token;
+    await secureSettingsStorage.setSecret('strava_access_token', token);
   },
 
   syncActivities: async (): Promise<Activity[]> => {
@@ -44,7 +52,8 @@ export const StravaService = {
     }
   },
 
-  disconnect: () => {
+  disconnect: async () => {
     accessToken = null;
+    await secureSettingsStorage.removeSecret('strava_access_token');
   }
 };

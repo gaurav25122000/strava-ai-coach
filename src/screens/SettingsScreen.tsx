@@ -8,7 +8,7 @@ import * as AuthSession from 'expo-auth-session';
 import { StravaService } from '../services/strava';
 import axios from 'axios';
 import { useEffect, useState } from 'react';
-import { File, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -17,16 +17,28 @@ export default function SettingsScreen() {
   const { settings, updateSettings, setActivities } = useStore();
   const [isAuthenticated, setIsAuthenticated] = useState(StravaService.isAuthenticated());
 
+  useEffect(() => {
+    // Check authentication status after App mounts and loads from storage
+    setIsAuthenticated(StravaService.isAuthenticated());
+  }, []);
+
   const redirectUri = AuthSession.makeRedirectUri({
     scheme: 'aicoachapp'
   });
 
+  // Dummy config to satisfy types when clientId is missing
+  const dummyConfig = {
+    clientId: 'dummy',
+    scopes: ['activity:read_all'],
+    redirectUri,
+  };
+
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
-    {
+    settings.stravaClientId ? {
       clientId: settings.stravaClientId,
       scopes: ['activity:read_all'],
       redirectUri,
-    },
+    } : dummyConfig,
     {
       authorizationEndpoint: 'https://www.strava.com/oauth/mobile/authorize',
       tokenEndpoint: 'https://www.strava.com/oauth/token',
@@ -50,7 +62,7 @@ export default function SettingsScreen() {
       });
 
       const { access_token } = res.data;
-      StravaService.setToken(access_token);
+      await StravaService.setToken(access_token);
       setIsAuthenticated(true);
 
       // Auto-sync activities
@@ -214,12 +226,13 @@ export default function SettingsScreen() {
             onPress={async () => {
               try {
                 const activities = useStore.getState().activities;
-                if (!Paths.document) throw new Error('No document directory');
-                const file = new File(Paths.document, 'activities.json');
-                await file.write(JSON.stringify(activities, null, 2));
+                const documentDirectory = FileSystem.documentDirectory;
+                if (!documentDirectory) throw new Error('No document directory');
+                const fileUri = documentDirectory + 'activities.json';
+                await FileSystem.writeAsStringAsync(fileUri, JSON.stringify(activities, null, 2));
 
                 if (await Sharing.isAvailableAsync()) {
-                  await Sharing.shareAsync(file.uri);
+                  await Sharing.shareAsync(fileUri);
                 } else {
                   Alert.alert('Error', 'Sharing is not available on this device');
                 }
