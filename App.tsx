@@ -11,6 +11,18 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
 import { CustomTabBar } from './src/components/CustomTabBar';
 import { useStore } from './src/store/useStore';
+import * as Notifications from 'expo-notifications';
+import * as Updates from 'expo-updates';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -33,8 +45,30 @@ export default function App() {
   const { loginToStrava, isAuthenticated } = useStore();
 
   useEffect(() => {
-    // Optionally auto-fetch if already authenticated, but dont trigger OAuth popup on load.
-    // if (isAuthenticated) fetchDataAndGeneratePlan();
+    // Check for OTA Updates
+    async function onFetchUpdateAsync() {
+      try {
+        const update = await Updates.checkForUpdateAsync();
+        if (update.isAvailable) {
+          await Updates.fetchUpdateAsync();
+          await Updates.reloadAsync();
+        }
+      } catch (error) {
+        console.log("Error fetching OTA update:", error);
+      }
+    }
+    onFetchUpdateAsync();
+
+    // Request notification permissions
+    async function requestPermissions() {
+      const { status } = await Notifications.requestPermissionsAsync();
+      if (status !== 'granted') {
+        console.warn('Push notification permissions denied');
+      }
+    }
+    requestPermissions();
+
+
   }, []);
 
   return (

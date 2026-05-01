@@ -4,7 +4,7 @@ import { theme } from '../constants/theme';
 import { Header } from '../components/Header';
 import * as SecureStore from 'expo-secure-store';
 import { useStore } from '../store/useStore';
-import { RefreshCw, LogOut, ChevronRight } from 'lucide-react-native';
+import { RefreshCw, LogOut } from 'lucide-react-native';
 
 export const SettingsScreen = () => {
   const [stravaClientId, setStravaClientId] = useState('');
@@ -14,17 +14,9 @@ export const SettingsScreen = () => {
   // Profile settings
   const [weight, setWeight] = useState('');
   const [maxHr, setMaxHr] = useState('');
+  const [isMetric, setIsMetric] = useState(true);
 
-  const {
-    fetchDataAndGeneratePlan,
-    logout,
-    isLoading,
-    useMetric, setUseMetric,
-    coachPersonality, setCoachPersonality,
-    privacyZonesEnabled, setPrivacyZones,
-    weatherContextEnabled, setWeatherContext,
-    shoes, addShoe
-  } = useStore();
+  const { fetchDataAndGeneratePlan, logout, isLoading } = useStore();
 
   useEffect(() => {
     loadSettings();
@@ -48,6 +40,7 @@ export const SettingsScreen = () => {
 
       if (storedWeight) setWeight(storedWeight);
       if (storedHr) setMaxHr(storedHr);
+      if (storedMetric !== null) setIsMetric(storedMetric === 'true');
 
     } catch (error) {
       console.error('Error loading settings', error);
@@ -62,6 +55,7 @@ export const SettingsScreen = () => {
 
       await SecureStore.setItemAsync('userWeight', weight);
       await SecureStore.setItemAsync('userMaxHr', maxHr);
+      await SecureStore.setItemAsync('userIsMetric', isMetric.toString());
 
       Alert.alert('Success', 'Settings saved successfully!');
     } catch (error) {
@@ -118,84 +112,23 @@ export const SettingsScreen = () => {
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.sectionTitle}>App Preferences</Text>
+        <Text style={styles.sectionTitle}>User Profile</Text>
 
         <View style={styles.inputGroup}>
           <View style={styles.switchRow}>
             <Text style={styles.label}>Use Metric System (km, kg)</Text>
             <Switch
-              value={useMetric}
-              onValueChange={setUseMetric}
+              value={isMetric}
+              onValueChange={setIsMetric}
               trackColor={{ false: theme.colors.skeletonBackground, true: theme.colors.primaryOrange }}
               thumbColor={theme.colors.textPrimary}
             />
           </View>
         </View>
 
-        <View style={styles.inputGroup}>
-          <View style={styles.switchRow}>
-            <View>
-              <Text style={styles.label}>Privacy Zones</Text>
-              <Text style={styles.helperText}>Hide start/end points</Text>
-            </View>
-            <Switch
-              value={privacyZonesEnabled}
-              onValueChange={setPrivacyZones}
-              trackColor={{ false: theme.colors.skeletonBackground, true: theme.colors.primaryBlue }}
-              thumbColor={theme.colors.textPrimary}
-            />
-          </View>
-        </View>
-
-        <View style={styles.inputGroup}>
-          <View style={styles.switchRow}>
-            <View>
-              <Text style={styles.label}>Weather Context</Text>
-              <Text style={styles.helperText}>AI adjusts plans based on forecast</Text>
-            </View>
-            <Switch
-              value={weatherContextEnabled}
-              onValueChange={setWeatherContext}
-              trackColor={{ false: theme.colors.skeletonBackground, true: theme.colors.primaryGreen }}
-              thumbColor={theme.colors.textPrimary}
-            />
-          </View>
-        </View>
-
-        <Text style={styles.sectionTitle}>AI Coach Personality</Text>
-        <View style={styles.segmentedControl}>
-          {['Strict', 'Encouraging', 'Data-Driven'].map((p) => (
-            <TouchableOpacity
-              key={p}
-              style={[styles.segmentButton, coachPersonality === p && styles.segmentActive]}
-              onPress={() => setCoachPersonality(p as any)}
-            >
-              <Text style={[styles.segmentText, coachPersonality === p && styles.segmentTextActive]}>{p}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <Text style={styles.sectionTitle}>Shoe Closet</Text>
-        {shoes.map(shoe => (
-            <View key={shoe.id} style={styles.shoeCard}>
-               <View style={{flex: 1}}>
-                 <Text style={styles.shoeName}>{shoe.name}</Text>
-                 <View style={styles.progressBarBg}>
-                   <View style={[styles.progressBarFill, { width: `${Math.min((shoe.mileage / shoe.maxMileage) * 100, 100)}%`, backgroundColor: shoe.mileage > shoe.maxMileage * 0.9 ? theme.colors.primaryRed : theme.colors.primaryGreen }]} />
-                 </View>
-                 <Text style={styles.shoeMileage}>{shoe.mileage.toFixed(1)} / {shoe.maxMileage} {useMetric ? 'km' : 'mi'}</Text>
-               </View>
-            </View>
-        ))}
-        <TouchableOpacity style={styles.addShoeButton} onPress={() => addShoe('New Running Shoe', 500)}>
-            <Text style={styles.addShoeText}>+ Add Pair</Text>
-        </TouchableOpacity>
-
-        <Text style={styles.sectionTitle}>User Profile</Text>
-
         <View style={styles.rowInputs}>
           <View style={[styles.inputGroup, { flex: 1, marginRight: theme.spacing.sm }]}>
-            <Text style={styles.label}>Weight ({useMetric ? 'kg' : 'lbs'})</Text>
+            <Text style={styles.label}>Weight ({isMetric ? 'kg' : 'lbs'})</Text>
             <TextInput
               style={styles.input}
               value={weight}
@@ -318,70 +251,6 @@ const styles = StyleSheet.create({
   },
   rowInputs: {
     flexDirection: 'row',
-  },
-  helperText: {
-    ...theme.typography.caption,
-    color: theme.colors.textSecondary,
-    fontSize: 11,
-  },
-  segmentedControl: {
-    flexDirection: 'row',
-    backgroundColor: theme.colors.cardBackground,
-    borderRadius: theme.borderRadius.md,
-    padding: 4,
-    marginBottom: theme.spacing.lg,
-  },
-  segmentButton: {
-    flex: 1,
-    paddingVertical: theme.spacing.sm,
-    alignItems: 'center',
-    borderRadius: theme.borderRadius.sm,
-  },
-  segmentActive: {
-    backgroundColor: theme.colors.primaryOrange,
-  },
-  segmentText: {
-    ...theme.typography.caption,
-    color: theme.colors.textSecondary,
-  },
-  segmentTextActive: {
-    color: theme.colors.textPrimary,
-    fontWeight: 'bold',
-  },
-  shoeCard: {
-    backgroundColor: theme.colors.cardBackground,
-    padding: theme.spacing.md,
-    borderRadius: theme.borderRadius.sm,
-    marginBottom: theme.spacing.sm,
-  },
-  shoeName: {
-    ...theme.typography.body,
-    color: theme.colors.textPrimary,
-    marginBottom: theme.spacing.xs,
-  },
-  progressBarBg: {
-    height: 6,
-    backgroundColor: theme.colors.skeletonBackground,
-    borderRadius: 3,
-    marginVertical: 4,
-  },
-  progressBarFill: {
-    height: 6,
-    borderRadius: 3,
-  },
-  shoeMileage: {
-    ...theme.typography.caption,
-    color: theme.colors.textSecondary,
-    alignSelf: 'flex-end',
-  },
-  addShoeButton: {
-    padding: theme.spacing.sm,
-    alignItems: 'center',
-    marginBottom: theme.spacing.md,
-  },
-  addShoeText: {
-    ...theme.typography.body,
-    color: theme.colors.primaryBlue,
   },
   switchRow: {
     flexDirection: 'row',

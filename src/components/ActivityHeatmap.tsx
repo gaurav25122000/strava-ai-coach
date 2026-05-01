@@ -28,13 +28,11 @@ export const ActivityHeatmap = () => {
       const dayIndex = diffDays % 7;
 
       if (weekIndex >= 0 && weekIndex < 25 && dayIndex >= 0 && dayIndex < 7) {
-        // heat level based roughly on distance
         let heat = 1;
         if (act.distance > 5) heat = 2;
         if (act.distance > 10) heat = 3;
         if (act.distance > 20) heat = 4;
 
-        // Take the max if multiple runs on same day
         grid[dayIndex][weekIndex] = Math.max(grid[dayIndex][weekIndex], heat);
       }
     });
@@ -44,10 +42,8 @@ export const ActivityHeatmap = () => {
 
   const gridData = generateGrid();
 
-  // Generate month labels based on the past 25 weeks
   const getMonths = () => {
       const today = new Date();
-      const startDate = startOfWeek(subDays(today, 24 * 7), { weekStartsOn: 1 });
       const months = [];
       for(let i=0; i<6; i++) {
           months.push(format(subDays(today, (5-i)*30), 'MMM'));

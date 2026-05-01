@@ -21,9 +21,7 @@ export const OverviewScreen = () => {
     topElevation,
     goals,
     activities,
-    fetchDataAndGeneratePlan,
-    lastSyncDate
-
+    fetchDataAndGeneratePlan
   } = useStore();
 
   const [refreshing, setRefreshing] = useState(false);
@@ -98,27 +96,6 @@ export const OverviewScreen = () => {
           </View>
         </View>
 
-        <View style={styles.weeklyVolumeCard}>
-          <View style={styles.weeklyVolumeHeader}>
-            <Text style={styles.weeklyVolumeTitle}>THIS WEEK'S VOLUME</Text>
-            <Text style={styles.weeklyVolumeValue}>
-              {activities.filter(a => new Date(a.date) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).reduce((sum, a) => sum + a.distance, 0).toFixed(1)} / 30 km
-            </Text>
-          </View>
-          <View style={styles.progressBarBg}>
-             <View style={[
-                 styles.progressBarFill,
-                 { width: `${Math.min((activities.filter(a => new Date(a.date) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).reduce((sum, a) => sum + a.distance, 0) / 30) * 100, 100)}%` }
-             ]} />
-          </View>
-        </View>
-
-        {lastSyncDate && (
-          <View style={styles.syncContainer}>
-            <Text style={styles.syncText}>Last synced: {format(new Date(lastSyncDate), 'MMM dd, h:mm a')}</Text>
-          </View>
-        )}
-
         {recentRuns.length > 0 && (
           <View style={styles.recentSection}>
             <Text style={styles.sectionTitle}>Recent Activities</Text>
@@ -160,46 +137,6 @@ const styles = StyleSheet.create({
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-  },
-  weeklyVolumeCard: {
-    backgroundColor: theme.colors.cardBackground,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    marginHorizontal: theme.spacing.md,
-    marginTop: theme.spacing.lg,
-  },
-  weeklyVolumeHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: theme.spacing.sm,
-  },
-  weeklyVolumeTitle: {
-    ...theme.typography.small,
-    color: theme.colors.textSecondary,
-    letterSpacing: 1,
-  },
-  weeklyVolumeValue: {
-    ...theme.typography.body,
-    color: theme.colors.primaryOrange,
-    fontWeight: 'bold',
-  },
-  progressBarBg: {
-    height: 8,
-    backgroundColor: theme.colors.skeletonBackground,
-    borderRadius: 4,
-  },
-  progressBarFill: {
-    height: 8,
-    backgroundColor: theme.colors.primaryOrange,
-    borderRadius: 4,
-  },
-  syncContainer: {
-    alignItems: 'center',
-    marginTop: theme.spacing.lg,
-  },
-  syncText: {
-    ...theme.typography.caption,
-    color: theme.colors.textSecondary,
   },
   recentSection: {
     paddingHorizontal: theme.spacing.md,

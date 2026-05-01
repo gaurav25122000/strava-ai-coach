@@ -14,21 +14,11 @@ export const ProfileScreen = () => {
   const totalDurationSecs = activities.reduce((sum, act) => sum + act.duration, 0);
   const totalHours = Math.floor(totalDurationSecs / 3600);
 
-  // Dynamically calculate achievements based on real data
-  const achievements = [];
-  if (totalKm >= 21.1) {
-      achievements.push({ id: 1, title: 'Half Marathon Finisher', date: 'Earned', icon: Award, color: theme.colors.primaryOrange });
-  }
-  if (totalKm >= 42.2) {
-      achievements.push({ id: 2, title: 'Marathon Finisher', date: 'Earned', icon: Award, color: theme.colors.primaryRed });
-  }
-  if (activities.length >= 10) {
-      achievements.push({ id: 3, title: '10 Runs Completed', date: 'Earned', icon: Activity, color: theme.colors.primaryGreen });
-  }
-  if (activities.length >= 50) {
-      achievements.push({ id: 4, title: '50 Runs Completed', date: 'Earned', icon: Activity, color: theme.colors.primaryBlue });
-  }
-
+  // Recent achievements (Mock logic for display)
+  const achievements = [
+    { id: 1, title: 'Half Marathon Finisher', date: 'Oct 2025', icon: Award, color: theme.colors.primaryOrange },
+    { id: 2, title: '100 Day Streak', date: 'Dec 2025', icon: Activity, color: theme.colors.primaryGreen },
+  ];
 
   return (
     <View style={styles.container}>

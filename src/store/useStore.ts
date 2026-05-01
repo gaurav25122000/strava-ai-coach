@@ -51,26 +51,9 @@ interface State {
   aiRecommendation: AIRecommendation | null;
   isLoading: boolean;
   lastSyncDate: string | null;
-
-  // New Features
-  shoes: { id: string, name: string, mileage: number, maxMileage: number }[];
-  injuries: { id: string, description: string, date: string, severity: 'low' | 'medium' | 'high' }[];
-  coachPersonality: 'Strict' | 'Encouraging' | 'Data-Driven';
-  useMetric: boolean;
-  privacyZonesEnabled: boolean;
-  weatherContextEnabled: boolean;
-
-  setCoachPersonality: (p: 'Strict' | 'Encouraging' | 'Data-Driven') => void;
-  setUseMetric: (v: boolean) => void;
-  setPrivacyZones: (v: boolean) => void;
-  setWeatherContext: (v: boolean) => void;
-  logInjury: (desc: string, severity: 'low' | 'medium' | 'high') => void;
-  addShoe: (name: string, maxMileage: number) => void;
-
   setLoading: (loading: boolean) => void;
   loginToStrava: () => Promise<void>;
   fetchDataAndGeneratePlan: () => Promise<void>;
-  addGoal: (goal: Omit<Goal, 'id' | 'targetDaysOut'>) => void;
   logout: () => void;
 }
 
@@ -125,24 +108,6 @@ export const useStore = create<State>()(
   ],
   aiRecommendation: null,
   lastSyncDate: null,
-
-  shoes: [{ id: 's1', name: 'Nike Alphafly 3', mileage: 142.5, maxMileage: 500 }],
-  injuries: [],
-  coachPersonality: 'Encouraging',
-  useMetric: true,
-  privacyZonesEnabled: false,
-  weatherContextEnabled: false,
-
-  setCoachPersonality: (p) => set({ coachPersonality: p }),
-  setUseMetric: (v) => set({ useMetric: v }),
-  setPrivacyZones: (v) => set({ privacyZonesEnabled: v }),
-  setWeatherContext: (v) => set({ weatherContextEnabled: v }),
-  logInjury: (description, severity) => set((state) => ({
-      injuries: [{ id: 'inj_' + Date.now(), description, date: new Date().toISOString(), severity }, ...state.injuries]
-  })),
-  addShoe: (name, maxMileage) => set((state) => ({
-      shoes: [...state.shoes, { id: 'shoe_' + Date.now(), name, mileage: 0, maxMileage }]
-  })),
   isLoading: false,
   setLoading: (loading) => set({ isLoading: loading }),
 
@@ -155,27 +120,6 @@ export const useStore = create<State>()(
     } else {
       set({ isLoading: false });
     }
-  },
-
-  addGoal: (newGoal) => {
-    const today = new Date();
-    const targetDate = new Date(newGoal.date);
-    const diffTime = Math.abs(targetDate.getTime() - today.getTime());
-    const targetDaysOut = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-    set((state) => ({
-      goals: [
-        {
-          ...newGoal,
-          id: 'g' + Date.now().toString(),
-          targetDaysOut
-        },
-        ...state.goals
-      ]
-    }));
-
-    // Automatically trigger a sync to generate a new AI plan for this new goal
-    get().fetchDataAndGeneratePlan();
   },
 
   logout: () => {
@@ -239,16 +183,6 @@ export const useStore = create<State>()(
           }
       });
 
-      // Update shoes mileage naively for demonstration if there is an active shoe
-      // In a real app we'd map activities to specific shoes
-      const currentShoes = get().shoes;
-      if (currentShoes.length > 0) {
-         const latestShoe = {...currentShoes[0]};
-         // Just a mock bump based on recent fetch to show it works
-         latestShoe.mileage += (totalDistance > 0 ? 5 : 0);
-         set({ shoes: [latestShoe, ...currentShoes.slice(1)] });
-      }
-
       const bestPaceStr = bestPaceSecs === Infinity ? '0:00' : formatSecondsToPace(bestPaceSecs);
 
       // Simple streak calculation (mocked for brevity as precise calculation requires iterating all days)
@@ -268,9 +202,7 @@ export const useStore = create<State>()(
       const userStats: UserStats = {
         recentPace: bestPaceStr,
         weeklyVolume: parseFloat(weeklyVolume.toFixed(1)),
-        longestRun: parseFloat(longestRunDist.toFixed(1)),
-        personality: get().coachPersonality,
-        weatherContextEnabled: get().weatherContextEnabled
+        longestRun: parseFloat(longestRunDist.toFixed(1))
       };
 
       const primaryGoal: TrainingGoal = {

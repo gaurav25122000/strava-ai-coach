@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, View, Text, TouchableOpacity, RefreshControl, Modal, TextInput } from 'react-native';
+import { ScrollView, StyleSheet, View, Text, TouchableOpacity, RefreshControl } from 'react-native';
 import { theme } from '../constants/theme';
 import { Header } from '../components/Header';
 import { AIWorkoutRecommendation } from '../components/AIWorkoutRecommendation';
@@ -10,23 +10,6 @@ export const GoalsScreen = () => {
   const { goals, fetchDataAndGeneratePlan, aiRecommendation } = useStore();
   const activeGoal = goals[0]; // Just showing the first one detailed for mock purposes
   const [refreshing, setRefreshing] = useState(false);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [newGoalName, setNewGoalName] = useState('');
-  const [newGoalDate, setNewGoalDate] = useState('Oct 31, 2026'); // Mock default date format for MVP
-  const [newGoalType, setNewGoalType] = useState('race');
-
-  const handleAddGoal = () => {
-    if (!newGoalName) return;
-    useStore.getState().addGoal({
-      name: newGoalName,
-      date: newGoalDate,
-      type: newGoalType,
-      color: 'primaryBlue',
-      icon: 'run'
-    });
-    setModalVisible(false);
-    setNewGoalName('');
-  };
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -52,7 +35,7 @@ export const GoalsScreen = () => {
       >
         <Text style={styles.subtitle}>Pick your race, get phase-by-phase training guidance.</Text>
 
-        <TouchableOpacity style={styles.addButton} onPress={() => setModalVisible(true)}>
+        <TouchableOpacity style={styles.addButton}>
           <Plus size={16} color={theme.colors.textPrimary} style={{ marginRight: 4 }} />
           <Text style={styles.addButtonText}>Add Goal</Text>
         </TouchableOpacity>
@@ -95,55 +78,9 @@ export const GoalsScreen = () => {
 
             <AIWorkoutRecommendation />
 
-            <View style={styles.prehabSection}>
-              <Text style={styles.sectionTitle}>Prehab & Recovery</Text>
-              <Text style={styles.subtitleText}>Log minor aches so AI can adjust your high-impact days.</Text>
-              <TouchableOpacity style={styles.logInjuryButton} onPress={() => {}}>
-                <Text style={styles.logInjuryText}>+ Log Injury / Ache</Text>
-              </TouchableOpacity>
-            </View>
           </View>
         )}
       </ScrollView>
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Create New Goal</Text>
-
-            <Text style={styles.label}>Goal Name</Text>
-            <TextInput
-              style={styles.input}
-              value={newGoalName}
-              onChangeText={setNewGoalName}
-              placeholder="e.g. Berlin Marathon"
-              placeholderTextColor={theme.colors.tabInactive}
-            />
-
-            <Text style={styles.label}>Target Date</Text>
-            <TextInput
-              style={styles.input}
-              value={newGoalDate}
-              onChangeText={setNewGoalDate}
-              placeholder="e.g. Sep 27, 2026"
-              placeholderTextColor={theme.colors.tabInactive}
-            />
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={() => setModalVisible(false)}>
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalButton, styles.saveButton]} onPress={handleAddGoal}>
-                <Text style={styles.saveButtonText}>Create</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 };
@@ -262,91 +199,5 @@ const styles = StyleSheet.create({
     ...theme.typography.caption,
     color: theme.colors.textSecondary,
     fontSize: 12,
-  },
-  prehabSection: {
-    marginTop: theme.spacing.xl,
-    paddingTop: theme.spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
-  sectionTitle: {
-    ...theme.typography.h3,
-    color: theme.colors.textPrimary,
-    marginBottom: theme.spacing.xs,
-  },
-  subtitleText: {
-    ...theme.typography.caption,
-    color: theme.colors.textSecondary,
-    marginBottom: theme.spacing.md,
-  },
-  logInjuryButton: {
-    backgroundColor: theme.colors.skeletonBackground,
-    paddingVertical: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.md,
-    borderRadius: theme.borderRadius.sm,
-    alignItems: 'center',
-  },
-  logInjuryText: {
-    ...theme.typography.body,
-    color: theme.colors.primaryOrange,
-    fontWeight: 'bold',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    padding: theme.spacing.md,
-  },
-  modalContent: {
-    backgroundColor: theme.colors.cardBackground,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.lg,
-  },
-  modalTitle: {
-    ...theme.typography.h2,
-    color: theme.colors.textPrimary,
-    marginBottom: theme.spacing.lg,
-  },
-  label: {
-    ...theme.typography.caption,
-    color: theme.colors.textSecondary,
-    marginBottom: theme.spacing.xs,
-  },
-  input: {
-    backgroundColor: theme.colors.background,
-    color: theme.colors.textPrimary,
-    borderRadius: theme.borderRadius.sm,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    ...theme.typography.body,
-    marginBottom: theme.spacing.md,
-  },
-  modalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: theme.spacing.md,
-    gap: theme.spacing.md,
-  },
-  modalButton: {
-    paddingVertical: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.lg,
-    borderRadius: theme.borderRadius.sm,
-  },
-  cancelButton: {
-    backgroundColor: theme.colors.skeletonBackground,
-  },
-  saveButton: {
-    backgroundColor: theme.colors.primaryOrange,
-  },
-  cancelButtonText: {
-    ...theme.typography.body,
-    color: theme.colors.textPrimary,
-  },
-  saveButtonText: {
-    ...theme.typography.body,
-    color: theme.colors.textPrimary,
-    fontWeight: 'bold',
   }
 });

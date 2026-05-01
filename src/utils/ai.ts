@@ -7,8 +7,6 @@ export interface UserStats {
   recentPace: string;
   weeklyVolume: number;
   longestRun: number;
-  personality?: string;
-  weatherContextEnabled?: boolean;
 }
 
 export interface TrainingGoal {
@@ -27,10 +25,9 @@ export const generateTrainingPlan = async (stats: UserStats, goal: TrainingGoal)
     }
 
     const prompt = `
-      You are an expert AI running coach with a ${stats.personality || 'Encouraging'} personality.
+      You are an expert AI running coach.
       User's current stats: Recent pace is ${stats.recentPace} min/km, weekly volume is ${stats.weeklyVolume} km, longest run is ${stats.longestRun} km.
       User's goal: ${goal.name} on ${goal.targetDate} with a target of ${goal.targetMetric || 'finishing'}.
-      ${stats.weatherContextEnabled ? 'Please also consider typical weather adjustments for outdoor running if applicable.' : ''}
 
       Generate a training plan recommendation for the current week, including:
       1. Target weekly volume (km)
