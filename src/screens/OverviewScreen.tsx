@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, View, RefreshControl, Text } from 'react-native';
+import { ScrollView, StyleSheet, View, RefreshControl, Text, TouchableOpacity } from 'react-native';
 import { theme } from '../constants/theme';
 import { Header } from '../components/Header';
 import { StreakCounter } from '../components/StreakCounter';
@@ -21,7 +21,9 @@ export const OverviewScreen = () => {
     topElevation,
     goals,
     activities,
-    fetchDataAndGeneratePlan
+    fetchDataAndGeneratePlan,
+    isAuthenticated,
+    loginToStrava
   } = useStore();
 
   const [refreshing, setRefreshing] = useState(false);
@@ -65,6 +67,15 @@ export const OverviewScreen = () => {
           lastRunDate={lastRunDate}
           hasRunToday={hasRunToday}
         />
+
+        {!isAuthenticated && (
+          <TouchableOpacity 
+            style={styles.loginButton} 
+            onPress={loginToStrava}
+          >
+            <Text style={styles.loginButtonText}>Connect with Strava</Text>
+          </TouchableOpacity>
+        )}
 
         <ActivityHeatmap />
 
@@ -178,5 +189,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     color: theme.colors.primaryOrange,
+  },
+  loginButton: {
+    backgroundColor: theme.colors.primaryOrange,
+    marginHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.md,
+    borderRadius: theme.borderRadius.md,
+    alignItems: 'center',
+    marginBottom: theme.spacing.md,
+  },
+  loginButtonText: {
+    ...theme.typography.body,
+    fontWeight: 'bold',
+    color: theme.colors.textPrimary,
   }
 });

@@ -138,6 +138,7 @@ export const useStore = create<State>()(
   },
 
   fetchDataAndGeneratePlan: async () => {
+    if (!get().isAuthenticated) return;
     set({ isLoading: true });
     try {
       // 1. Fetch Strava Data

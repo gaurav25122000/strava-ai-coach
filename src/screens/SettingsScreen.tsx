@@ -3,6 +3,7 @@ import { View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView, Alert,
 import { theme } from '../constants/theme';
 import { Header } from '../components/Header';
 import * as SecureStore from 'expo-secure-store';
+import * as AuthSession from 'expo-auth-session';
 import { useStore } from '../store/useStore';
 import { RefreshCw, LogOut } from 'lucide-react-native';
 
@@ -167,6 +168,13 @@ export const SettingsScreen = () => {
         </View>
 
         <View style={styles.inputGroup}>
+          <Text style={styles.label}>Callback URL (Add this to Strava Dashboard)</Text>
+          <View style={styles.uriContainer}>
+            <Text style={styles.uriText} selectable>{AuthSession.makeRedirectUri({ scheme: 'app' })}</Text>
+          </View>
+        </View>
+
+        <View style={styles.inputGroup}>
           <Text style={styles.label}>Strava Client Secret</Text>
           <TextInput
             style={styles.input}
@@ -288,5 +296,17 @@ const styles = StyleSheet.create({
     ...theme.typography.body,
     fontWeight: 'bold',
     color: theme.colors.textPrimary,
+  },
+  uriContainer: {
+    backgroundColor: theme.colors.cardBackground,
+    padding: theme.spacing.md,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  uriText: {
+    ...theme.typography.caption,
+    color: theme.colors.primaryOrange,
+    fontFamily: 'Courier',
   }
 });
