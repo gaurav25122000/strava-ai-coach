@@ -4,7 +4,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
-// Standard async storage for regular state (avoids SecureStore size limits on iOS)
 const asyncStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
     return await AsyncStorage.getItem(name);
@@ -17,7 +16,6 @@ const asyncStorage: StateStorage = {
   },
 };
 
-// Secure storage helper specifically for secrets
 export const secureSettingsStorage = {
   getSecret: async (key: string): Promise<string | null> => {
      if (Platform.OS === 'web') return localStorage.getItem(`secret_${key}`);
@@ -45,6 +43,7 @@ export interface Activity {
   maxSpeed: number;
   averageHeartRate?: number;
   maxHeartRate?: number;
+  name?: string;
 }
 
 export interface Goal {
@@ -78,6 +77,22 @@ interface UserStats {
   lastRunDate: string;
 }
 
+export interface UserProfile {
+  name: string;
+  dob: string;           // YYYY-MM-DD
+  weight: number;        // kg
+  height: number;        // cm
+  restingHR: number;     // bpm
+  maxHR: number;         // bpm
+  weeklyGoalKm: number;
+  sleepHours: number;
+  nutritionNotes: string;
+  fitnessLevel: 'Beginner' | 'Intermediate' | 'Advanced';
+  trainingDaysPerWeek: number;
+  preferredTerrain: 'Road' | 'Trail' | 'Track' | 'Mixed';
+  injuries: string;      // free text for LLM context
+}
+
 interface Settings {
   stravaClientId: string;
   stravaClientSecret: string;
@@ -103,10 +118,74 @@ interface Injury {
   severity: 'Low' | 'Medium' | 'High';
 }
 
+// Get local YYYY-MM-DD string without UTC conversion
+function localDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Compute current streak and best streak from a list of activities
+function computeStreaks(activities: Activity[]): { currentStreak: number; bestStreak: number } {
+  if (!activities.length) return { currentStreak: 0, bestStreak: 0 };
+
+  // Get unique dates that had at least one run
+  const runDates = new Set(
+    activities
+      .filter(a => a.type === 'Run')
+      .map(a => {
+        // Parse ISO string as local date to avoid UTC offset issues
+        const raw = a.startDate.split('T')[0];
+        return raw;
+      })
+  );
+
+  if (!runDates.size) return { currentStreak: 0, bestStreak: 0 };
+
+  const sorted = Array.from(runDates).sort(); // ascending YYYY-MM-DD strings
+
+  let best = 1;
+  let streak = 1;
+
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = new Date(sorted[i - 1]);
+    const curr = new Date(sorted[i]);
+    const diffDays = Math.round((curr.getTime() - prev.getTime()) / 86400000);
+    if (diffDays === 1) {
+      streak++;
+      if (streak > best) best = streak;
+    } else {
+      streak = 1;
+    }
+  }
+
+  // currentStreak: streak ending today or yesterday (local time)
+  const today = localDateStr(new Date());
+  const yesterday = localDateStr(new Date(Date.now() - 86400000));
+  const lastDate = sorted[sorted.length - 1];
+  let current = 0;
+
+  if (lastDate === today || lastDate === yesterday) {
+    // Walk backwards
+    current = 1;
+    for (let i = sorted.length - 2; i >= 0; i--) {
+      const later = new Date(sorted[i + 1]);
+      const earlier = new Date(sorted[i]);
+      const diff = Math.round((later.getTime() - earlier.getTime()) / 86400000);
+      if (diff === 1) current++;
+      else break;
+    }
+  }
+
+  return { currentStreak: current, bestStreak: best };
+}
+
 interface AppState {
   activities: Activity[];
   goals: Goal[];
   userStats: UserStats;
+  userProfile: UserProfile;
   settings: Settings;
   shoes: Shoe[];
   injuries: Injury[];
@@ -117,6 +196,7 @@ interface AppState {
   updateGoal: (goal: Goal) => void;
   deleteGoal: (id: string) => void;
   updateSettings: (settings: Partial<Settings>) => void;
+  updateUserProfile: (profile: Partial<UserProfile>) => void;
   addShoe: (shoe: Shoe) => void;
   addInjury: (injury: Injury) => void;
 }
@@ -127,26 +207,39 @@ export const useStore = create<AppState>()(
       activities: [],
       goals: [],
       userStats: {
-    currentStreak: 0,
-    bestStreak: 0,
-    totalRuns: 0,
-    totalKm: 0,
-    bestPace: '0:00',
-    topElev: 0,
-    lastRunDate: new Date().toISOString(),
-  },
+        currentStreak: 0,
+        bestStreak: 0,
+        totalRuns: 0,
+        totalKm: 0,
+        bestPace: '0:00',
+        topElev: 0,
+        lastRunDate: new Date().toISOString(),
+      },
+      userProfile: {
+        name: '',
+        dob: '',
+        weight: 0,
+        height: 0,
+        restingHR: 0,
+        maxHR: 0,
+        weeklyGoalKm: 40,
+        sleepHours: 7,
+        nutritionNotes: '',
+        fitnessLevel: 'Intermediate',
+        trainingDaysPerWeek: 4,
+        preferredTerrain: 'Road',
+        injuries: '',
+      },
       setActivities: (activities) => set((state) => {
         let totalRuns = 0;
         let totalKm = 0;
         let topElev = 0;
-        let longestRun = 0;
         let bestPace = 999;
 
         activities.forEach(act => {
            if (act.type === 'Run') totalRuns++;
            totalKm += (act.distance / 1000);
            if (act.totalElevationGain > topElev) topElev = act.totalElevationGain;
-           if ((act.distance / 1000) > longestRun) longestRun = act.distance / 1000;
 
            if (act.averageSpeed > 0 && act.type === 'Run') {
               const minPerKm = 1000 / act.averageSpeed / 60;
@@ -157,6 +250,8 @@ export const useStore = create<AppState>()(
         const sorted = [...activities].sort((a,b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
         const lastRunDate = sorted.length > 0 ? sorted[0].startDate.split('T')[0] : '';
 
+        const { currentStreak, bestStreak } = computeStreaks(activities);
+
         return {
           activities,
           userStats: {
@@ -165,7 +260,9 @@ export const useStore = create<AppState>()(
              totalKm: Math.round(totalKm),
              topElev: Math.round(topElev),
              lastRunDate,
-             bestPace: bestPace === 999 ? '0:00' : bestPace.toFixed(2).replace('.', ':')
+             bestPace: bestPace === 999 ? '0:00' : bestPace.toFixed(2).replace('.', ':'),
+             currentStreak,
+             bestStreak,
           }
         };
       }),
@@ -193,6 +290,9 @@ export const useStore = create<AppState>()(
       updateSettings: (newSettings) => set((state) => ({
         settings: { ...state.settings, ...newSettings }
       })),
+      updateUserProfile: (profile) => set((state) => ({
+        userProfile: { ...state.userProfile, ...profile }
+      })),
       addShoe: (shoe) => set((state) => ({ shoes: [...state.shoes, shoe] })),
       addInjury: (injury) => set((state) => ({ injuries: [...state.injuries, injury] })),
     }),
@@ -200,12 +300,10 @@ export const useStore = create<AppState>()(
       name: 'ai-coach-app-storage',
       storage: createJSONStorage(() => asyncStorage),
       partialize: (state) => ({
-        // We persist everything here, but we shouldn't store secrets directly in plain text async storage long-term
-        // if we are being perfectly strict. However, since the user inputs them as settings, we will store them.
-        // The original code was putting the ENTIRE state in SecureStore, which crashes.
         activities: state.activities,
         goals: state.goals,
         userStats: state.userStats,
+        userProfile: state.userProfile,
         settings: state.settings,
         shoes: state.shoes,
         injuries: state.injuries,

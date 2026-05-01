@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, ScrollView, SafeAreaView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Alert } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Alert, Platform } from 'react-native';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
@@ -7,18 +7,51 @@ import { ProgressBar } from '../components/ProgressBar';
 import { useStore, Goal } from '../store/useStore';
 import { Flame, PersonStanding, Plus, Zap, X, Calendar } from 'lucide-react-native';
 import { AIService } from '../services/ai';
-import { differenceInDays, parseISO } from 'date-fns';
+import { differenceInDays, parseISO, format } from 'date-fns';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function GoalsScreen() {
-  const { goals, deleteGoal, addGoal, activities, settings } = useStore();
+  const { goals, deleteGoal, addGoal, activities, settings, userProfile } = useStore();
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingGoal, setEditingGoal] = useState<string | null>(null); // goal id being edited
   const [newGoalTitle, setNewGoalTitle] = useState('');
   const [newGoalDate, setNewGoalDate] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  const goalDate = newGoalDate ? new Date(newGoalDate) : new Date();
+
+  const onDateChange = (_: DateTimePickerEvent, selected?: Date) => {
+    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (selected) setNewGoalDate(selected.toISOString().split('T')[0]);
+  };
+
+  // Strip LLM markdown artefacts: **bold**, * bullet, excess whitespace
+  const stripMd = (text: string) =>
+    text
+      .replace(/\*\*(.*?)\*\*/g, '$1')  // **bold** → bold
+      .replace(/^\s*\*\s+/gm, '• ')    // * item → • item
+      .replace(/\\n/g, '\n')           // literal \n → newline
+      .trim();
+
+  const openEdit = (goal: Goal) => {
+    setEditingGoal(goal.id);
+    setNewGoalTitle(goal.title);
+    setNewGoalDate(goal.targetDate);
+    setModalVisible(true);
+  };
+
+  const closeModal = () => {
+    setModalVisible(false);
+    setEditingGoal(null);
+    setNewGoalTitle('');
+    setNewGoalDate('');
+  };
 
   const handleAddGoal = async () => {
     if (!newGoalTitle || !newGoalDate) {
-      Alert.alert('Error', 'Please fill all fields');
+      Alert.alert('Missing fields', 'Please enter a goal title and pick a target date.');
       return;
     }
 
@@ -44,7 +77,8 @@ export default function GoalsScreen() {
         settings.llmProvider,
         settings.llmApiKey,
         settings.coachPersonality,
-        injuries
+        injuries,
+        userProfile
       );
 
       const finalGoal: Goal = {
@@ -83,7 +117,7 @@ export default function GoalsScreen() {
           </View>
         </View>
 
-        <TouchableOpacity style={styles.addButton} onPress={() => setModalVisible(true)}>
+        <TouchableOpacity style={styles.addButton} onPress={() => { setEditingGoal(null); setNewGoalTitle(''); setNewGoalDate(''); setModalVisible(true); }}>
           <Plus size={20} color="#fff" />
           <Typography weight="600" style={{marginLeft: 8}}>Add Goal</Typography>
         </TouchableOpacity>
@@ -102,7 +136,7 @@ export default function GoalsScreen() {
                 </View>
               </View>
               <View style={styles.actionButtons}>
-                <TouchableOpacity style={styles.iconButton}>
+                <TouchableOpacity style={styles.iconButton} onPress={() => openEdit(goal)}>
                   <Typography variant="caption">Edit</Typography>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.iconButton} onPress={() => deleteGoal(goal.id)}>
@@ -111,17 +145,22 @@ export default function GoalsScreen() {
               </View>
             </View>
 
-            <View style={styles.statsRow}>
-              <View style={styles.statBox}>
-                <Typography variant="label">DAYS OUT</Typography>
-                <Typography variant="h1" color={goal.id === '1' ? theme.colors.error : theme.colors.success}>{goal.daysRemaining}</Typography>
-                <Typography variant="caption">{Math.floor(goal.daysRemaining / 7)} weeks</Typography>
-              </View>
-              <View style={[styles.statBox, styles.phaseBox]}>
-                <Typography variant="label">PHASE</Typography>
-                <Typography variant="h3" color={theme.colors.text} style={{marginTop: 8}}>{goal.phase.split('\n')[0]}</Typography>
-                <Typography variant="caption" style={{marginTop: 4}}>{goal.phase.split('\n')[1]}</Typography>
-              </View>
+            {/* Days out */}
+            <View style={styles.statBox}>
+              <Typography variant="label">DAYS OUT</Typography>
+              <Typography variant="h1" color={goal.id === '1' ? theme.colors.error : theme.colors.success}>{goal.daysRemaining}</Typography>
+              <Typography variant="caption">{Math.floor(goal.daysRemaining / 7)} weeks to go</Typography>
+            </View>
+
+            {/* Phase — below days out */}
+            <View style={[styles.phaseBox, { marginTop: 12 }]}>
+              <Typography variant="label">PHASE</Typography>
+              <Typography variant="h3" color={theme.colors.text} style={{ marginTop: 6 }}>
+                {stripMd(goal.phase.split('\n')[0])}
+              </Typography>
+              <Typography variant="caption" style={{ marginTop: 4, lineHeight: 18 }}>
+                {stripMd(goal.phase.split('\n').slice(1).join(' '))}
+              </Typography>
             </View>
 
             <View style={styles.progressSection}>
@@ -145,8 +184,12 @@ export default function GoalsScreen() {
                 <Zap size={16} color="#FBBF24" />
                 <Typography variant="label" style={{marginLeft: 8}}>KEY WORKOUT THIS PHASE</Typography>
               </View>
-              <Typography variant="body" style={{marginBottom: 4}}>{goal.keyWorkout.split('\n')[0]}</Typography>
-              <Typography variant="caption">{goal.keyWorkout.substring(goal.keyWorkout.indexOf('\n') + 1)}</Typography>
+              <Typography variant="body" style={{marginBottom: 4, fontWeight: '700'}}>
+                {stripMd(goal.keyWorkout.split('\n')[0])}
+              </Typography>
+              <Typography variant="caption" style={{lineHeight: 18}}>
+                {stripMd(goal.keyWorkout.substring(goal.keyWorkout.indexOf('\n') + 1))}
+              </Typography>
             </View>
 
             {goal.title.toLowerCase().includes('hyrox') && (
@@ -168,13 +211,13 @@ export default function GoalsScreen() {
         animationType="slide"
         transparent={true}
         visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
+        onRequestClose={closeModal}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Typography variant="h2">New AI Goal</Typography>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <Typography variant="h2">{editingGoal ? 'Edit Goal' : 'New AI Goal'}</Typography>
+              <TouchableOpacity onPress={closeModal}>
                 <X size={24} color={theme.colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -195,14 +238,47 @@ export default function GoalsScreen() {
             </View>
 
             <View style={styles.inputGroup}>
-              <Typography variant="label" style={{marginBottom: 8}}>TARGET DATE (YYYY-MM-DD)</Typography>
-              <TextInput
-                style={styles.input}
-                value={newGoalDate}
-                onChangeText={setNewGoalDate}
-                placeholder="2024-12-31"
-                placeholderTextColor={theme.colors.textSecondary}
-              />
+              <Typography variant="label" style={{marginBottom: 8}}>TARGET DATE</Typography>
+              <TouchableOpacity onPress={() => setShowDatePicker(true)} activeOpacity={0.7}>
+                <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', minHeight: 44 }]}>
+                  <Typography style={{ color: newGoalDate ? theme.colors.text : theme.colors.textSecondary, fontSize: 15, flex: 1 }}>
+                    {newGoalDate || 'Tap to pick a date'}
+                  </Typography>
+                </View>
+              </TouchableOpacity>
+
+              {/* iOS modal */}
+              {showDatePicker && Platform.OS === 'ios' && (
+                <Modal transparent animationType="slide" visible={showDatePicker}>
+                  <View style={styles.pickerOverlay}>
+                    <View style={styles.pickerSheet}>
+                      <View style={styles.pickerHeader}>
+                        <TouchableOpacity onPress={() => setShowDatePicker(false)}>
+                          <Typography style={{ color: theme.colors.primary, fontWeight: '700' }}>Done</Typography>
+                        </TouchableOpacity>
+                      </View>
+                      <DateTimePicker
+                        value={goalDate}
+                        mode="date"
+                        display="spinner"
+                        minimumDate={new Date()}
+                        onChange={onDateChange}
+                        textColor={theme.colors.text}
+                      />
+                    </View>
+                  </View>
+                </Modal>
+              )}
+              {/* Android */}
+              {showDatePicker && Platform.OS === 'android' && (
+                <DateTimePicker
+                  value={goalDate}
+                  mode="date"
+                  display="default"
+                  minimumDate={new Date()}
+                  onChange={onDateChange}
+                />
+              )}
             </View>
 
             <TouchableOpacity
@@ -329,5 +405,8 @@ const styles = StyleSheet.create({
     padding: theme.spacing.md,
     color: theme.colors.text,
     fontSize: 16,
-  }
+  },
+  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  pickerSheet: { backgroundColor: theme.colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16 },
+  pickerHeader: { flexDirection: 'row', justifyContent: 'flex-end', padding: 16, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
 });

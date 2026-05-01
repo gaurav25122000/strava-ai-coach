@@ -1,191 +1,419 @@
-import React, { useMemo } from 'react';
-import { View, StyleSheet, ScrollView, SafeAreaView, Dimensions } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
-import { LineChart, PieChart } from 'react-native-gifted-charts';
+import { LineChart, BarChart, PieChart } from 'react-native-gifted-charts';
 import { useStore } from '../store/useStore';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, startOfWeek, endOfWeek, eachWeekOfInterval, subWeeks } from 'date-fns';
+import { TrendingUp, Mountain, Heart, BarChart3, Zap } from 'lucide-react-native';
 
-const { width } = Dimensions.get('window');
+const { width: SCREEN_W } = Dimensions.get('window');
+// scroll padding 16*2 + card padding 16*2 + gifted-charts yAxis ~44 = 108
+const CHART_W = SCREEN_W - 108;
+
+type Tab = 'pace' | 'volume' | 'heart' | 'elevation';
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'pace',      label: 'Pace'      },
+  { key: 'volume',    label: 'Volume'    },
+  { key: 'heart',     label: 'HR Zones'  },
+  { key: 'elevation', label: 'Elevation' },
+];
+
+function SectionHeader({ label, sub }: { label: string; sub?: string }) {
+  return (
+    <View style={{ marginBottom: 12 }}>
+      <Typography style={hdr.label}>{label}</Typography>
+      {sub ? <Typography style={hdr.sub}>{sub}</Typography> : null}
+    </View>
+  );
+}
+const hdr = StyleSheet.create({
+  label: { fontSize: 13, fontWeight: '700', color: theme.colors.text, textTransform: 'uppercase', letterSpacing: 0.5 },
+  sub:   { fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 },
+});
 
 export default function InsightsScreen() {
   const { activities } = useStore();
+  const [tab, setTab] = useState<Tab>('pace');
+  const [selPace, setSelPace] = useState<number | null>(null);
+  const [selVol,  setSelVol]  = useState<number | null>(null);
 
+  const fmtPace = (v: number) => {
+    const m = Math.floor(v); const s = Math.round((v - m) * 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // ── Pace ──────────────────────────────────────────────────────────
   const paceData = useMemo(() => {
-    if (!activities.length) return [{value: 0}];
     return [...activities]
-      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
       .filter(a => a.type === 'Run' && a.averageSpeed > 0)
-      .map(act => {
-        // Convert m/s to min/km
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+      .slice(-20)
+      .map((act, i, arr) => {
         const minPerKm = 1000 / act.averageSpeed / 60;
-        return { value: Number(minPerKm.toFixed(1)) };
+        const isFirst  = i === 0;
+        const isLast   = i === arr.length - 1;
+        return {
+          value: Number(minPerKm.toFixed(2)),
+          // show label every 4th run + first + last
+          label: (i % 4 === 0 || isLast) ? format(parseISO(act.startDate), 'MMM d') : '',
+        };
       });
   }, [activities]);
 
-  const elevationData = useMemo(() => {
-    if (!activities.length) return [{value: 0}];
+  const bestPace = paceData.length ? Math.min(...paceData.map(d => d.value)) : 0;
+  const avgPace  = paceData.length ? paceData.reduce((s, d) => s + d.value, 0) / paceData.length : 0;
+
+  // ── Volume ────────────────────────────────────────────────────────
+  const volumeData = useMemo(() => {
+    const now   = new Date();
+    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), 7);
+    const end   = endOfWeek(now, { weekStartsOn: 1 });
+    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-8).map(ws => {
+      const we  = endOfWeek(ws, { weekStartsOn: 1 });
+      const km  = activities
+        .filter(a => { const d = parseISO(a.startDate); return d >= ws && d <= we; })
+        .reduce((s, a) => s + a.distance / 1000, 0);
+      // e.g. "Jan 5"
+      return { value: Number(km.toFixed(1)), label: format(ws, 'MMM d'), frontColor: km > 0 ? theme.colors.primary : theme.colors.border };
+    });
+  }, [activities]);
+
+  const maxWeekVol = volumeData.length ? Math.max(...volumeData.map(d => d.value), 1) : 1;
+  const totalVol   = volumeData.reduce((s, d) => s + d.value, 0).toFixed(0);
+  const BAR_SPACING = Math.max(CHART_W / Math.max(volumeData.length * 2.2, 1), 10);
+  const BAR_W       = Math.max(BAR_SPACING * 0.8, 12);
+
+  // ── HR Zones ──────────────────────────────────────────────────────
+  const { pieData, zoneStats } = useMemo(() => {
+    let z1 = 0, z2 = 0, z3 = 0, z4 = 0, z5 = 0;
+    activities.forEach(a => {
+      const hr = a.averageHeartRate || 0;
+      if (hr <= 0) return;
+      if (hr < 115) z1++;
+      else if (hr < 135) z2++;
+      else if (hr < 155) z3++;
+      else if (hr < 170) z4++;
+      else z5++;
+    });
+    const total = z1 + z2 + z3 + z4 + z5;
+    if (!total) return { pieData: [{ value: 1, color: theme.colors.border }], zoneStats: [] };
+    const zones = [
+      { label: 'Z1 Recovery',  value: z1, color: '#60A5FA' },
+      { label: 'Z2 Aerobic',   value: z2, color: '#34D399' },
+      { label: 'Z3 Tempo',     value: z3, color: '#FBBF24' },
+      { label: 'Z4 Threshold', value: z4, color: '#F97316' },
+      { label: 'Z5 Max',       value: z5, color: '#EF4444' },
+    ].filter(z => z.value > 0);
+    return {
+      pieData:   zones.map(z => ({ value: z.value, color: z.color, text: `${Math.round(z.value / total * 100)}%` })),
+      zoneStats: zones.map(z => ({ ...z, pct: Math.round(z.value / total * 100) })),
+    };
+  }, [activities]);
+
+  // ── Elevation ─────────────────────────────────────────────────────
+  const elevData = useMemo(() => {
+    if (!activities.length) return [{ value: 0 }];
     return [...activities]
       .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
-      .map(act => ({ value: act.totalElevationGain || 0 }));
+      .map(a => ({ value: a.totalElevationGain || 0 }));
   }, [activities]);
 
-  const pieData = useMemo(() => {
-    let z2 = 0, z3 = 0, z4 = 0;
-    activities.forEach(act => {
-      const hr = act.averageHeartRate || 0;
-      if (hr > 150) z4++;
-      else if (hr > 130) z3++;
-      else if (hr > 0) z2++;
-    });
+  const totalElev = Math.round(activities.reduce((s, a) => s + a.totalElevationGain, 0));
+  const maxElev   = activities.length ? Math.max(...activities.map(a => a.totalElevationGain), 1) : 1;
 
-    const total = z2 + z3 + z4;
-    if (total === 0) {
-       return [
-        { value: 1, color: theme.colors.border, text: 'No Data' }
-       ];
-    }
-
-    return [
-      { value: Math.round((z4/total)*100), color: theme.colors.error, text: 'Z4' },
-      { value: Math.round((z3/total)*100), color: theme.colors.primary, text: 'Z3' },
-      { value: Math.round((z2/total)*100), color: '#FCD34D', text: 'Z2' },
+  const elevBuckets = useMemo(() => {
+    const defs = [
+      { label: '0–50m',    min: 0,   max: 50   },
+      { label: '50–200m',  min: 50,  max: 200  },
+      { label: '200–500m', min: 200, max: 500  },
+      { label: '500m+',    min: 500, max: Infinity },
     ];
+    const maxC = Math.max(...defs.map(b => activities.filter(a => a.totalElevationGain >= b.min && a.totalElevationGain < b.max).length), 1);
+    return defs.map(b => {
+      const count = activities.filter(a => a.totalElevationGain >= b.min && a.totalElevationGain < b.max).length;
+      return { value: count, label: b.label, frontColor: '#FBBF24', topLabelComponent: () => (
+        <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginBottom: 2 }}>{count}</Typography>
+      )};
+    });
   }, [activities]);
 
-  const dateLabels = useMemo(() => {
-     if (activities.length === 0) return [];
-     const sorted = [...activities].sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
-     // Pick up to 5 even intervals for the x-axis
-     const step = Math.max(1, Math.floor(sorted.length / 5));
-     const labels = [];
-     for (let i = 0; i < sorted.length; i+=step) {
-         labels.push(format(parseISO(sorted[i].startDate), 'MM-dd'));
-     }
-     return labels.slice(0, 5);
-  }, [activities]);
+  const ELEV_SPACING = Math.max((CHART_W - 40) / Math.max(elevBuckets.length * 2, 1), 8);
+  const ELEV_BAR_W   = Math.min(ELEV_SPACING * 1.5, 46);
+
+  // shared chart config
+  const chartBase = {
+    yAxisColor: 'transparent' as const,
+    xAxisColor: theme.colors.border,
+    yAxisTextStyle: { color: theme.colors.textSecondary, fontSize: 9 },
+    xAxisLabelTextStyle: { color: theme.colors.textSecondary, fontSize: 9 },
+    noOfSections: 4,
+    rulesColor: theme.colors.border + '55',
+    rulesType: 'solid' as const,
+    isAnimated: true,
+    animationDuration: 700,
+  };
+
+  // Pace y-axis label formatter: 8.5 → "8:30"
+  const paceYLabel = (v: string) => {
+    const n = parseFloat(v);
+    if (isNaN(n)) return v;
+    const m = Math.floor(n); const s = Math.round((n - m) * 60);
+    return `${m}:${s.toString().padStart(2,'0')}`;
+  };
+  // Volume y-axis: "12" → "12km"
+  const volYLabel  = (v: string) => `${parseFloat(v).toFixed(0)}km`;
+  // Elevation y-axis: "100" → "100m"
+  const elevYLabel = (v: string) => `${parseFloat(v).toFixed(0)}m`;
+
+  const SummaryPill = ({ label, value, unit, color }: { label: string; value: string | number; unit?: string; color: string }) => (
+    <View style={st.pill}>
+      <Typography style={st.pillLabel}>{label}</Typography>
+      <Typography style={[st.pillValue, { color }]}>
+        {value}{unit ? <Typography style={st.pillUnit}> {unit}</Typography> : null}
+      </Typography>
+    </View>
+  );
+
+  const Tooltip = ({ text }: { text: string }) => (
+    <View style={st.tooltip}><Typography style={st.tooltipText}>{text}</Typography></View>
+  );
+
+  const EmptyChart = ({ msg }: { msg: string }) => (
+    <View style={st.emptyChart}><Typography style={st.emptyText}>{msg}</Typography></View>
+  );
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+    <SafeAreaView style={st.container}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={st.scroll}>
 
-        {/* Pace Trend Chart */}
-        <Card style={styles.card}>
-          <Typography variant="label" style={styles.chartTitle}>Pace Trend (min/km)</Typography>
-          <View style={styles.chartContainer}>
-            <LineChart
-              data={paceData}
-              height={180}
-              width={width - 80}
-              thickness={3}
-              color="#3B82F6"
-              hideDataPoints={false}
-              dataPointsColor="#3B82F6"
-              dataPointsRadius={4}
-              yAxisColor={theme.colors.border}
-              xAxisColor={theme.colors.border}
-              yAxisTextStyle={{ color: theme.colors.textSecondary, fontSize: 10 }}
-              xAxisLabelTextStyle={{ color: theme.colors.textSecondary, fontSize: 10 }}
-              noOfSections={4}
-              maxValue={10}
-              yAxisLabelSuffix=""
-              isAnimated
-              curved
-              initialSpacing={10}
-              rulesColor={theme.colors.border}
-              rulesType="solid"
-            />
-          </View>
-        </Card>
+        <Typography style={st.pageTitle}>Insights</Typography>
 
-        {/* Weekly Elevation Chart */}
-        <Card style={styles.card}>
-          <Typography variant="label" style={styles.chartTitle}>Weekly Elevation (m)</Typography>
-          <View style={styles.chartContainer}>
-            <LineChart
-              data={elevationData}
-              height={180}
-              width={width - 80}
-              thickness={2}
-              color={theme.colors.success}
-              hideDataPoints
-              yAxisColor={theme.colors.border}
-              xAxisColor={theme.colors.border}
-              yAxisTextStyle={{ color: theme.colors.textSecondary, fontSize: 10 }}
-              xAxisLabelTextStyle={{ color: theme.colors.textSecondary, fontSize: 10 }}
-              noOfSections={4}
-              maxValue={380}
-              isAnimated
-              curved
-              areaChart
-              startFillColor={theme.colors.success}
-              endFillColor={theme.colors.background}
-              startOpacity={0.4}
-              endOpacity={0.0}
-              initialSpacing={0}
-              rulesColor={theme.colors.border}
-              rulesType="solid"
-            />
-          </View>
-          <View style={styles.xAxisLabels}>
-             {dateLabels.map((lbl, idx) => (
-                <Typography key={idx} variant="caption" style={{fontSize: 10}}>{lbl}</Typography>
-             ))}
-          </View>
-        </Card>
+        {/* Tab bar */}
+        <View style={st.tabRow}>
+          {TABS.map(t => {
+            const active = tab === t.key;
+            return (
+              <TouchableOpacity key={t.key} style={[st.tab, active && st.tabActive]} onPress={() => setTab(t.key)} activeOpacity={0.7}>
+                <Typography style={[st.tabText, active && st.tabTextActive]}>{t.label}</Typography>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
 
-        {/* Heart Rate Zones Chart */}
-        <Card style={styles.card}>
-          <Typography variant="label" style={styles.chartTitle}>Heart Rate Zones</Typography>
-          <View style={styles.pieContainer}>
-            <PieChart
-              data={pieData}
-              donut
-              showText
-              textColor="white"
-              radius={100}
-              innerRadius={0}
-              textSize={12}
-              semiCircle
-            />
-          </View>
-        </Card>
+        {/* ════ PACE ════ */}
+        {tab === 'pace' && (
+          <>
+            <View style={st.pillRow}>
+              <SummaryPill label="Best"    value={bestPace ? fmtPace(bestPace) : '--'} unit="/km" color={theme.colors.secondary} />
+              <SummaryPill label="Average" value={avgPace  ? fmtPace(avgPace)  : '--'} unit="/km" color={theme.colors.primary} />
+              <SummaryPill label="Runs"    value={paceData.length}                                  color={theme.colors.accent} />
+            </View>
+            <Card style={st.chartCard}>
+              <SectionHeader label="Pace Trend" sub="Last 20 runs · min/km (lower = faster)" />
+              {paceData.length > 1 ? (
+                <View style={{ overflow: 'hidden' }}>
+                  <LineChart
+                    data={paceData}
+                    height={200} width={CHART_W}
+                    thickness={2.5}
+                    color={theme.colors.primary}
+                    dataPointsColor={theme.colors.primary}
+                    dataPointsRadius={5}
+                    maxValue={Math.ceil(Math.max(...paceData.map(d => d.value)) * 1.15)}
+                    initialSpacing={12}
+                    spacing={Math.max((CHART_W - 12) / Math.max(paceData.length - 1, 1), 18)}
+                    curved areaChart
+                    startFillColor={theme.colors.primary} endFillColor={theme.colors.background}
+                    startOpacity={0.35} endOpacity={0}
+                    showDataPointOnFocus
+                    focusedDataPointRadius={7} focusedDataPointColor="#fff"
+                    onPress={(_: any, i: number) => setSelPace(i)}
+                    yAxisLabelTexts={Array.from({ length: 5 }, (_, i) => {
+                      const max = Math.ceil(Math.max(...paceData.map(d => d.value)) * 1.15);
+                      const min = Math.floor(Math.min(...paceData.map(d => d.value)) * 0.9);
+                      const v = min + (max - min) * i / 4;
+                      return paceYLabel(v.toFixed(2));
+                    })}
+                    {...chartBase}
+                  />
+                </View>
+              ) : <EmptyChart msg="Sync Strava runs to see your pace trend" />}
+              {selPace !== null && paceData[selPace] && (
+                <Tooltip text={`Run ${selPace + 1} · ${fmtPace(paceData[selPace].value)} /km`} />
+              )}
+            </Card>
+          </>
+        )}
+
+        {/* ════ VOLUME ════ */}
+        {tab === 'volume' && (
+          <>
+            <View style={st.pillRow}>
+              <SummaryPill label="8-week total" value={totalVol}              unit="km" color={theme.colors.primary} />
+              <SummaryPill label="Peak week"    value={maxWeekVol.toFixed(1)} unit="km" color="#FBBF24" />
+            </View>
+            <Card style={st.chartCard}>
+              <SectionHeader label="Weekly Volume" sub="km per week · last 8 weeks" />
+              {volumeData.length > 0 ? (
+                <View style={{ overflow: 'hidden' }}>
+                  <BarChart
+                    data={volumeData}
+                    height={200} width={CHART_W}
+                    barWidth={BAR_W}
+                    roundedTop
+                    maxValue={Math.ceil(maxWeekVol * 1.3)}
+                    initialSpacing={BAR_SPACING / 2}
+                    spacing={BAR_SPACING}
+                    showGradient
+                    gradientColor={theme.colors.primary + '44'}
+                    frontColor={theme.colors.primary}
+                    onPress={(_: any, i: number) => setSelVol(i)}
+                    yAxisLabelSuffix=" km"
+                    {...chartBase}
+                  />
+                </View>
+              ) : <EmptyChart msg="No activity data yet" />}
+              {selVol !== null && volumeData[selVol] && (
+                <Tooltip text={`Week of ${volumeData[selVol].label} · ${volumeData[selVol].value} km`} />
+              )}
+            </Card>
+          </>
+        )}
+
+        {/* ════ HR ZONES ════ */}
+        {tab === 'heart' && (
+          <>
+            <Card style={st.chartCard}>
+              <SectionHeader label="HR Zone Distribution" sub="Based on average HR per activity" />
+              {zoneStats.length > 0 ? (
+                <>
+                  <View style={{ alignItems: 'center', marginVertical: 16 }}>
+                    <PieChart
+                      data={pieData} donut showText textColor="#fff"
+                      radius={110} innerRadius={65} textSize={11}
+                      isAnimated animationDuration={800}
+                      centerLabelComponent={() => (
+                        <View style={{ alignItems: 'center' }}>
+                          <Heart color="#EF4444" size={20} />
+                          <Typography style={{ fontSize: 10, color: theme.colors.textSecondary, marginTop: 2 }}>zones</Typography>
+                        </View>
+                      )}
+                    />
+                  </View>
+                  <View style={{ gap: 8, marginTop: 8 }}>
+                    {zoneStats.map(z => (
+                      <View key={z.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: z.color }} />
+                        <View style={{ flex: 1 }}>
+                          <Typography style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 3 }}>{z.label}</Typography>
+                          <View style={{ height: 5, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
+                            <View style={{ height: '100%', width: `${z.pct}%`, backgroundColor: z.color, borderRadius: 3 }} />
+                          </View>
+                        </View>
+                        <Typography style={{ fontSize: 12, fontWeight: '700', color: z.color, width: 36, textAlign: 'right' }}>{z.pct}%</Typography>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              ) : <EmptyChart msg="No heart rate data. Enable HR recording on Strava." />}
+            </Card>
+            {zoneStats.length > 0 && (
+              <Card style={[st.chartCard, { borderLeftWidth: 3, borderLeftColor: '#FBBF24', backgroundColor: '#FBBF2411' }]}>
+                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+                  <Zap color="#FBBF24" size={16} />
+                  <View style={{ flex: 1 }}>
+                    <Typography style={{ fontSize: 13, fontWeight: '700', color: theme.colors.text, marginBottom: 4 }}>80/20 Training Rule</Typography>
+                    <Typography style={{ fontSize: 12, color: theme.colors.textSecondary, lineHeight: 18 }}>
+                      Elite runners spend ~80% in Z1–Z2 (easy) and ~20% in Z3–Z5 (hard).
+                      {(() => { const ez = (zoneStats.find(z => z.label.includes('Z1'))?.pct || 0) + (zoneStats.find(z => z.label.includes('Z2'))?.pct || 0); return ez ? ` You're at ${ez}% easy effort.` : ''; })()}
+                    </Typography>
+                  </View>
+                </View>
+              </Card>
+            )}
+          </>
+        )}
+
+        {/* ════ ELEVATION ════ */}
+        {tab === 'elevation' && (
+          <>
+            <View style={st.pillRow}>
+              <SummaryPill label="Total climbed" value={totalElev.toLocaleString()} unit="m"  color="#FBBF24" />
+              <SummaryPill label="Peak single"   value={Math.round(maxElev)}         unit="m"  color={theme.colors.secondary} />
+            </View>
+            <Card style={st.chartCard}>
+              <SectionHeader label="Elevation per Activity" sub="Total gain (m)" />
+              {elevData.length > 1 ? (
+                <View style={{ overflow: 'hidden' }}>
+                  <LineChart
+                    data={elevData}
+                    height={200} width={CHART_W}
+                    thickness={2} color="#FBBF24" hideDataPoints
+                    initialSpacing={0}
+                    spacing={Math.max(CHART_W / Math.max(elevData.length - 1, 1), 4)}
+                    curved areaChart
+                    startFillColor="#FBBF24" endFillColor={theme.colors.background}
+                    startOpacity={0.4} endOpacity={0}
+                    yAxisLabelSuffix=" m"
+                    {...chartBase}
+                  />
+                </View>
+              ) : <EmptyChart msg="No elevation data yet" />}
+            </Card>
+            <Card style={st.chartCard}>
+              <SectionHeader label="Elevation Buckets" sub="Activities by gain" />
+              <View style={{ overflow: 'hidden' }}>
+                <BarChart
+                  data={elevBuckets}
+                  height={150} width={CHART_W}
+                  barWidth={ELEV_BAR_W}
+                  roundedTop
+                  maxValue={Math.ceil(Math.max(...elevBuckets.map(b => b.value), 1) * 1.3)}
+                  initialSpacing={ELEV_SPACING}
+                  spacing={ELEV_SPACING}
+                  showGradient gradientColor="#FBBF2444"
+                  frontColor="#FBBF24"
+                  {...chartBase}
+                />
+              </View>
+            </Card>
+          </>
+        )}
 
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
+const st = StyleSheet.create({
+  container: { flex: 1, backgroundColor: theme.colors.background },
+  scroll:    { padding: 16, paddingBottom: 40 },
+  pageTitle: { fontSize: 26, fontWeight: '800', color: theme.colors.text, marginBottom: 16 },
+
+  tabRow: {
+    flexDirection: 'row', backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.md, padding: 4, marginBottom: 20,
+    borderWidth: 1, borderColor: theme.colors.border,
   },
-  scrollContent: {
-    padding: theme.spacing.md,
-    paddingBottom: theme.spacing.xxl,
-  },
-  card: {
-    marginBottom: theme.spacing.md,
-    padding: theme.spacing.lg,
-  },
-  chartTitle: {
-    marginBottom: theme.spacing.lg,
-  },
-  chartContainer: {
-    alignItems: 'center',
-    marginLeft: -10,
-  },
-  pieContainer: {
-    alignItems: 'center',
-    marginTop: theme.spacing.xl,
-    marginBottom: -40, // Adjust for semicircle
-  },
-  xAxisLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-    marginLeft: 30,
-  }
+  tab:          { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
+  tabActive:    { backgroundColor: theme.colors.primary },
+  tabText:      { fontSize: 12, fontWeight: '600', color: theme.colors.textSecondary },
+  tabTextActive:{ color: '#fff' },
+
+  pillRow:   { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  pill:      { flex: 1, backgroundColor: theme.colors.surface, borderRadius: theme.borderRadius.md, padding: 12, borderWidth: 1, borderColor: theme.colors.border },
+  pillLabel: { fontSize: 10, color: theme.colors.textSecondary, marginBottom: 4, fontWeight: '600', textTransform: 'uppercase' },
+  pillValue: { fontSize: 20, fontWeight: '800' },
+  pillUnit:  { fontSize: 11, color: theme.colors.textSecondary, fontWeight: '400' },
+
+  chartCard: { padding: 16, marginBottom: 16 },
+
+  emptyChart: { height: 120, alignItems: 'center', justifyContent: 'center' },
+  emptyText:  { color: theme.colors.textSecondary, fontSize: 13, textAlign: 'center' },
+
+  tooltip:     { marginTop: 10, backgroundColor: theme.colors.primary + '22', borderRadius: 8, padding: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.primary + '55' },
+  tooltipText: { fontSize: 12, color: theme.colors.primary, fontWeight: '700' },
 });
