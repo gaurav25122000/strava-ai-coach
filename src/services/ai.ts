@@ -1,4 +1,4 @@
-import { Goal, Activity } from '../store/useStore';
+import { Goal, Activity, UserProfile } from '../store/useStore';
 import axios from 'axios';
 
 export const AIService = {
@@ -9,22 +9,31 @@ export const AIService = {
     provider: 'openai' | 'anthropic' | 'gemini',
     apiKey: string,
     personality: string = 'Encouraging Supporter',
-    injuries: any[] = []
+    injuries: any[] = [],
+    userProfile?: UserProfile
   ): Promise<Partial<Goal>> => {
 
     if (!apiKey) {
         throw new Error('API Key is missing');
     }
 
+
     const recentDistance = activities.slice(0, 14).reduce((sum, act) => sum + (act.distance / 1000), 0);
     const hasInjury = injuries.length > 0;
     const injuryContext = hasInjury ? `The user recently reported an injury: ${injuries[0].type}. Adjust the plan to prioritize recovery and low-impact cross-training.` : '';
+
+    let profileContext = '';
+    if (userProfile) {
+        profileContext = `User Profile - DOB: ${userProfile.dob || 'Unknown'}, Height: ${userProfile.height || 'Unknown'}, Weight: ${userProfile.weight || 'Unknown'}, Habits: ${userProfile.habits || 'None specified'}. Please consider this context when making the plan.`;
+    }
+
 
     const prompt = `
       Act as an elite running coach with a "${personality}" persona.
       I have a user aiming for a goal: "${goalTitle}" by the date ${targetDate}.
       Over the last 14 days, they have run ${recentDistance.toFixed(2)} km.
       ${injuryContext}
+      ${profileContext}
       Write the "Phase Description" and "Workout Description" using your persona's tone.
       Generate a training plan structured exactly in this JSON format without any markdown wrappers or additional text:
       {
