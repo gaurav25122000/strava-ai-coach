@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import { theme } from '../constants/theme';
-import { Home, BarChart2, Target, Dumbbell } from 'lucide-react-native';
+import { Home, BarChart2, Target, Settings as SettingsIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Animated, { useAnimatedStyle, withSpring } from 'react-native-reanimated';
 
@@ -40,8 +40,8 @@ export const CustomTabBar = ({ state, descriptors, navigation }: any) => {
                 return <Home size={18} color={color} />;
               case 'Insights':
                 return <BarChart2 size={18} color={color} />;
-              case 'Training':
-                return <Dumbbell size={18} color={color} />;
+              case 'Settings':
+                return <SettingsIcon size={18} color={color} />;
               case 'Goals':
                 return <Target size={18} color={color} />;
               default:

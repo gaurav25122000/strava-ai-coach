@@ -1,27 +1,61 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { theme } from '../constants/theme';
+import { useStore } from '../store/useStore';
+import { differenceInDays, subDays, startOfWeek, format } from 'date-fns';
 
 export const ActivityHeatmap = () => {
-  // Generate mock heatmap data
-  const months = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
-  const days = ['Mon', 'Wed', 'Fri', 'Sun'];
+  const { activities } = useStore();
 
+  // Real heatmap data generation
   const generateGrid = () => {
-    const grid = [];
-    for (let i = 0; i < 7; i++) { // 7 days a week
-      const row = [];
-      for (let j = 0; j < 25; j++) { // roughly 25 weeks to show
-        // Randomly assign a heat level (0 to 4)
-        const heatLevel = Math.random() > 0.6 ? Math.floor(Math.random() * 4) + 1 : 0;
-        row.push(heatLevel);
+    const grid: number[][] = Array(7).fill(0).map(() => Array(25).fill(0));
+
+    if (!activities || activities.length === 0) return grid;
+
+    const today = new Date();
+    // Start of the week 25 weeks ago
+    const startDate = startOfWeek(subDays(today, 24 * 7), { weekStartsOn: 1 }); // Monday start
+
+    activities.forEach(act => {
+      if (act.type !== 'Run' && act.type !== 'VirtualRun') return;
+
+      const actDate = new Date(act.date);
+      if (actDate < startDate) return;
+
+      const diffDays = differenceInDays(actDate, startDate);
+      const weekIndex = Math.floor(diffDays / 7);
+      const dayIndex = diffDays % 7;
+
+      if (weekIndex >= 0 && weekIndex < 25 && dayIndex >= 0 && dayIndex < 7) {
+        // heat level based roughly on distance
+        let heat = 1;
+        if (act.distance > 5) heat = 2;
+        if (act.distance > 10) heat = 3;
+        if (act.distance > 20) heat = 4;
+
+        // Take the max if multiple runs on same day
+        grid[dayIndex][weekIndex] = Math.max(grid[dayIndex][weekIndex], heat);
       }
-      grid.push(row);
-    }
+    });
+
     return grid;
   };
 
   const gridData = generateGrid();
+
+  // Generate month labels based on the past 25 weeks
+  const getMonths = () => {
+      const today = new Date();
+      const startDate = startOfWeek(subDays(today, 24 * 7), { weekStartsOn: 1 });
+      const months = [];
+      for(let i=0; i<6; i++) {
+          months.push(format(subDays(today, (5-i)*30), 'MMM'));
+      }
+      return months;
+  }
+  const months = getMonths();
+  const days = ['Mon', 'Wed', 'Fri', 'Sun'];
 
   const getColor = (level: number) => {
     switch (level) {

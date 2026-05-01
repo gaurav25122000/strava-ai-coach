@@ -1,10 +1,11 @@
 import * as AuthSession from 'expo-auth-session';
+import * as WebBrowser from 'expo-web-browser';
 import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
-import { Platform } from 'react-native';
 
-const STRAVA_CLIENT_ID = 'YOUR_STRAVA_CLIENT_ID'; // Replace with actual ID
-const STRAVA_CLIENT_SECRET = 'YOUR_STRAVA_CLIENT_SECRET'; // Replace with actual Secret
+// Required for web to close the browser popup
+WebBrowser.maybeCompleteAuthSession();
+
 const STRAVA_AUTH_URL = 'https://www.strava.com/oauth/mobile/authorize';
 const STRAVA_TOKEN_URL = 'https://www.strava.com/oauth/token';
 const STRAVA_API_BASE = 'https://www.strava.com/api/v3';
@@ -14,73 +15,131 @@ const redirectUri = AuthSession.makeRedirectUri({
   scheme: 'app',
 });
 
-// Mock Data Fallback for Development
-export const MOCK_ACTIVITIES = [
-  {
-    id: '1',
-    type: 'Run',
-    date: '2026-04-29T10:00:00Z',
-    distance: 5.2, // km
-    duration: 1800, // seconds
-    pace: '5:46', // min/km
-    elevation: 45,
-    heartRate: 152,
-  },
-  {
-    id: '2',
-    type: 'Run',
-    date: '2026-04-27T08:30:00Z',
-    distance: 10.5,
-    duration: 3600,
-    pace: '5:42',
-    elevation: 120,
-    heartRate: 158,
-  }
-];
+// Format pace from m/s to min/km string
+const formatPace = (speedMs: number) => {
+  if (!speedMs || speedMs === 0) return '0:00';
+  const paceSecPerKm = 1000 / speedMs;
+  const mins = Math.floor(paceSecPerKm / 60);
+  const secs = Math.floor(paceSecPerKm % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
 
-export const authenticateStrava = async () => {
+export const authenticateStrava = async (): Promise<boolean> => {
   try {
-    const authUrl = `${STRAVA_AUTH_URL}?client_id=${STRAVA_CLIENT_ID}&response_type=code&redirect_uri=${redirectUri}&approval_prompt=force&scope=activity:read_all`;
+    const clientId = await SecureStore.getItemAsync('stravaClientId');
+    const clientSecret = await SecureStore.getItemAsync('stravaClientSecret');
 
-    // In a real scenario with a configured Expo project scheme, you would use:
-    // const result = await AuthSession.startAsync({ authUrl });
-    // For this mock implementation, we'll simulate a successful authentication.
+    if (!clientId || !clientSecret) {
+      console.warn("Strava credentials not configured in Settings.");
+      return false;
+    }
 
-    console.log("Simulating Strava OAuth...");
+    const authUrl = `${STRAVA_AUTH_URL}?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&approval_prompt=force&scope=activity:read_all`;
 
-    // Simulating storing tokens
-    await SecureStore.setItemAsync('strava_access_token', 'mock_access_token_123');
-    await SecureStore.setItemAsync('strava_refresh_token', 'mock_refresh_token_456');
+    // Create an AuthRequest instance
+    const authRequest = new AuthSession.AuthRequest({
+        clientId: clientId,
+        scopes: ['activity:read_all'],
+        redirectUri: redirectUri,
+    });
 
-    return true;
+    // Call promptAsync to open the browser
+    const result = await authRequest.promptAsync({ authorizationEndpoint: STRAVA_AUTH_URL });
+
+    if (result.type === 'success' && result.params.code) {
+      const code = result.params.code;
+
+      // Token exchange
+      const tokenResponse = await axios.post(STRAVA_TOKEN_URL, {
+        client_id: clientId,
+        client_secret: clientSecret,
+        code: code,
+        grant_type: 'authorization_code'
+      });
+
+      const { access_token, refresh_token, expires_at } = tokenResponse.data;
+
+      await SecureStore.setItemAsync('strava_access_token', access_token);
+      await SecureStore.setItemAsync('strava_refresh_token', refresh_token);
+      await SecureStore.setItemAsync('strava_expires_at', expires_at.toString());
+
+      return true;
+    }
+
+    return false;
   } catch (error) {
     console.error("Strava Auth Error:", error);
     return false;
   }
 };
 
+const getValidAccessToken = async () => {
+  let accessToken = await SecureStore.getItemAsync('strava_access_token');
+  const refreshToken = await SecureStore.getItemAsync('strava_refresh_token');
+  const expiresAt = await SecureStore.getItemAsync('strava_expires_at');
+
+  if (!accessToken) {
+      return null;
+  }
+
+  // Check if token is expired
+  if (expiresAt && Date.now() / 1000 > parseInt(expiresAt, 10)) {
+    const clientId = await SecureStore.getItemAsync('stravaClientId');
+    const clientSecret = await SecureStore.getItemAsync('stravaClientSecret');
+
+    if (!clientId || !clientSecret || !refreshToken) {
+        return null;
+    }
+
+    try {
+        const tokenResponse = await axios.post(STRAVA_TOKEN_URL, {
+            client_id: clientId,
+            client_secret: clientSecret,
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken
+          });
+
+          const { access_token: new_access, refresh_token: new_refresh, expires_at: new_expires } = tokenResponse.data;
+
+          await SecureStore.setItemAsync('strava_access_token', new_access);
+          await SecureStore.setItemAsync('strava_refresh_token', new_refresh);
+          await SecureStore.setItemAsync('strava_expires_at', new_expires.toString());
+
+          accessToken = new_access;
+    } catch (e) {
+        console.error("Error refreshing token", e);
+        return null;
+    }
+  }
+
+  return accessToken;
+};
+
 export const fetchStravaActivities = async () => {
   try {
-    const token = await SecureStore.getItemAsync('strava_access_token');
+    const token = await getValidAccessToken();
 
     if (!token) {
       throw new Error("No access token found. Please authenticate.");
     }
 
-    // Real implementation:
-    // const response = await axios.get(`${STRAVA_API_BASE}/athlete/activities`, {
-    //   headers: { Authorization: `Bearer ${token}` }
-    // });
-    // return response.data;
-
-    console.log("Simulating fetching Strava activities...");
-
-    // Fallback to mock data for presentation purposes
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve(MOCK_ACTIVITIES);
-      }, 1000);
+    const response = await axios.get(`${STRAVA_API_BASE}/athlete/activities`, {
+      headers: { Authorization: `Bearer ${token}` }
     });
+
+    const activities = response.data;
+
+    // Map to our internal Activity interface
+    return activities.map((act: any) => ({
+        id: act.id.toString(),
+        type: act.sport_type || act.type,
+        date: act.start_date,
+        distance: act.distance / 1000, // convert meters to km
+        duration: act.moving_time, // seconds
+        pace: formatPace(act.average_speed),
+        elevation: act.total_elevation_gain,
+        heartRate: act.average_heartrate || 0,
+    }));
 
   } catch (error) {
     console.error("Error fetching Strava activities:", error);

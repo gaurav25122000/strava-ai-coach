@@ -44,6 +44,14 @@ export const AIWorkoutRecommendation = () => {
   const aiRecommendation = useStore((state) => state.aiRecommendation);
   const isLoading = useStore((state) => state.isLoading);
 
+  const activities = useStore((state) => state.activities);
+
+  // Calculate this week's volume
+  const thisWeekVolume = activities.filter(a => new Date(a.date) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).reduce((sum, a) => sum + a.distance, 0);
+
+  // Calculate this week's longest run
+  const thisWeekLongRun = activities.filter(a => new Date(a.date) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)).reduce((max, a) => Math.max(max, a.distance), 0);
+
   if (isLoading || !aiRecommendation) {
      return (
         <View style={styles.container}>
@@ -58,7 +66,7 @@ export const AIWorkoutRecommendation = () => {
     <View style={styles.container}>
       <ProgressBar
         label="Weekly volume"
-        current={22.9} // In a full app, derive from state.activities
+        current={parseFloat(thisWeekVolume.toFixed(1))}
         total={aiRecommendation.targetVolume}
         unit="km"
         colorName="primaryRed"
@@ -68,7 +76,7 @@ export const AIWorkoutRecommendation = () => {
 
       <ProgressBar
         label="Long run"
-        current={10.1} // In a full app, derive from state.activities
+        current={parseFloat(thisWeekLongRun.toFixed(1))}
         total={aiRecommendation.targetLongRun}
         unit="km"
         colorName="primaryGreen"

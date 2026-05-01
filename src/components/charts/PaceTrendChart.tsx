@@ -2,26 +2,34 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import { theme } from '../../constants/theme';
+import { useStore } from '../../store/useStore';
+
+const parsePaceToDecimal = (pace: string) => {
+    if (!pace) return 0;
+    const [mins, secs] = pace.split(':').map(Number);
+    return mins + (secs / 60);
+};
 
 export const PaceTrendChart = () => {
-  const lineData = [
-    {value: 7.6, dataPointText: ''},
-    {value: 7.2, dataPointText: ''},
-    {value: 8.5, dataPointText: ''},
-    {value: 7.1, dataPointText: ''},
-    {value: 8.5, dataPointText: ''},
-    {value: 8.4, dataPointText: ''},
-    {value: 6.5, dataPointText: ''},
-    {value: 8.5, dataPointText: ''},
-    {value: 9.5, dataPointText: ''},
-    {value: 9.2, dataPointText: ''},
-    {value: 7.5, dataPointText: ''},
-    {value: 8.5, dataPointText: ''},
-    {value: 9.8, dataPointText: ''},
-    {value: 6.8, dataPointText: ''},
-    {value: 8.2, dataPointText: ''},
-    {value: 9.5, dataPointText: ''},
-  ];
+  const { activities } = useStore();
+
+  const runs = activities
+    .filter(a => a.type === 'Run' || a.type === 'VirtualRun')
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // Chronological
+
+  let lineData = runs.map(run => ({
+      value: parsePaceToDecimal(run.pace),
+      dataPointText: ''
+  }));
+
+  if (lineData.length === 0) {
+      lineData = [{value: 0, dataPointText: ''}]; // Fallback
+  }
+
+  // To display pace properly (lower is better), we might need to invert or just let it map naturally.
+  // For a basic implementation, we just plot the decimal pace.
+
+  const maxPace = Math.max(...lineData.map(d => d.value), 10);
 
   return (
     <View style={styles.container}>
@@ -38,13 +46,11 @@ export const PaceTrendChart = () => {
           yAxisTextStyle={{color: theme.colors.textSecondary, fontSize: 10}}
           xAxisColor={theme.colors.border}
           yAxisColor={theme.colors.border}
-          hideDataPoints={false}
-          spacing={20}
+          hideDataPoints={lineData.length > 30} // Hide dots if too many
+          spacing={Math.max(250 / Math.max(lineData.length, 1), 5)}
           initialSpacing={10}
-          maxValue={10}
+          maxValue={Math.ceil(maxPace + 1)}
           noOfSections={4}
-          stepValue={1}
-          yAxisLabelTexts={['10', '9.5', '8.55', '7.6']} // Inverted logically via labels, but gifted charts handles max-min differently. This is mock.
           isAnimated
         />
       </View>
@@ -68,6 +74,6 @@ const styles = StyleSheet.create({
   },
   chartContainer: {
     alignItems: 'center',
-    marginLeft: -20, // Adjust alignment for gifted-charts y-axis
+    marginLeft: -20,
   }
 });

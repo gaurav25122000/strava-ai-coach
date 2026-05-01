@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { theme } from '../constants/theme';
 import { Settings, User } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 
 interface HeaderProps {
   title?: string;
@@ -11,14 +12,15 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ title, showProfile = false }) => {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<any>();
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + theme.spacing.sm }]}>
       {showProfile ? (
         <View style={styles.profileContainer}>
-          <View style={styles.avatarPlaceholder}>
+          <TouchableOpacity style={styles.avatarPlaceholder} onPress={() => navigation.navigate('Profile')}>
              <User size={20} color={theme.colors.textPrimary} />
-          </View>
+          </TouchableOpacity>
           <Text style={styles.greeting}>Eva Sarin</Text>
         </View>
       ) : (

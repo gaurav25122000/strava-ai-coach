@@ -2,31 +2,30 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import { theme } from '../../constants/theme';
+import { useStore } from '../../store/useStore';
+import { format } from 'date-fns';
 
 export const WeeklyElevationChart = () => {
-  const areaData = [
-    {value: 10, label: '12-01'},
-    {value: 70, label: ''},
-    {value: 60, label: ''},
-    {value: 20, label: '12-29'},
-    {value: 25, label: ''},
-    {value: 10, label: '01-12'},
-    {value: 40, label: ''},
-    {value: 380, label: '01-26'},
-    {value: 10, label: ''},
-    {value: 5, label: '02-16'},
-    {value: 30, label: ''},
-    {value: 40, label: ''},
-    {value: 15, label: '03-09'},
-    {value: 35, label: ''},
-    {value: 5, label: ''},
-    {value: 60, label: '04-06'},
-    {value: 0, label: '04-27'},
-  ];
+  const { activities } = useStore();
+
+  const runs = activities
+    .filter(a => a.type === 'Run' || a.type === 'VirtualRun')
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // Chronological
+
+  let areaData = runs.map((run, index) => ({
+      value: run.elevation,
+      label: index % Math.ceil(runs.length / 5) === 0 ? format(new Date(run.date), 'MM-dd') : ''
+  }));
+
+  if (areaData.length === 0) {
+      areaData = [{value: 0, label: ''}];
+  }
+
+  const maxElev = Math.max(...areaData.map(d => d.value), 100);
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>WEEKLY ELEVATION (M)</Text>
+      <Text style={styles.title}>ELEVATION GAIN (M)</Text>
       <View style={styles.chartContainer}>
         <LineChart
           areaChart
@@ -45,11 +44,10 @@ export const WeeklyElevationChart = () => {
           yAxisColor={theme.colors.border}
           yAxisTextStyle={{color: theme.colors.textSecondary, fontSize: 10}}
           xAxisLabelTextStyle={{color: theme.colors.textSecondary, fontSize: 10}}
-          spacing={20}
+          spacing={Math.max(250 / Math.max(areaData.length, 1), 5)}
           initialSpacing={10}
-          maxValue={380}
+          maxValue={Math.ceil(maxElev + 10)}
           noOfSections={4}
-          stepValue={95}
           isAnimated
           curved
         />
@@ -74,6 +72,6 @@ const styles = StyleSheet.create({
   },
   chartContainer: {
     alignItems: 'center',
-    marginLeft: -10, // Adjust alignment for gifted-charts y-axis
+    marginLeft: -10,
   }
 });
