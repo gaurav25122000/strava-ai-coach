@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView, FlatList } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView, FlatList, Animated as RNAnimated } from 'react-native';
+import Markdown from 'react-native-markdown-display';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
@@ -22,6 +23,62 @@ const GENERATING_MESSAGES = [
   'Designing your key workouts...',
   'Finalizing your coaching plan...',
 ];
+
+const GOAL_DOT_COLORS = ['#f97316', '#ec4899', '#8b5cf6'];
+
+function GoalThinkingDots() {
+  const anims = useRef(GOAL_DOT_COLORS.map(() => new RNAnimated.Value(0))).current;
+  useEffect(() => {
+    const animations = anims.map((anim, i) =>
+      RNAnimated.loop(
+        RNAnimated.sequence([
+          RNAnimated.delay(i * 160),
+          RNAnimated.timing(anim, { toValue: 1, duration: 380, useNativeDriver: true }),
+          RNAnimated.timing(anim, { toValue: 0, duration: 380, useNativeDriver: true }),
+          RNAnimated.delay((GOAL_DOT_COLORS.length - i - 1) * 160),
+        ])
+      )
+    );
+    animations.forEach(a => a.start());
+    return () => animations.forEach(a => a.stop());
+  }, []);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, padding: 10 }}>
+      {anims.map((anim, i) => (
+        <RNAnimated.View
+          key={i}
+          style={{
+            width: 8, height: 8, borderRadius: 4,
+            backgroundColor: GOAL_DOT_COLORS[i],
+            transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }) }],
+            opacity: anim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.4, 1, 0.4] }),
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+const goalMarkdownStyles = StyleSheet.create({
+  body: { color: theme.colors.text, fontSize: 13, lineHeight: 20 },
+  heading1: { color: theme.colors.text, fontSize: 16, fontWeight: '700', marginBottom: 4, marginTop: 6 },
+  heading2: { color: theme.colors.text, fontSize: 14, fontWeight: '700', marginBottom: 3, marginTop: 4 },
+  heading3: { color: '#f97316', fontSize: 13, fontWeight: '700', marginBottom: 2, marginTop: 3 },
+  strong: { fontWeight: '700', color: theme.colors.text },
+  em: { fontStyle: 'italic', color: theme.colors.textSecondary },
+  bullet_list: { marginVertical: 4 },
+  ordered_list: { marginVertical: 4 },
+  code_inline: { backgroundColor: '#ffffff15', borderRadius: 4, paddingHorizontal: 4, color: '#ec4899', fontSize: 12 },
+  fence: { backgroundColor: '#0f0f1a', borderRadius: 8, padding: 10, marginVertical: 4, borderWidth: 1, borderColor: theme.colors.border },
+  table: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6, marginVertical: 6, overflow: 'hidden' },
+  thead: { backgroundColor: '#f973160f' },
+  th: { padding: 6, fontWeight: '700', color: '#f97316', fontSize: 11, borderRightWidth: 1, borderRightColor: theme.colors.border },
+  td: { padding: 6, color: theme.colors.text, fontSize: 11, borderRightWidth: 1, borderRightColor: theme.colors.border },
+  tr: { borderBottomWidth: 1, borderBottomColor: theme.colors.border, flexDirection: 'row' },
+  paragraph: { marginVertical: 2 },
+  link: { color: '#6366f1' },
+  blockquote: { backgroundColor: '#f9731610', borderLeftWidth: 3, borderLeftColor: '#f97316', paddingLeft: 8, marginVertical: 4, borderRadius: 4 },
+});
 
 export default function GoalsScreen() {
   const { goals, deleteGoal, addGoal, updateGoal, activities, settings, userProfile, setToast } = useStore();
@@ -873,15 +930,13 @@ export default function GoalsScreen() {
                     item.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleBot,
                     { marginBottom: 8 }
                   ]}>
-                    <Typography style={styles.chatBubbleText}>{item.text}</Typography>
+                    {item.role === 'user'
+                      ? <Typography style={styles.chatBubbleText}>{item.text}</Typography>
+                      : <Markdown style={goalMarkdownStyles}>{item.text}</Markdown>
+                    }
                   </View>
                 )}
-                ListFooterComponent={goalChatLoading ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10 }}>
-                    <ActivityIndicator size="small" color={theme.colors.accent} />
-                    <Typography style={{ fontSize: 12, color: theme.colors.textSecondary }}>Thinking…</Typography>
-                  </View>
-                ) : null}
+                ListFooterComponent={goalChatLoading ? <GoalThinkingDots /> : null}
               />
             )}
 

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,10 +8,11 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
   SafeAreaView,
   ScrollView,
+  Animated,
 } from 'react-native';
+import Markdown from 'react-native-markdown-display';
 import { Send, Bot, RefreshCw } from 'lucide-react-native';
 import { useStore } from '../store/useStore';
 import { AIService, ChatMessage } from '../services/ai';
@@ -26,37 +27,120 @@ const SUGGESTIONS = [
   'Explain my training load this week.',
 ];
 
-function renderMarkdown(text: string): React.ReactNode {
-  // Simple markdown: bold (**text**), bullets, code
-  const lines = text.split('\n');
-  return lines.map((line, i) => {
-    const key = `line-${i}`;
-    if (line.startsWith('# ')) return <Text key={key} style={styles.mdH1}>{line.slice(2)}</Text>;
-    if (line.startsWith('## ')) return <Text key={key} style={styles.mdH2}>{line.slice(3)}</Text>;
-    if (line.startsWith('- ') || line.startsWith('* ')) {
-      return (
-        <View key={key} style={styles.mdBulletRow}>
-          <Text style={styles.mdBulletDot}>•</Text>
-          <Text style={styles.mdBulletText}>{formatInline(line.slice(2))}</Text>
-        </View>
-      );
-    }
-    if (line.trim() === '') return <View key={key} style={{ height: 6 }} />;
-    return <Text key={key} style={styles.mdText}>{formatInline(line)}</Text>;
-  });
+const DOT_COLORS = ['#f97316', '#ec4899', '#8b5cf6'];
+
+function ThinkingDots() {
+  const anims = useRef(DOT_COLORS.map(() => new Animated.Value(0))).current;
+
+  useEffect(() => {
+    const animations = anims.map((anim, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 160),
+          Animated.timing(anim, { toValue: 1, duration: 380, useNativeDriver: true }),
+          Animated.timing(anim, { toValue: 0, duration: 380, useNativeDriver: true }),
+          Animated.delay((DOT_COLORS.length - i - 1) * 160),
+        ])
+      )
+    );
+    animations.forEach(a => a.start());
+    return () => animations.forEach(a => a.stop());
+  }, []);
+
+  return (
+    <View style={styles.typingRow}>
+      <View style={styles.avatar}>
+        <Bot size={14} color={theme.colors.primary} />
+      </View>
+      <View style={styles.typingBubble}>
+        {anims.map((anim, i) => (
+          <Animated.View
+            key={i}
+            style={[
+              styles.dot,
+              { backgroundColor: DOT_COLORS[i] },
+              {
+                transform: [{
+                  translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }),
+                }],
+                opacity: anim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.4, 1, 0.4] }),
+              },
+            ]}
+          />
+        ))}
+      </View>
+    </View>
+  );
 }
 
-function formatInline(text: string): React.ReactNode {
-  // Bold: **text**
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  if (parts.length === 1) return text;
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <Text key={i} style={{ fontWeight: '700', color: theme.colors.text }}>{part.slice(2, -2)}</Text>;
-    }
-    return part;
-  });
-}
+const markdownStyles = StyleSheet.create({
+  body: { color: theme.colors.text, fontSize: 14, lineHeight: 21 },
+  heading1: { color: theme.colors.text, fontSize: 17, fontWeight: '700', marginBottom: 4, marginTop: 6 },
+  heading2: { color: theme.colors.text, fontSize: 15, fontWeight: '700', marginBottom: 3, marginTop: 5 },
+  heading3: { color: '#f97316', fontSize: 14, fontWeight: '700', marginBottom: 2, marginTop: 4 },
+  strong: { fontWeight: '700', color: theme.colors.text },
+  em: { fontStyle: 'italic', color: theme.colors.textSecondary },
+  bullet_list: { marginVertical: 4 },
+  ordered_list: { marginVertical: 4 },
+  list_item: { flexDirection: 'row', marginBottom: 4 },
+  bullet_list_icon: { color: '#f97316', fontSize: 14, marginRight: 6, marginTop: 2 },
+  code_inline: {
+    backgroundColor: '#ffffff15',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 12,
+    color: '#ec4899',
+  },
+  fence: {
+    backgroundColor: '#0f0f1a',
+    borderRadius: 8,
+    padding: 12,
+    marginVertical: 6,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  code_block: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 12,
+    color: '#a5f3fc',
+  },
+  blockquote: {
+    backgroundColor: '#f9731610',
+    borderLeftWidth: 3,
+    borderLeftColor: '#f97316',
+    paddingLeft: 10,
+    marginVertical: 6,
+    borderRadius: 4,
+  },
+  hr: { backgroundColor: theme.colors.border, height: 1, marginVertical: 10 },
+  table: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 8,
+    marginVertical: 8,
+    overflow: 'hidden',
+  },
+  thead: { backgroundColor: '#f973160f' },
+  th: {
+    padding: 8,
+    fontWeight: '700',
+    color: '#f97316',
+    fontSize: 12,
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
+  },
+  td: {
+    padding: 8,
+    color: theme.colors.text,
+    fontSize: 12,
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
+  },
+  tr: { borderBottomWidth: 1, borderBottomColor: theme.colors.border, flexDirection: 'row' },
+  link: { color: '#6366f1', textDecorationLine: 'underline' },
+  paragraph: { marginVertical: 3 },
+});
 
 export default function ChatScreen() {
   const { settings, userProfile, activities } = useStore();
@@ -107,7 +191,7 @@ export default function ChatScreen() {
         <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleBot]}>
           {isUser
             ? <Text style={styles.bubbleUserText}>{item.text}</Text>
-            : <>{renderMarkdown(item.text)}</>
+            : <Markdown style={markdownStyles}>{item.text}</Markdown>
           }
         </View>
       </View>
@@ -137,7 +221,6 @@ export default function ChatScreen() {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
         {/* Message list */}
         {messages.length === 0 ? (
@@ -165,19 +248,7 @@ export default function ChatScreen() {
             contentContainerStyle={styles.list}
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
             showsVerticalScrollIndicator={false}
-            ListFooterComponent={
-              loading ? (
-                <View style={styles.typingRow}>
-                  <View style={styles.avatar}>
-                    <Bot size={14} color={theme.colors.primary} />
-                  </View>
-                  <View style={styles.typingBubble}>
-                    <ActivityIndicator size="small" color={theme.colors.primary} />
-                    <Text style={styles.typingText}>Thinking…</Text>
-                  </View>
-                </View>
-              ) : null
-            }
+            ListFooterComponent={loading ? <ThinkingDots /> : null}
           />
         )}
 
@@ -279,24 +350,16 @@ const styles = StyleSheet.create({
   bubbleBot: { backgroundColor: theme.colors.surface, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: theme.colors.border },
   bubbleUserText: { color: '#fff', fontSize: 14, lineHeight: 21 },
 
-  // Markdown
-  mdText: { color: theme.colors.text, fontSize: 14, lineHeight: 21, flexWrap: 'wrap' },
-  mdH1: { color: theme.colors.text, fontSize: 17, fontWeight: '700', marginBottom: 4 },
-  mdH2: { color: theme.colors.text, fontSize: 15, fontWeight: '700', marginBottom: 3 },
-  mdBulletRow: { flexDirection: 'row', marginBottom: 3 },
-  mdBulletDot: { color: theme.colors.primary, marginRight: 6, fontSize: 14 },
-  mdBulletText: { color: theme.colors.text, fontSize: 14, lineHeight: 21, flex: 1, flexWrap: 'wrap' },
-
-  // Typing
+  // Thinking dots
   typingRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 14 },
   typingBubble: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
     backgroundColor: theme.colors.surface,
     borderRadius: 16, borderBottomLeftRadius: 4,
-    paddingHorizontal: 14, paddingVertical: 10,
+    paddingHorizontal: 16, paddingVertical: 14,
     borderWidth: 1, borderColor: theme.colors.border,
   },
-  typingText: { color: theme.colors.textSecondary, fontSize: 13 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
 
   // Error
   errorBanner: {

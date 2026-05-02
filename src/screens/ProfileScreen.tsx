@@ -10,10 +10,12 @@ import { theme } from '../theme';
 import { Typography } from '../components/Typography';
 import { useStore } from '../store/useStore';
 import { Card } from '../components/Card';
+import { useNavigation } from '@react-navigation/native';
 import {
   User, Award, Activity, CalendarDays, Weight,
   Heart, Target, Moon, Utensils, Zap, Check,
   Pencil, TrendingUp, Footprints, Flame, Trophy,
+  Settings, ActivitySquare, ChevronRight,
 } from 'lucide-react-native';
 import { getAllMilestoneDefs } from '../services/milestones';
 
@@ -65,6 +67,7 @@ function GradientStat({ colors, icon, value, label }: { colors: [string, string]
 
 export default function ProfileScreen() {
   const { userStats, userProfile, updateUserProfile, settings, milestones, bestEfforts } = useStore();
+  const navigation = useNavigation<any>();
   const [editing, setEditing] = useState(false);
   const [showDobPicker, setShowDobPicker] = useState(false);
 
@@ -321,6 +324,35 @@ export default function ProfileScreen() {
               );
             })}
         </ScrollView>
+
+        {/* ── Quick Links ── */}
+        <Typography style={st.sectionLabel}>MORE</Typography>
+        <Card style={[st.sectionCard, { marginBottom: 16 }]}>
+          <TouchableOpacity
+            style={[st.fieldRow, { alignItems: 'center' }]}
+            onPress={() => navigation.navigate('GearHealth')}
+          >
+            <View style={st.fieldIcon}>
+              <ActivitySquare color='#10b981' size={16} />
+            </View>
+            <View style={st.fieldContent}>
+              <Typography style={st.fieldValue}>Gear & Health</Typography>
+            </View>
+            <ChevronRight size={16} color={theme.colors.textSecondary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[st.fieldRow, { alignItems: 'center', borderBottomWidth: 0 }]}
+            onPress={() => navigation.navigate('Settings')}
+          >
+            <View style={st.fieldIcon}>
+              <Settings color='#6366f1' size={16} />
+            </View>
+            <View style={st.fieldContent}>
+              <Typography style={st.fieldValue}>Settings</Typography>
+            </View>
+            <ChevronRight size={16} color={theme.colors.textSecondary} />
+          </TouchableOpacity>
+        </Card>
 
         {/* ── AI context note ── */}
         <Card style={st.llmNote}>
