@@ -127,6 +127,7 @@ interface Settings {
   coachPersonality: 'Strict Drill Sergeant' | 'Encouraging Supporter' | 'Data-Driven Analyst';
   privacyZones: boolean;
   activeGraphs?: string[];
+  widgetLayout?: string[];
 }
 
 interface Shoe {
@@ -430,6 +431,14 @@ export const useStore = create<AppState>()(
         timeFormat: '24h',
         coachPersonality: 'Encouraging Supporter',
         privacyZones: false,
+        widgetLayout: [
+          'HeroBanner', 'WeeklyDigest', 'InjuryAlert', 'RecoveryAdvisor', 
+          'CurrentFocus', 'ThisWeek', 'WeeklyGoalTracker', 'ShoeTracker', 
+          'ActivityMap', 'RecentActivities', 'MonthlyVolume', 'HeartRate', 
+          'IntensityDistribution', 'PersonalBests', 'RacePredictor', 
+          'ActivityMix', 'YearToDate', 'AllTimeStats', 'ActiveGoals', 
+          'TrainingLoad', 'BestEfforts', 'Badges'
+        ],
       },
       updateSettings: (newSettings) => set((state) => ({
         settings: { ...state.settings, ...newSettings }
