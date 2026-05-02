@@ -1963,40 +1963,59 @@ export default function OverviewScreen() {
             case "Badges":
               return (
                 <View key={widgetId + idx} style={{ marginBottom: 16 }}>
-                  {milestones.length > 0 && (
-                    <Animated.View
-                      entering={FadeInDown.delay(980).springify()}
-                      layout={Layout.springify()}
-                    >
-                      <View style={styles.sectionHeader}>
-                        <Trophy color="#FBBF24" size={16} />
-                        <Typography style={styles.sectionTitle}>
-                          Milestones & Badges
-                        </Typography>
-                      </View>
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                      >
-                        {milestones.map((m) => (
-                          <View key={m.id} style={styles.badgeCard}>
+                  <Animated.View
+                    entering={FadeInDown.delay(980).springify()}
+                    layout={Layout.springify()}
+                  >
+                    <View style={styles.sectionHeader}>
+                      <Trophy color="#FBBF24" size={16} />
+                      <Typography style={styles.sectionTitle}>
+                        Milestones & Badges
+                      </Typography>
+                      <Typography style={{ fontSize: 11, color: theme.colors.textSecondary }}>
+                        {milestones.length}/{getAllMilestoneDefs().length} earned
+                      </Typography>
+                    </View>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                      {getAllMilestoneDefs().map((def) => {
+                        const earned = milestones.find((m) => m.id === def.id);
+                        return (
+                          <TouchableOpacity
+                            key={def.id}
+                            style={[
+                              styles.badgeCard,
+                              !earned && { opacity: 0.35 },
+                            ]}
+                            activeOpacity={0.75}
+                            onPress={() =>
+                              setInfoSheet({
+                                title: def.title,
+                                body: def.description,
+                                rows: earned
+                                  ? [{ label: 'Earned', desc: format(parseISO(earned.earnedAt), 'd MMM yyyy') }]
+                                  : [{ label: 'Status', desc: 'Not yet earned — keep going!' }],
+                              })
+                            }
+                          >
                             <Typography style={{ fontSize: 28 }}>
-                              {m.icon}
+                              {earned ? def.icon : '🔒'}
                             </Typography>
                             <Typography
                               style={styles.badgeTitle}
                               numberOfLines={2}
                             >
-                              {m.title}
+                              {def.title}
                             </Typography>
                             <Typography style={styles.badgeSub}>
-                              {format(parseISO(m.earnedAt), "d MMM yy")}
+                              {earned
+                                ? format(parseISO(earned.earnedAt), 'd MMM yy')
+                                : 'Locked'}
                             </Typography>
-                          </View>
-                        ))}
-                      </ScrollView>
-                    </Animated.View>
-                  )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </Animated.View>
                 </View>
               );
             default:
@@ -2232,6 +2251,43 @@ export default function OverviewScreen() {
             <View style={{ height: 40 }} />
           </ScrollView>
         </SafeAreaView>
+      </Modal>
+
+      {/* ── Info Bottom Sheet ── */}
+      <Modal
+        visible={!!infoSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setInfoSheet(null)}
+      >
+        <TouchableOpacity
+          style={styles.sheetOverlay}
+          activeOpacity={1}
+          onPress={() => setInfoSheet(null)}
+        >
+          <View style={styles.sheet}>
+            <Typography style={styles.sheetTitle}>
+              {infoSheet?.title}
+            </Typography>
+            <Typography style={styles.sheetBody}>
+              {infoSheet?.body}
+            </Typography>
+            {infoSheet?.rows?.map((r) => (
+              <View key={r.label} style={[styles.sheetRow, { marginTop: 12 }]}>
+                <Typography style={styles.sheetRowLabel}>{r.label}</Typography>
+                <Typography style={styles.sheetRowDesc}>{r.desc}</Typography>
+              </View>
+            ))}
+            <TouchableOpacity
+              style={styles.sheetClose}
+              onPress={() => setInfoSheet(null)}
+            >
+              <Typography style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+                Got it
+              </Typography>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
       </Modal>
     </SafeAreaView>
   );

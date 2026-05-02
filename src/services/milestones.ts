@@ -12,28 +12,55 @@ export interface MilestoneDef {
 }
 
 const MILESTONE_DEFS: MilestoneDef[] = [
-  // Distance milestones
-  { id: 'km_10',    title: 'First 10 km',     description: 'Completed your first 10 km run',      icon: '🥇', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 10000) },
-  { id: 'km_21',    title: 'Half Marathon',   description: 'Ran a half marathon (21.1 km)',        icon: '🏅', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 21097) },
-  { id: 'km_42',    title: 'Marathon Warrior',description: 'Completed a full marathon (42.2 km)', icon: '🏆', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 42195) },
-  { id: 'km100',    title: '100 km Club',     description: 'Logged 100 km total',                 icon: '💯', category: 'distance',  check: (_, s) => s.totalKm >= 100 },
-  { id: 'km500',    title: '500 km Club',     description: 'Logged 500 km total',                 icon: '🌟', category: 'distance',  check: (_, s) => s.totalKm >= 500 },
-  { id: 'km1000',   title: '1000 km Legend',  description: 'Logged 1,000 km total',               icon: '🚀', category: 'distance',  check: (_, s) => s.totalKm >= 1000 },
+  // Distance — single run
+  { id: 'km_5',     title: 'First 5 km',        description: 'Completed a 5 km run',                icon: '🎽', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 5000) },
+  { id: 'km_10',    title: 'First 10 km',        description: 'Completed your first 10 km run',      icon: '🥇', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 10000) },
+  { id: 'km_15',    title: '15 km Warrior',      description: 'Ran 15 km in a single activity',      icon: '🏃', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 15000) },
+  { id: 'km_21',    title: 'Half Marathon',      description: 'Ran a half marathon (21.1 km)',        icon: '🏅', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 21097) },
+  { id: 'km_30',    title: '30 km Beast',        description: 'Ran 30 km in one go',                 icon: '💪', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 30000) },
+  { id: 'km_42',    title: 'Marathon Warrior',   description: 'Completed a full marathon (42.2 km)', icon: '🏆', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 42195) },
+  { id: 'km_50',    title: 'Ultra Runner',       description: 'Ran 50 km in a single activity',      icon: '🦁', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 50000) },
+  // Distance — total lifetime
+  { id: 'km100',    title: '100 km Club',        description: 'Logged 100 km total',                 icon: '💯', category: 'distance',  check: (_, s) => s.totalKm >= 100 },
+  { id: 'km250',    title: '250 km Milestone',   description: 'Logged 250 km total',                 icon: '🌍', category: 'distance',  check: (_, s) => s.totalKm >= 250 },
+  { id: 'km500',    title: '500 km Club',        description: 'Logged 500 km total',                 icon: '🌟', category: 'distance',  check: (_, s) => s.totalKm >= 500 },
+  { id: 'km1000',   title: '1000 km Legend',     description: 'Logged 1,000 km total',               icon: '🚀', category: 'distance',  check: (_, s) => s.totalKm >= 1000 },
+  { id: 'km2000',   title: '2000 km Titan',      description: 'Logged 2,000 km total',               icon: '🛸', category: 'distance',  check: (_, s) => s.totalKm >= 2000 },
   // Streak milestones
-  { id: 'streak3',  title: '3-Day Streak',    description: 'Active 3 days in a row',              icon: '🔥', category: 'streak',    check: (_, s) => s.bestStreak >= 3 },
-  { id: 'streak7',  title: 'Week Warrior',    description: 'Active 7 days in a row',              icon: '⚡', category: 'streak',    check: (_, s) => s.bestStreak >= 7 },
-  { id: 'streak30', title: 'Iron Habit',      description: 'Active 30 days in a row',             icon: '💎', category: 'streak',    check: (_, s) => s.bestStreak >= 30 },
+  { id: 'streak3',  title: '3-Day Streak',       description: 'Active 3 days in a row',              icon: '🔥', category: 'streak',    check: (_, s) => s.bestStreak >= 3 },
+  { id: 'streak7',  title: 'Week Warrior',       description: 'Active 7 days in a row',              icon: '⚡', category: 'streak',    check: (_, s) => s.bestStreak >= 7 },
+  { id: 'streak14', title: 'Two-Week Grind',     description: 'Active 14 days in a row',             icon: '🔑', category: 'streak',    check: (_, s) => s.bestStreak >= 14 },
+  { id: 'streak30', title: 'Iron Habit',         description: 'Active 30 days in a row',             icon: '💎', category: 'streak',    check: (_, s) => s.bestStreak >= 30 },
+  { id: 'streak60', title: 'Unstoppable',        description: 'Active 60 days in a row',             icon: '🌈', category: 'streak',    check: (_, s) => s.bestStreak >= 60 },
+  { id: 'streak100',title: 'Century Streak',     description: 'Active 100 days in a row',            icon: '🏺', category: 'streak',    check: (_, s) => s.bestStreak >= 100 },
   // Frequency milestones
-  { id: 'runs10',   title: '10 Runs',         description: 'Completed 10 runs',                   icon: '👟', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 10 },
-  { id: 'runs50',   title: '50 Runs',         description: 'Completed 50 runs',                   icon: '🎯', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 50 },
-  { id: 'runs100',  title: 'Centurion',       description: 'Completed 100 runs',                  icon: '👑', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 100 },
+  { id: 'runs5',    title: 'First 5 Runs',       description: 'Completed 5 runs',                    icon: '👟', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 5 },
+  { id: 'runs10',   title: '10 Runs',            description: 'Completed 10 runs',                   icon: '🎯', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 10 },
+  { id: 'runs25',   title: '25 Runs',            description: 'Completed 25 runs',                   icon: '🏅', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 25 },
+  { id: 'runs50',   title: '50 Runs',            description: 'Completed 50 runs',                   icon: '🎪', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 50 },
+  { id: 'runs100',  title: 'Centurion',          description: 'Completed 100 runs',                  icon: '👑', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 100 },
+  { id: 'runs200',  title: '200 Club',           description: 'Completed 200 runs',                  icon: '🌠', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 200 },
+  { id: 'acts100',  title: '100 Activities',     description: 'Logged 100 activities of any kind',   icon: '📊', category: 'frequency', check: (acts) => acts.length >= 100 },
   // Speed milestones
-  { id: 'sub6',     title: 'Sub-6 Pace',      description: 'Ran a km in under 6 min/km',          icon: '💨', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 6) },
-  { id: 'sub5',     title: 'Sub-5 Pace',      description: 'Ran a km in under 5 min/km',          icon: '⚡', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 5) },
-  { id: 'sub4_5',   title: 'Speed Demon',     description: 'Ran at sub-4:30 min/km pace',         icon: '🔥', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 4.5) },
-  // Elevation milestones
-  { id: 'elev500',  title: 'Hill Climber',    description: 'Climbed 500 m elevation in a run',    icon: '⛰️', category: 'elevation', check: (acts) => acts.some(a => a.totalElevationGain >= 500) },
-  { id: 'elev1000', title: 'Mountain Goat',   description: 'Climbed 1000 m elevation in a run',   icon: '🏔️', category: 'elevation', check: (acts) => acts.some(a => a.totalElevationGain >= 1000) },
+  { id: 'sub7',     title: 'Sub-7 Pace',         description: 'Ran at under 7:00 min/km',            icon: '🐢', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 7) },
+  { id: 'sub6',     title: 'Sub-6 Pace',         description: 'Ran at under 6:00 min/km',            icon: '💨', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 6) },
+  { id: 'sub5',     title: 'Sub-5 Pace',         description: 'Ran at under 5:00 min/km',            icon: '⚡', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 5) },
+  { id: 'sub4_5',   title: 'Speed Demon',        description: 'Ran at sub-4:30 min/km pace',         icon: '🔥', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 4.5) },
+  { id: 'sub4',     title: 'Elite Pacer',        description: 'Ran at sub-4:00 min/km pace',         icon: '🚀', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 4) },
+  // Elevation milestones — single activity
+  { id: 'elev200',  title: 'Hill Starter',       description: 'Climbed 200 m elevation in a run',    icon: '⛰️', category: 'elevation', check: (acts) => acts.some(a => a.totalElevationGain >= 200) },
+  { id: 'elev500',  title: 'Hill Climber',       description: 'Climbed 500 m elevation in a run',    icon: '🏔️', category: 'elevation', check: (acts) => acts.some(a => a.totalElevationGain >= 500) },
+  { id: 'elev1000', title: 'Mountain Goat',      description: 'Climbed 1000 m elevation in a run',   icon: '🦌', category: 'elevation', check: (acts) => acts.some(a => a.totalElevationGain >= 1000) },
+  { id: 'elev2000', title: 'Everest Dreamer',    description: 'Climbed 2000 m elevation in a run',   icon: '🌋', category: 'elevation', check: (acts) => acts.some(a => a.totalElevationGain >= 2000) },
+  // Elevation — lifetime total
+  { id: 'total_elev5000',  title: 'Altitude 5K', description: 'Climbed 5,000 m total elevation',    icon: '🗻', category: 'elevation', check: (acts) => acts.reduce((s, a) => s + a.totalElevationGain, 0) >= 5000 },
+  { id: 'total_elev10000', title: 'Everest!',    description: 'Climbed 8,849 m — the height of Everest', icon: '🏔️', category: 'elevation', check: (acts) => acts.reduce((s, a) => s + a.totalElevationGain, 0) >= 8849 },
+  // Early bird
+  { id: 'early_bird', title: 'Early Bird',       description: 'Completed a run before 7am',          icon: '🌅', category: 'frequency', check: (acts) => acts.some(a => { const h = new Date(a.startDate).getHours(); return (a.type === 'Run') && h < 7; }) },
+  { id: 'night_owl',  title: 'Night Owl',        description: 'Completed a run after 9pm',           icon: '🌙', category: 'frequency', check: (acts) => acts.some(a => { const h = new Date(a.startDate).getHours(); return (a.type === 'Run') && h >= 21; }) },
+  // Multi-sport
+  { id: 'cyclist',    title: 'Cyclist',          description: 'Logged a cycling activity',            icon: '🚴', category: 'frequency', check: (acts) => acts.some(a => a.type === 'Ride' || a.type === 'VirtualRide') },
+  { id: 'triathlete', title: 'Triathlete',       description: 'Logged a run, ride, and swim',         icon: '🏊', category: 'frequency', check: (acts) => { const types = new Set(acts.map(a => a.type)); return types.has('Run') && (types.has('Ride') || types.has('VirtualRide')) && types.has('Swim'); } },
 ];
 
 // ── Compute milestones from activities ────────────────────────────────────────
