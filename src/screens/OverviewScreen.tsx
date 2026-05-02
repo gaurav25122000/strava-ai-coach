@@ -137,7 +137,7 @@ const miniStyles = StyleSheet.create({
 });
 
 export default function OverviewScreen() {
-  const { userStats, goals, activities, milestones, bestEfforts, setMilestones, setBestEfforts, setActivities, setLifetimeStats, setToast } = useStore();
+  const { userStats, goals, activities, milestones, bestEfforts, setMilestones, setBestEfforts, setActivities, setLifetimeStats, setToast, setShoes, shoes, injuries, weeklyDigest } = useStore();
   const [refreshing, setRefreshing] = useState(false);
   const [selectedActivity, setSelectedActivity] = useState<ActivityType | null>(null);
   const [infoSheet, setInfoSheet] = useState<{ title: string; body: string; rows?: { label: string; desc: string }[] } | null>(null);
@@ -162,8 +162,16 @@ export default function OverviewScreen() {
         const newActivities = await StravaService.syncActivities();
         setActivities(newActivities);
         try {
-          const stats = await StravaService.fetchAthleteStats();
+          const { stats, athlete } = await StravaService.fetchAthleteStats();
           setLifetimeStats(stats);
+          if (athlete.shoes && Array.isArray(athlete.shoes)) {
+            setShoes(athlete.shoes.map((s: any) => ({
+              id: s.id,
+              name: s.name,
+              brand: '', // Strava provides the name which often includes brand
+              distance: Math.round((s.distance || 0) / 1000)
+            })));
+          }
         } catch (statsErr) {
           console.warn('Could not fetch lifetime stats:', statsErr);
         }
@@ -385,6 +393,84 @@ export default function OverviewScreen() {
                   </Typography>
                 </View>
               )}
+            </Card>
+          </Animated.View>
+        )}
+
+        {/* ── AI Weekly Digest ── */}
+        {weeklyDigest && (
+          <Animated.View entering={FadeInDown.delay(160).springify()} layout={Layout.springify()}>
+            <Card style={[styles.card, { marginTop: 16, backgroundColor: theme.colors.primary + '11', borderColor: theme.colors.primary, borderWidth: 1 }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 }}>
+                <Zap color={theme.colors.primary} size={18} />
+                <Typography style={{ fontSize: 13, fontWeight: '700', color: theme.colors.primary, textTransform: 'uppercase' }}>
+                  Coach's Weekly Tip
+                </Typography>
+              </View>
+              <Typography style={{ fontSize: 14, color: theme.colors.text, lineHeight: 22 }}>
+                {weeklyDigest.tip || weeklyDigest.summary}
+              </Typography>
+            </Card>
+          </Animated.View>
+        )}
+
+        {/* ── Injury Alert ── */}
+        {injuries.length > 0 && (
+          <Animated.View entering={FadeInDown.delay(170).springify()} layout={Layout.springify()}>
+            <Card style={[styles.card, { marginTop: 16, borderLeftWidth: 4, borderLeftColor: theme.colors.error }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 }}>
+                <Heart color={theme.colors.error} size={18} />
+                <Typography style={{ fontSize: 13, fontWeight: '700', color: theme.colors.error, textTransform: 'uppercase' }}>
+                  Active Recovery
+                </Typography>
+              </View>
+              <Typography style={{ fontSize: 14, color: theme.colors.text, lineHeight: 20 }}>
+                You have {injuries.length} logged issue{injuries.length > 1 ? 's' : ''}. Prioritize active recovery and don't push through sharp pain.
+              </Typography>
+            </Card>
+          </Animated.View>
+        )}
+
+        {/* ── Shoe Tracker ── */}
+        {shoes.length > 0 && (
+          <Animated.View entering={FadeInDown.delay(180).springify()} layout={Layout.springify()}>
+            <View style={[styles.sectionHeader, { marginTop: 16 }]}>
+              <Footprints color={theme.colors.primary} size={16} />
+              <Typography style={styles.sectionTitle}>Shoe Health</Typography>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+              {[...shoes].sort((a, b) => b.distance - a.distance).slice(0, 3).map(shoe => {
+                const limit = 500;
+                const pct = Math.min((shoe.distance / limit) * 100, 100);
+                const isWarn = shoe.distance > 400;
+                return (
+                  <Card key={shoe.id} style={{ width: 160, marginRight: 12, padding: 12 }}>
+                    <Typography numberOfLines={1} style={{ fontSize: 14, fontWeight: '700', marginBottom: 4 }}>{shoe.name}</Typography>
+                    <Typography style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 8 }}>{shoe.distance} / {limit} km</Typography>
+                    <View style={{ height: 6, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
+                      <View style={{ width: `${pct}%`, height: '100%', backgroundColor: isWarn ? theme.colors.error : theme.colors.primary, borderRadius: 3 }} />
+                    </View>
+                  </Card>
+                );
+              })}
+            </ScrollView>
+          </Animated.View>
+        )}
+
+        {/* ── Year-to-Date Progress ── */}
+        {activities.length > 0 && (
+          <Animated.View entering={FadeInDown.delay(190).springify()} layout={Layout.springify()}>
+            <View style={[styles.sectionHeader, { marginTop: 8 }]}>
+              <TrendingUp color={theme.colors.success} size={16} />
+              <Typography style={styles.sectionTitle}>Year to Date</Typography>
+            </View>
+            <Card style={[styles.card, { padding: 16 }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 8 }}>
+                <Typography style={{ fontSize: 32, fontWeight: '800', color: theme.colors.success, lineHeight: 36 }}>
+                  {Math.round(activities.filter(a => new Date(a.startDate).getFullYear() === new Date().getFullYear()).reduce((s, a) => s + a.distance / 1000, 0))}
+                </Typography>
+                <Typography style={{ fontSize: 14, color: theme.colors.textSecondary, marginBottom: 4, marginLeft: 4 }}>km run this year</Typography>
+              </View>
             </Card>
           </Animated.View>
         )}

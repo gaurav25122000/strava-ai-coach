@@ -151,7 +151,7 @@ export const StravaService = {
     }
   },
 
-  fetchAthleteStats: async (): Promise<any> => {
+  fetchAthleteStats: async (): Promise<{ stats: any, athlete: any }> => {
     await StravaService.checkAndRefreshToken();
     if (!accessToken) {
       throw new Error('Not authenticated with Strava');
@@ -166,7 +166,7 @@ export const StravaService = {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
 
-      return statsRes.data;
+      return { stats: statsRes.data, athlete: athleteRes.data };
     } catch (error: any) {
       console.error('Error fetching athlete stats:', error);
       if (error.response?.status === 401) {

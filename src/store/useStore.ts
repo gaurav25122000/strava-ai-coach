@@ -307,6 +307,7 @@ interface AppState {
   updateSettings: (settings: Partial<Settings>) => void;
   updateUserProfile: (profile: Partial<UserProfile>) => void;
   addShoe: (shoe: Shoe) => void;
+  setShoes: (shoes: Shoe[]) => void;
   addInjury: (injury: Injury) => void;
   setMilestones: (milestones: Milestone[]) => void;
   setBestEfforts: (efforts: Record<number, BestEffort>) => void;
@@ -437,6 +438,7 @@ export const useStore = create<AppState>()(
         userProfile: { ...state.userProfile, ...profile }
       })),
       addShoe: (shoe) => set((state) => ({ shoes: [...state.shoes, shoe] })),
+      setShoes: (shoes) => set({ shoes }),
       addInjury: (injury) => set((state) => ({ injuries: [...state.injuries, injury] })),
     }),
     {
