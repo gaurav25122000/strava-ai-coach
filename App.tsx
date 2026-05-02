@@ -11,6 +11,7 @@ import Animated, { FadeOut, FadeIn } from 'react-native-reanimated';
 import { View, StyleSheet } from 'react-native';
 import { Typography } from './src/components/Typography';
 import { Flame } from 'lucide-react-native';
+import { GlobalToast } from './src/components/GlobalToast';
 
 function SplashScreen() {
   return (
@@ -94,6 +95,7 @@ export default function App() {
         <StatusBar style="light" />
         <TabNavigator />
         {!isReady && <SplashScreen />}
+        <GlobalToast />
       </NavigationContainer>
     </SafeAreaProvider>
   );

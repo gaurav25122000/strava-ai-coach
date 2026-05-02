@@ -166,6 +166,12 @@ export interface WeeklyDigest {
   tip: string;
 }
 
+export interface ToastOptions {
+  title: string;
+  message: string;
+  type?: 'success' | 'error' | 'info';
+}
+
 // Get local YYYY-MM-DD string without UTC conversion
 function localDateStr(d: Date): string {
   const y = d.getFullYear();
@@ -253,6 +259,8 @@ interface AppState {
   setMilestones: (milestones: Milestone[]) => void;
   setBestEfforts: (efforts: Record<number, BestEffort>) => void;
   setWeeklyDigest: (digest: WeeklyDigest) => void;
+  toast: ToastOptions | null;
+  setToast: (toast: ToastOptions | null) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -263,6 +271,8 @@ export const useStore = create<AppState>()(
       milestones: [],
       bestEfforts: {},
       weeklyDigest: null,
+      toast: null,
+      setToast: (toast) => set({ toast }),
       userStats: {
         currentStreak: 0,
         bestStreak: 0,

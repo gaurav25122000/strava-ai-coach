@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 import { theme } from '../theme';
+import { StravaService } from '../services/strava';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
 import { HeatmapCalendar } from '../components/HeatmapCalendar';
@@ -136,7 +137,7 @@ const miniStyles = StyleSheet.create({
 });
 
 export default function OverviewScreen() {
-  const { userStats, goals, activities, milestones, bestEfforts, setMilestones, setBestEfforts } = useStore();
+  const { userStats, goals, activities, milestones, bestEfforts, setMilestones, setBestEfforts, setActivities, setLifetimeStats, setToast } = useStore();
   const [refreshing, setRefreshing] = useState(false);
   const [selectedActivity, setSelectedActivity] = useState<ActivityType | null>(null);
   const [infoSheet, setInfoSheet] = useState<{ title: string; body: string; rows?: { label: string; desc: string }[] } | null>(null);
@@ -153,11 +154,30 @@ export default function OverviewScreen() {
 
   const trainingLoad = useMemo<TrainingLoad>(() => computeTrainingLoad(activities), [activities]);
 
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 1500);
-  }, []);
+    try {
+      if (StravaService.isAuthenticated()) {
+        const newActivities = await StravaService.syncActivities();
+        setActivities(newActivities);
+        try {
+          const stats = await StravaService.fetchAthleteStats();
+          setLifetimeStats(stats);
+        } catch (statsErr) {
+          console.warn('Could not fetch lifetime stats:', statsErr);
+        }
+      }
+    } catch (e: any) {
+      if (e.message === 'Not authenticated with Strava' || e.response?.status === 401) {
+        setToast({ title: 'Session Expired', message: 'Please reconnect your Strava account in Settings.', type: 'error' });
+      } else {
+        setToast({ title: 'Error', message: 'Failed to sync activities', type: 'error' });
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }, [setActivities, setLifetimeStats, setToast]);
 
   const heatmapData = useMemo(() => {
     return activities.map(act => {

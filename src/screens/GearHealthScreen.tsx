@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../theme';
 import { Typography } from '../components/Typography';
@@ -9,7 +9,7 @@ import { Plus, Activity, AlertCircle } from 'lucide-react-native';
 import { ProgressBar } from '../components/ProgressBar';
 
 export default function GearHealthScreen() {
-  const { shoes, injuries, addShoe, addInjury } = useStore();
+  const { shoes, injuries, addShoe, addInjury, setToast } = useStore();
   const [shoeName, setShoeName] = useState('');
   const [shoeBrand, setShoeBrand] = useState('');
   const [injuryType, setInjuryType] = useState('');
@@ -19,14 +19,14 @@ export default function GearHealthScreen() {
     addShoe({ id: Date.now().toString(), name: shoeName, brand: shoeBrand, distance: 0 });
     setShoeName('');
     setShoeBrand('');
-    Alert.alert('Success', 'Shoe added!');
+    setToast({ title: 'Success', message: 'Shoe added!', type: 'success' });
   };
 
   const handleAddInjury = () => {
     if (!injuryType) return;
     addInjury({ id: Date.now().toString(), type: injuryType, severity: 'Medium', date: new Date().toISOString() });
     setInjuryType('');
-    Alert.alert('Success', 'Injury logged. AI Coach will adjust plans accordingly.');
+    setToast({ title: 'Success', message: 'Injury logged. AI Coach will adjust plans accordingly.', type: 'success' });
   };
 
   return (

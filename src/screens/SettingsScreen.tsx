@@ -15,7 +15,7 @@ import * as Sharing from 'expo-sharing';
 WebBrowser.maybeCompleteAuthSession();
 
 export default function SettingsScreen() {
-  const { settings, updateSettings, setActivities, setLifetimeStats } = useStore();
+  const { settings, updateSettings, setActivities, setLifetimeStats, setToast } = useStore();
   const [isAuthenticated, setIsAuthenticated] = useState(StravaService.isAuthenticated());
 
   useEffect(() => {
@@ -71,7 +71,7 @@ export default function SettingsScreen() {
       syncStrava();
     } catch (error) {
       console.error('Error exchanging token:', error);
-      Alert.alert('Error', 'Failed to authenticate with Strava');
+      setToast({ title: 'Error', message: 'Failed to authenticate with Strava', type: 'error' });
     }
   };
 
@@ -87,9 +87,15 @@ export default function SettingsScreen() {
         console.warn('Could not fetch lifetime stats:', statsErr);
       }
 
-      Alert.alert('Success', `Synced ${activities.length} activities from Strava!`);
-    } catch (e) {
-      Alert.alert('Error', 'Failed to sync activities');
+      setToast({ title: 'Success', message: `Synced ${activities.length} activities from Strava!`, type: 'success' });
+    } catch (e: any) {
+      if (e.response?.status === 401 || e.message === 'Not authenticated with Strava') {
+        await StravaService.disconnect();
+        setIsAuthenticated(false);
+        setToast({ title: 'Session Expired', message: 'Please reconnect your Strava account.', type: 'error' });
+      } else {
+        setToast({ title: 'Error', message: 'Failed to sync activities', type: 'error' });
+      }
     }
   };
 
@@ -257,10 +263,10 @@ export default function SettingsScreen() {
                 if (await Sharing.isAvailableAsync()) {
                   await Sharing.shareAsync(fileUri);
                 } else {
-                  Alert.alert('Error', 'Sharing is not available on this device');
+                  setToast({ title: 'Error', message: 'Sharing is not available on this device', type: 'error' });
                 }
               } catch (e) {
-                Alert.alert('Error', 'Failed to export data');
+                setToast({ title: 'Error', message: 'Failed to export data', type: 'error' });
               }
             }}
           >

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Alert, Platform, KeyboardAvoidingView } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 
 export default function GoalsScreen() {
-  const { goals, deleteGoal, addGoal, updateGoal, activities, settings, userProfile } = useStore();
+  const { goals, deleteGoal, addGoal, updateGoal, activities, settings, userProfile, setToast } = useStore();
   const [modalVisible, setModalVisible] = useState(false);
   const [editingGoal, setEditingGoal] = useState<string | null>(null); // goal id being edited
   const [newGoalTitle, setNewGoalTitle] = useState('');
@@ -150,7 +150,7 @@ export default function GoalsScreen() {
     if (goalMode === 'Simple') {
       const targetVal = parseFloat(simpleTarget);
       if (isNaN(targetVal) || targetVal <= 0) {
-        Alert.alert('Invalid Target', 'Please enter a valid numeric target.');
+        setToast({ title: 'Invalid Target', message: 'Please enter a valid numeric target.', type: 'error' });
         return;
       }
       const unitLabel = simpleCategory === 'Distance' ? 'km' : simpleCategory === 'Time' ? 'hrs' : simpleCategory === 'HeartRate' ? 'bpm avg' : 'sessions';
@@ -180,12 +180,12 @@ export default function GoalsScreen() {
     }
 
     if (!newGoalTitle || !newGoalDate) {
-      Alert.alert('Missing fields', 'Please enter a goal title and pick a target date.');
+      setToast({ title: 'Missing fields', message: 'Please enter a goal title and pick a target date.', type: 'error' });
       return;
     }
 
     if (!settings.llmApiKey) {
-      Alert.alert('Error', 'Please configure your LLM API Key in settings first to generate a plan.');
+      setToast({ title: 'Error', message: 'Please configure your LLM API Key in settings first to generate a plan.', type: 'error' });
       return;
     }
 
@@ -235,8 +235,9 @@ export default function GoalsScreen() {
       setModalVisible(false);
       setNewGoalTitle('');
       setNewGoalDate('');
+      setToast({ title: 'Success', message: 'Goal plan created!', type: 'success' });
     } catch (error) {
-      Alert.alert('Error', 'Failed to generate training plan. Check API Key.');
+      setToast({ title: 'Error', message: 'Failed to generate training plan. Check API Key.', type: 'error' });
     } finally {
       setIsGenerating(false);
     }

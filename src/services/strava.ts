@@ -57,8 +57,12 @@ export const StravaService = {
 
         const { access_token, refresh_token, expires_at } = res.data;
         await StravaService.setToken(access_token, refresh_token, expires_at);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error refreshing token:', error);
+        if (error.response?.status === 400 || error.response?.status === 401) {
+          await StravaService.disconnect();
+          throw new Error('Not authenticated with Strava');
+        }
         throw error;
       }
     }
@@ -122,8 +126,12 @@ export const StravaService = {
       });
 
       return activities;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error syncing activities:', error);
+      if (error.response?.status === 401) {
+        await StravaService.disconnect();
+        throw new Error('Not authenticated with Strava');
+      }
       throw error;
     }
   },
@@ -144,8 +152,12 @@ export const StravaService = {
       });
 
       return statsRes.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching athlete stats:', error);
+      if (error.response?.status === 401) {
+        await StravaService.disconnect();
+        throw new Error('Not authenticated with Strava');
+      }
       throw error;
     }
   },
