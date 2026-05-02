@@ -8,51 +8,39 @@ import { LineChart, BarChart, PieChart } from 'react-native-gifted-charts';
 import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 import { useStore } from '../store/useStore';
 import { format, parseISO, startOfWeek, endOfWeek, eachWeekOfInterval, subWeeks } from 'date-fns';
-import { TrendingUp, Mountain, Heart, BarChart3, Zap, X, Activity, Settings2 } from 'lucide-react-native';
+import { Heart, BarChart3, Zap, X, Activity, Settings2 } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 // scroll padding 16*2 + card padding 16*2 + gifted-charts yAxis ~44 = 108
 const CHART_W = SCREEN_W - 108;
 
-type Tab = 'pace' | 'volume' | 'heart' | 'elevation' | 'steps' | 'time' | 'calories' | 'power';
+type Tab = 'pace' | 'volume' | 'heart' | 'elevation' | 'steps' | 'time' | 'calories' | 'power' | 'cadence' | 'mix';
 const ALL_TABS: { key: Tab; label: string }[] = [
-  { key: 'pace',      label: 'Pace'      },
-  { key: 'volume',    label: 'Volume'    },
-  { key: 'heart',     label: 'HR Zones'  },
-  { key: 'elevation', label: 'Elevation' },
   { key: 'steps',     label: 'Steps'     },
   { key: 'time',      label: 'Time'      },
+  { key: 'volume',    label: 'Volume'    },
+  { key: 'pace',      label: 'Pace'      },
+  { key: 'heart',     label: 'HR Zones'  },
+  { key: 'cadence',   label: 'Cadence'   },
+  { key: 'mix',       label: 'Activity Mix' },
+  { key: 'elevation', label: 'Elevation' },
   { key: 'calories',  label: 'Calories'  },
   { key: 'power',     label: 'Power'     },
 ];
 
-function SectionHeader({ label, sub }: { label: string; sub?: string }) {
-  return (
-    <View style={{ marginBottom: 12 }}>
-      <Typography style={hdr.label}>{label}</Typography>
-      {sub ? <Typography style={hdr.sub}>{sub}</Typography> : null}
-    </View>
-  );
-}
-const hdr = StyleSheet.create({
-  label: { fontSize: 13, fontWeight: '700', color: theme.colors.text, textTransform: 'uppercase', letterSpacing: 0.5 },
-  sub:   { fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 },
-});
+
 
 export default function InsightsScreen() {
   const { activities, settings, updateSettings } = useStore();
-  const activeKeys = settings.activeGraphs || ['pace', 'volume', 'heart', 'elevation'];
-  const TABS = ALL_TABS.filter(t => activeKeys.includes(t.key));
-  const [tab, setTab] = useState<Tab>(TABS.length > 0 ? TABS[0].key as Tab : 'pace');
+  const activeKeys = settings.activeGraphs || ['steps', 'time', 'volume', 'pace', 'heart'];
   const [showManageModal, setShowManageModal] = useState(false);
-  
+
   const toggleGraph = (key: Tab) => {
     let newKeys = [...activeKeys];
     if (newKeys.includes(key)) newKeys = newKeys.filter(k => k !== key);
     else newKeys.push(key);
     updateSettings({ activeGraphs: newKeys });
-    if (tab === key && newKeys.length > 0) setTab(newKeys[0] as Tab);
   };
 
 
@@ -157,32 +145,7 @@ export default function InsightsScreen() {
   const totalElev = Math.round(activities.reduce((s, a) => s + a.totalElevationGain, 0));
   const maxElev   = activities.length ? Math.max(...activities.map(a => a.totalElevationGain), 1) : 1;
 
-  const elevBuckets = useMemo(() => {
-    const defs = [
-      { label: '0–50m',    min: 0,   max: 50   },
-      { label: '50–200m',  min: 50,  max: 200  },
-      { label: '200–500m', min: 200, max: 500  },
-      { label: '500m+',    min: 500, max: Infinity },
-    ];
-    const maxC = Math.max(...defs.map(b => activities.filter(a => a.totalElevationGain >= b.min && a.totalElevationGain < b.max).length), 1);
-    return defs.map(b => {
-      const count = activities.filter(a => a.totalElevationGain >= b.min && a.totalElevationGain < b.max).length;
-      return { 
-        value: count, 
-        labelComponent: () => (
-          <View style={{ width: 60, transform: [{ translateX: -15 }] }}>
-            <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>{b.label}</Typography>
-          </View>
-        ), 
-        frontColor: '#FBBF24', 
-        topLabelComponent: () => (
-          <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginBottom: 2 }}>{count}</Typography>
-        )
-      };
-    });
-  }, [activities]);
 
-  const ELEV_SPACING = Math.max((CHART_W - 40) / Math.max(elevBuckets.length * 2, 1), 8);
 
   // ── Steps ─────────────────────────────────────────────────────────
   const stepsData = useMemo(() => {
@@ -292,7 +255,43 @@ export default function InsightsScreen() {
   const maxPower = powerData.length ? Math.max(...powerData.map(d => d.value), 1) : 1;
   const avgPower = powerData.length ? Math.round(powerData.reduce((s,d) => s + d.value, 0) / powerData.length) : 0;
 
-  const ELEV_BAR_W   = Math.min(ELEV_SPACING * 1.5, 46);
+  // ── Cadence ───────────────────────────────────────────────────────
+  const cadenceData = useMemo(() => {
+    return [...activities]
+      .filter(a => (a.averageCadence || 0) > 0)
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+      .slice(-20)
+      .map((act, i, arr) => ({
+        value: Math.round((act.averageCadence || 0) * 2), // steps per min (Strava stores as one-leg)
+        labelComponent: (i % 4 === 0 || i === arr.length - 1) ? () => (
+          <View style={{ width: 40, transform: [{ translateX: -10 }] }}>
+            <Typography style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700', textAlign: 'center' }}>
+              {format(parseISO(act.startDate), 'MMM d')}
+            </Typography>
+          </View>
+        ) : undefined,
+      }));
+  }, [activities]);
+  const avgCadence = cadenceData.length ? Math.round(cadenceData.reduce((s, d) => s + d.value, 0) / cadenceData.length) : 0;
+  const maxCadence = cadenceData.length ? Math.max(...cadenceData.map(d => d.value), 1) : 200;
+
+  // ── Activity Mix ──────────────────────────────────────────────────
+  const { mixPieData, mixStats } = useMemo(() => {
+    const counts: Record<string, number> = {};
+    activities.forEach(a => { counts[a.type] = (counts[a.type] || 0) + 1; });
+    const palette: Record<string, string> = { Run: '#f97316', Walk: '#10b981', Ride: '#6366f1', Workout: '#ec4899' };
+    const total = Object.values(counts).reduce((s, v) => s + v, 0) || 1;
+    const entries = Object.entries(counts).map(([type, count]) => ({
+      type, count, color: palette[type] || '#8b5cf6',
+      pct: Math.round(count / total * 100),
+    }));
+    return {
+      mixPieData: entries.map(e => ({ value: e.count, color: e.color, text: `${e.pct}%` })),
+      mixStats: entries,
+    };
+  }, [activities]);
+
+
 
   const getPointerConfig = (unit: string, color: string) => ({
     pointerStripHeight: 160,
@@ -353,340 +352,322 @@ export default function InsightsScreen() {
     return `${m}:${s.toString().padStart(2,'0')}`;
   };
   // Volume y-axis: "12" → "12km"
-  const volYLabel  = (v: string) => `${parseFloat(v).toFixed(0)}km`;
-  // Elevation y-axis: "100" → "100m"
-  const elevYLabel = (v: string) => `${parseFloat(v).toFixed(0)}m`;
 
-  const TAB_COLORS: Record<Tab, [string, string]> = {
-    pace:      ['#6366f1', '#8b5cf6'],
-    volume:    ['#0ea5e9', '#0284c7'],
-    heart:     ['#ef4444', '#dc2626'],
-    elevation: ['#f59e0b', '#d97706'],
+
+  const CARD_COLORS: Record<Tab, [string, string]> = {
     steps:     ['#10b981', '#059669'],
     time:      ['#8b5cf6', '#7c3aed'],
+    volume:    ['#0ea5e9', '#0284c7'],
+    pace:      ['#6366f1', '#8b5cf6'],
+    heart:     ['#ef4444', '#dc2626'],
+    cadence:   ['#ec4899', '#db2777'],
+    mix:       ['#6366f1', '#8b5cf6'],
+    elevation: ['#f59e0b', '#d97706'],
     calories:  ['#ef4444', '#dc2626'],
     power:     ['#f97316', '#ea580c'],
   };
-  const activeColor = TAB_COLORS[tab] ?? ['#6366f1', '#8b5cf6'];
-
-  const SummaryPill = ({ label, value, unit, gradColors }: { label: string; value: string | number; unit?: string; gradColors?: [string, string] }) => (
-    <LinearGradient
-      colors={gradColors ?? activeColor}
-      start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-      style={st.pill}
-    >
-      <Typography style={st.pillLabel}>{label}</Typography>
-      <Typography style={st.pillValue}>
-        {value}{unit ? <Typography style={st.pillUnit}> {unit}</Typography> : null}
-      </Typography>
-    </LinearGradient>
-  );
-
-  const Tooltip = ({ text }: { text: string }) => (
-    <View style={st.tooltip}><Typography style={st.tooltipText}>{text}</Typography></View>
-  );
 
   const EmptyChart = ({ msg }: { msg: string }) => (
     <View style={st.emptyChart}><Typography style={st.emptyText}>{msg}</Typography></View>
   );
 
+  const Insight = ({ text, color }: { text: string; color: string }) => (
+    <View style={[st.insightBar, { borderLeftColor: color, backgroundColor: color + '18' }]}>
+      <Zap size={12} color={color} />
+      <Typography style={[st.insightText, { color }]}>{text}</Typography>
+    </View>
+  );
+
+  // Card header with gradient accent + stat chip
+  const CardHeader = ({ title, sub, colors, stat, statUnit }: {
+    title: string; sub: string; colors: [string, string]; stat?: string | number; statUnit?: string;
+  }) => (
+    <View style={st.cardHeader}>
+      <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={st.cardAccent} />
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Typography style={st.cardTitle}>{title}</Typography>
+        <Typography style={st.cardSub}>{sub}</Typography>
+      </View>
+      {stat !== undefined && (
+        <View style={[st.statChip, { borderColor: colors[0] + '55', backgroundColor: colors[0] + '18' }]}>
+          <Typography style={[st.statChipVal, { color: colors[0] }]}>{stat}</Typography>
+          {statUnit && <Typography style={[st.statChipUnit, { color: colors[0] }]}>{statUnit}</Typography>}
+        </View>
+      )}
+    </View>
+  );
+
   return (
     <SafeAreaView style={st.container}>
+      {/* Header */}
+      <View style={st.header}>
+        <View>
+          <Typography style={st.pageTitle}>Insights</Typography>
+          <Typography style={st.pageSub}>{activities.length} activities analysed</Typography>
+        </View>
+        <TouchableOpacity style={st.manageBtn} onPress={() => setShowManageModal(true)}>
+          <Settings2 size={13} color={theme.colors.primary} />
+          <Typography style={st.manageBtnText}>Manage</Typography>
+        </TouchableOpacity>
+      </View>
+
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={st.scroll}>
 
-        <Typography style={st.pageTitle}>Insights</Typography>
+        {/* Active graph cards — vertical feed */}
+        {ALL_TABS.filter(t => activeKeys.includes(t.key)).map((t, idx) => {
+          const C = CARD_COLORS[t.key] ?? ['#6366f1', '#8b5cf6'];
+          return (
+            <Animated.View key={t.key} entering={FadeInDown.delay(idx * 80).duration(400)} layout={Layout.springify()}>
+              <Card style={st.card}>
 
-        {/* Tab bar */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }} contentContainerStyle={{ gap: 8 }}>
-          {TABS.map(t => {
-            const active = tab === t.key;
-            const tColors = TAB_COLORS[t.key] ?? ['#6366f1', '#8b5cf6'];
-            return active ? (
-              <LinearGradient key={t.key} colors={tColors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                style={[st.tab, { flex: 0, paddingHorizontal: 18 }]}>
-                <Typography style={[st.tabText, st.tabTextActive]}>{t.label}</Typography>
-              </LinearGradient>
-            ) : (
-              <TouchableOpacity key={t.key} style={[st.tab, { flex: 0, paddingHorizontal: 18, backgroundColor: theme.colors.surface }]} onPress={() => setTab(t.key)} activeOpacity={0.7}>
-                <Typography style={st.tabText}>{t.label}</Typography>
-              </TouchableOpacity>
-            );
-          })}
-          <TouchableOpacity style={[st.tab, { flex: 0, paddingHorizontal: 16, backgroundColor: 'transparent', borderWidth: 1, borderColor: theme.colors.primary }]} onPress={() => setShowManageModal(true)}>
-            <Settings2 size={12} color={theme.colors.primary} />
-            <Typography style={[st.tabText, { color: theme.colors.primary, marginLeft: 4 }]}>Manage</Typography>
-          </TouchableOpacity>
-        </ScrollView>
+                {/* ── STEPS ── */}
+                {t.key === 'steps' && (
+                  <>
+                    <CardHeader title="Weekly Steps" sub="Estimated from run &amp; walk distance" colors={C}
+                      stat={avgSteps > 0 ? `${Math.round(avgSteps / 1000)}k` : '--'} statUnit="avg/wk" />
+                    <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                      <BarChart data={stepsData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
+                        maxValue={Math.ceil(stepsData.reduce((m,d)=>Math.max(m,d.value),1) * 1.25)}
+                        initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
+                        yAxisLabelTexts={Array.from({length:5},(_,i)=>Math.round(stepsData.reduce((m,d)=>Math.max(m,d.value),1)*1.25*i/4/1000)+'k')}
+                        {...chartBase} />
+                    </View>
+                    {avgSteps > 0 && <Insight color={C[0]} text={`${Math.round(avgSteps).toLocaleString()} avg steps/week — 10,000/day target = 70,000/week`} />}
+                  </>
+                )}
 
-        {/* ════ PACE ════ */}
-        {tab === 'pace' && (
-          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
-            <View style={st.pillRow}>
-              <SummaryPill label="Best"    value={bestPace ? fmtPace(bestPace) : '--'} unit="/km" />
-              <SummaryPill label="Average" value={avgPace  ? fmtPace(avgPace)  : '--'} unit="/km" gradColors={['#8b5cf6','#7c3aed']} />
-              <SummaryPill label="Runs"    value={paceData.length} gradColors={['#0ea5e9','#0284c7']} />
-            </View>
-            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#6366f1' }]}>
-              {paceData.length > 1 ? (
-                <View style={{ overflow: 'hidden' }}>
-                  <LineChart
-                    data={paceData}
-                    height={200} width={CHART_W}
-                    thickness={4}
-                    color={theme.colors.primary}
-                    hideDataPoints
-                    maxValue={Math.ceil(Math.max(...paceData.map(d => d.value)) * 1.15)}
-                    initialSpacing={12}
-                    spacing={Math.max((CHART_W - 12) / Math.max(paceData.length - 1, 1), 18)}
-                    curved areaChart
-                    startFillColor={theme.colors.primary} endFillColor={theme.colors.background}
-                    startOpacity={0.6} endOpacity={0}
-                    yAxisLabelTexts={Array.from({ length: 5 }, (_, i) => {
-                      const max = Math.ceil(Math.max(...paceData.map(d => d.value)) * 1.15);
-                      const min = Math.floor(Math.min(...paceData.map(d => d.value)) * 0.9);
-                      const v = min + (max - min) * i / 4;
-                      return paceYLabel(v.toFixed(2));
-                    })}
-                    pointerConfig={getPointerConfig('/km', theme.colors.primary)}
-                    {...chartBase}
-                  />
-                </View>
-              ) : <EmptyChart msg="Sync Strava runs to see your pace trend" />}
-            </Card>
-          </Animated.View>
-        )}
+                {/* ── TIME ── */}
+                {t.key === 'time' && (
+                  <>
+                    <CardHeader title="Active Time" sub="Hours of movement per week" colors={C}
+                      stat={avgTime} statUnit="hrs/wk" />
+                    <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                      <BarChart data={timeData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
+                        maxValue={Math.ceil(Math.max(...timeData.map(d=>d.value),1) * 1.3)}
+                        initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
+                        {...chartBase} />
+                    </View>
+                    {Number(avgTime) > 0 && <Insight color={C[0]} text={`${avgTime} hrs/wk avg — WHO recommends 2.5 hrs moderate activity weekly`} />}
+                  </>
+                )}
 
-        {/* ════ VOLUME ════ */}
-        {tab === 'volume' && (
-          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
-            <View style={st.pillRow}>
-              <SummaryPill label="8-week total" value={totalVol}              unit="km" />
-              <SummaryPill label="Peak week"    value={maxWeekVol.toFixed(1)} unit="km" gradColors={['#f59e0b','#d97706']} />
-            </View>
-            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#0ea5e9' }]}>
-              {volumeData.length > 0 ? (
-                <View style={{ overflow: 'hidden' }}>
-                  <BarChart
-                    data={volumeData}
-                    height={200} width={CHART_W}
-                    barWidth={BAR_W}
-                    roundedTop
-                    roundedBottom={false}
-                    maxValue={Math.ceil(maxWeekVol * 1.3)}
-                    initialSpacing={BAR_SPACING / 2}
-                    spacing={BAR_SPACING}
-                    showGradient
-                    gradientColor={theme.colors.primary}
-                    frontColor={theme.colors.primary + '55'}
-                    pointerConfig={getPointerConfig(' km', theme.colors.primary)}
-                    {...chartBase}
-                  />
-                </View>
-              ) : <EmptyChart msg="No activity data yet" />}
-            </Card>
-          </Animated.View>
-        )}
-
-        {/* ════ HEART RATE ════ */}
-        {tab === 'heart' && (
-          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
-            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#ef4444' }]}>
-              <SectionHeader label="HR Zone Distribution" sub="Based on average HR per activity" />
-              {zoneStats.length > 0 ? (
-                <>
-                  <View style={{ alignItems: 'center', marginVertical: 16 }}>
-                    <PieChart
-                      data={pieData} donut showText textColor="#fff"
-                      radius={110} innerRadius={65} textSize={11}
-                      isAnimated animationDuration={800}
-                      centerLabelComponent={() => (
-                        <View style={{ alignItems: 'center' }}>
-                          <Heart color="#EF4444" size={20} />
-                          <Typography style={{ fontSize: 10, color: theme.colors.textSecondary, marginTop: 2 }}>zones</Typography>
-                        </View>
-                      )}
-                    />
-                  </View>
-                  <View style={{ gap: 8, marginTop: 8 }}>
-                    {zoneStats.map(z => (
-                      <View key={z.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: z.color }} />
-                        <View style={{ flex: 1 }}>
-                          <Typography style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 3 }}>{z.label}</Typography>
-                          <View style={{ height: 5, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
-                            <View style={{ height: '100%', width: `${z.pct}%`, backgroundColor: z.color, borderRadius: 3 }} />
-                          </View>
-                        </View>
-                        <Typography style={{ fontSize: 12, fontWeight: '700', color: z.color, width: 36, textAlign: 'right' }}>{z.pct}%</Typography>
+                {/* ── VOLUME ── */}
+                {t.key === 'volume' && (
+                  <>
+                    <CardHeader title="Weekly Volume" sub="Kilometres across all activities" colors={C}
+                      stat={maxWeekVol.toFixed(0)} statUnit="km peak" />
+                    {volumeData.some(d=>d.value>0) ? (
+                      <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                        <BarChart data={volumeData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
+                          maxValue={Math.ceil(maxWeekVol * 1.35)}
+                          initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
+                          showGradient gradientColor={C[0]} frontColor={C[0] + '55'}
+                          pointerConfig={getPointerConfig(' km', C[0])}
+                          {...chartBase} />
                       </View>
-                    ))}
-                  </View>
-                </>
-              ) : <EmptyChart msg="No heart rate data. Enable HR recording on Strava." />}
-            </Card>
-            {zoneStats.length > 0 && (
-              <Card style={[st.chartCard, { borderLeftWidth: 3, borderLeftColor: '#FBBF24', backgroundColor: '#FBBF2411' }]}>
-                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
-                  <Zap color="#FBBF24" size={16} />
-                  <View style={{ flex: 1 }}>
-                    <Typography style={{ fontSize: 13, fontWeight: '700', color: theme.colors.text, marginBottom: 4 }}>80/20 Training Rule</Typography>
-                    <Typography style={{ fontSize: 12, color: theme.colors.textSecondary, lineHeight: 18 }}>
-                      Elite runners spend ~80% in Z1–Z2 (easy) and ~20% in Z3–Z5 (hard).
-                      {(() => { const ez = (zoneStats.find(z => z.label.includes('Z1'))?.pct || 0) + (zoneStats.find(z => z.label.includes('Z2'))?.pct || 0); return ez ? ` You're at ${ez}% easy effort.` : ''; })()}
-                    </Typography>
-                  </View>
-                </View>
+                    ) : <EmptyChart msg="No activity data yet" />}
+                    <Insight color={C[0]} text={`${totalVol} km total in last 8 weeks. Increase no more than 10%/week to avoid injury.`} />
+                  </>
+                )}
+
+                {/* ── PACE ── */}
+                {t.key === 'pace' && (
+                  <>
+                    <CardHeader title="Running Pace" sub="Min/km trend over last 20 runs" colors={C}
+                      stat={bestPace ? fmtPace(bestPace) : '--'} statUnit="/km best" />
+                    {paceData.length > 1 ? (
+                      <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                        <LineChart data={paceData} height={180} width={CHART_W} thickness={3} color={C[0]}
+                          hideDataPoints curved areaChart
+                          maxValue={Math.ceil(Math.max(...paceData.map(d=>d.value)) * 1.15)}
+                          initialSpacing={12}
+                          spacing={Math.max((CHART_W-12)/Math.max(paceData.length-1,1),18)}
+                          startFillColor={C[0]} endFillColor={theme.colors.background}
+                          startOpacity={0.5} endOpacity={0}
+                          yAxisLabelTexts={Array.from({length:5},(_,i)=>{const mx=Math.ceil(Math.max(...paceData.map(d=>d.value))*1.15);const mn=Math.floor(Math.min(...paceData.map(d=>d.value))*0.9);return paceYLabel((mn+(mx-mn)*i/4).toFixed(2));})}
+                          pointerConfig={getPointerConfig('/km', C[0])}
+                          {...chartBase} />
+                      </View>
+                    ) : <EmptyChart msg="Sync Strava runs to see pace trend" />}
+                    {avgPace > 0 && <Insight color={C[0]} text={`Avg ${fmtPace(avgPace)}/km · Best ${bestPace ? fmtPace(bestPace) : '--'}/km · ${paceData.length} runs`} />}
+                  </>
+                )}
+
+                {/* ── HR ZONES ── */}
+                {t.key === 'heart' && (
+                  <>
+                    <CardHeader title="HR Zone Distribution" sub="Where you spend your effort" colors={C} />
+                    {zoneStats.length > 0 ? (
+                      <>
+                        <View style={{ alignItems: 'center', marginVertical: 16 }}>
+                          <PieChart data={pieData} donut showText textColor="#fff"
+                            radius={100} innerRadius={60} textSize={11}
+                            isAnimated animationDuration={800}
+                            centerLabelComponent={() => (
+                              <View style={{ alignItems: 'center' }}>
+                                <Heart color="#EF4444" size={18} />
+                                <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginTop: 2 }}>zones</Typography>
+                              </View>
+                            )} />
+                        </View>
+                        <View style={{ gap: 8 }}>
+                          {zoneStats.map(z => (
+                            <View key={z.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                              <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: z.color }} />
+                              <View style={{ flex: 1 }}>
+                                <Typography style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 3 }}>{z.label}</Typography>
+                                <View style={{ height: 5, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
+                                  <View style={{ height: '100%', width: `${z.pct}%`, backgroundColor: z.color, borderRadius: 3 }} />
+                                </View>
+                              </View>
+                              <Typography style={{ fontSize: 12, fontWeight: '700', color: z.color, width: 36, textAlign: 'right' }}>{z.pct}%</Typography>
+                            </View>
+                          ))}
+                        </View>
+                        {(() => { const ez=(zoneStats.find(z=>z.label.includes('Z1'))?.pct||0)+(zoneStats.find(z=>z.label.includes('Z2'))?.pct||0); return <Insight color="#ef4444" text={`${ez}% easy effort. Elite runners target 80% in Z1–Z2 for aerobic base building.`} />; })()}
+                      </>
+                    ) : <EmptyChart msg="No HR data. Enable heart rate recording on Strava." />}
+                  </>
+                )}
+
+                {/* ── CADENCE ── */}
+                {t.key === 'cadence' && (
+                  <>
+                    <CardHeader title="Running Cadence" sub="Steps per minute over last 20 runs" colors={C}
+                      stat={avgCadence || '--'} statUnit="spm avg" />
+                    {cadenceData.length > 1 ? (
+                      <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                        <LineChart data={cadenceData} height={180} width={CHART_W} thickness={3} color={C[0]}
+                          hideDataPoints curved areaChart
+                          maxValue={Math.max(maxCadence + 10, 200)}
+                          initialSpacing={12}
+                          spacing={Math.max((CHART_W-12)/Math.max(cadenceData.length-1,1),18)}
+                          startFillColor={C[0]} endFillColor={theme.colors.background}
+                          startOpacity={0.5} endOpacity={0}
+                          yAxisLabelSuffix=" spm"
+                          pointerConfig={getPointerConfig(' spm', C[0])}
+                          {...chartBase} />
+                      </View>
+                    ) : <EmptyChart msg="No cadence data — enable GPS cadence on Strava" />}
+                    <Insight color={C[0]} text={`Target 170–180 spm. ${avgCadence > 0 ? `Your avg ${avgCadence} spm — ${avgCadence < 165 ? 'try shortening your stride' : avgCadence >= 170 ? 'great cadence!' : 'close to optimal'}` : 'Cadence reduces injury risk by cutting ground contact time.'}`} />
+                  </>
+                )}
+
+                {/* ── ACTIVITY MIX ── */}
+                {t.key === 'mix' && (
+                  <>
+                    <CardHeader title="Activity Mix" sub="All-time breakdown by sport" colors={C} />
+                    {mixStats.length > 0 ? (
+                      <>
+                        <View style={{ alignItems: 'center', marginVertical: 16 }}>
+                          <PieChart data={mixPieData} donut showText textColor="#fff"
+                            radius={100} innerRadius={60} textSize={11}
+                            isAnimated animationDuration={800}
+                            centerLabelComponent={() => (
+                              <View style={{ alignItems: 'center' }}>
+                                <Activity color={theme.colors.primary} size={18} />
+                                <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginTop: 2 }}>mix</Typography>
+                              </View>
+                            )} />
+                        </View>
+                        <View style={{ gap: 10 }}>
+                          {mixStats.map(e => (
+                            <View key={e.type} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                              <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: e.color }} />
+                              <View style={{ flex: 1 }}>
+                                <Typography style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 3 }}>{e.type} — {e.count} activities</Typography>
+                                <View style={{ height: 5, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
+                                  <View style={{ height: '100%', width: `${e.pct}%`, backgroundColor: e.color, borderRadius: 3 }} />
+                                </View>
+                              </View>
+                              <Typography style={{ fontSize: 12, fontWeight: '700', color: e.color, width: 36, textAlign: 'right' }}>{e.pct}%</Typography>
+                            </View>
+                          ))}
+                        </View>
+                      </>
+                    ) : <EmptyChart msg="No activities synced yet" />}
+                  </>
+                )}
+
+                {/* ── ELEVATION ── */}
+                {t.key === 'elevation' && (
+                  <>
+                    <CardHeader title="Elevation Gain" sub="Metres climbed per activity" colors={C}
+                      stat={totalElev.toLocaleString()} statUnit="m total" />
+                    {elevData.length > 1 ? (
+                      <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                        <LineChart data={elevData} height={180} width={CHART_W} thickness={3} color={C[0]}
+                          hideDataPoints curved areaChart
+                          initialSpacing={0}
+                          spacing={Math.max(CHART_W/Math.max(elevData.length-1,1),4)}
+                          startFillColor={C[0]} endFillColor={theme.colors.background}
+                          startOpacity={0.5} endOpacity={0}
+                          yAxisLabelSuffix=" m"
+                          pointerConfig={getPointerConfig('m', C[0])}
+                          {...chartBase} />
+                      </View>
+                    ) : <EmptyChart msg="No elevation data yet" />}
+                    <Insight color={C[0]} text={`${totalElev.toLocaleString()}m total climbed · Peak single activity: ${Math.round(maxElev)}m`} />
+                  </>
+                )}
+
+                {/* ── CALORIES ── */}
+                {t.key === 'calories' && (
+                  <>
+                    <CardHeader title="Calories Burned" sub="Weekly kcal from Strava" colors={C}
+                      stat={avgCalories || '--'} statUnit="kcal/wk avg" />
+                    {caloriesData.some(d=>d.value>0) ? (
+                      <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                        <BarChart data={caloriesData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
+                          maxValue={Math.ceil(Math.max(...caloriesData.map(d=>d.value),1) * 1.25)}
+                          initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
+                          {...chartBase} />
+                      </View>
+                    ) : <EmptyChart msg="No calorie data from Strava" />}
+                    {avgCalories > 0 && <Insight color={C[0]} text={`${avgCalories.toLocaleString()} kcal/wk avg — roughly ${Math.round(avgCalories / 7)} kcal/day from exercise`} />}
+                  </>
+                )}
+
+                {/* ── POWER ── */}
+                {t.key === 'power' && (
+                  <>
+                    <CardHeader title="Average Power" sub="Watts from power meter (last 20)" colors={C}
+                      stat={avgPower || '--'} statUnit="W avg" />
+                    {powerData.length > 1 ? (
+                      <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                        <LineChart data={powerData} height={180} width={CHART_W} thickness={3} color={C[0]}
+                          hideDataPoints curved areaChart
+                          initialSpacing={12}
+                          spacing={Math.max((CHART_W-12)/Math.max(powerData.length-1,1),18)}
+                          startFillColor={C[0]} endFillColor={theme.colors.background}
+                          startOpacity={0.5} endOpacity={0}
+                          yAxisLabelSuffix=" W"
+                          pointerConfig={getPointerConfig('W', C[0])}
+                          {...chartBase} />
+                      </View>
+                    ) : <EmptyChart msg="No power data — requires a power meter" />}
+                    {avgPower > 0 && <Insight color={C[0]} text={`${avgPower}W avg power across ${powerData.length} sessions`} />}
+                  </>
+                )}
+
               </Card>
-            )}
-          </Animated.View>
-        )}
+            </Animated.View>
+          );
+        })}
 
-        {/* ════ ELEVATION ════ */}
-        {tab === 'elevation' && (
-          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
-            <View style={st.pillRow}>
-              <SummaryPill label="Total climbed" value={totalElev.toLocaleString()} unit="m" />
-              <SummaryPill label="Peak single"   value={Math.round(maxElev)}         unit="m" gradColors={['#f59e0b','#d97706']} />
-            </View>
-            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#f59e0b' }]}>
-              <SectionHeader label="Elevation per Activity" sub="Total gain (m)" />
-              {elevData.length > 1 ? (
-                <View style={{ overflow: 'hidden' }}>
-                  <LineChart
-                    data={elevData}
-                    height={200} width={CHART_W}
-                    thickness={4} color="#FBBF24" hideDataPoints
-                    initialSpacing={0}
-                    spacing={Math.max(CHART_W / Math.max(elevData.length - 1, 1), 4)}
-                    curved areaChart
-                    startFillColor="#FBBF24" endFillColor={theme.colors.background}
-                    startOpacity={0.6} endOpacity={0}
-                    yAxisLabelSuffix=" m"
-                    pointerConfig={getPointerConfig('m', '#FBBF24')}
-                    {...chartBase}
-                  />
-                </View>
-              ) : <EmptyChart msg="No elevation data yet" />}
-            </Card>
-            <Card style={st.chartCard}>
-              <SectionHeader label="Elevation Buckets" sub="Activities by gain" />
-              <View style={{ overflow: 'hidden' }}>
-                <BarChart
-                  data={elevBuckets}
-                  height={150} width={CHART_W}
-                  barWidth={ELEV_BAR_W}
-                  roundedTop
-                  maxValue={Math.ceil(Math.max(...elevBuckets.map(b => b.value), 1) * 1.3)}
-                  initialSpacing={ELEV_SPACING}
-                  spacing={ELEV_SPACING}
-                  showGradient gradientColor="#FBBF2444"
-                  frontColor="#FBBF24"
-                  {...chartBase}
-                />
-              </View>
-            </Card>
-          </Animated.View>
-        )}
-
-        {/* ════ STEPS ════ */}
-        {tab === 'steps' && (
-          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
-            <View style={st.pillRow}>
-              <SummaryPill label="Avg Steps/Wk" value={avgSteps} gradColors={['#10b981','#059669']} />
-            </View>
-            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#10b981' }]}>
-              <SectionHeader label="Estimated Steps" sub="Last 8 weeks" />
-              <View style={{ overflow: 'hidden' }}>
-                <BarChart
-                  data={stepsData}
-                  height={200} width={CHART_W}
-                  barWidth={BAR_W} roundedTop
-                  maxValue={Math.ceil(maxSteps * 1.2)}
-                  initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                  yAxisLabelTexts={Array.from({length: 5}, (_, i) => Math.round(maxSteps * 1.2 * i / 4 / 1000) + 'k')}
-                  {...chartBase}
-                />
-              </View>
-            </Card>
-          </Animated.View>
-        )}
-
-        {/* ════ TIME ════ */}
-        {tab === 'time' && (
-          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
-            <View style={st.pillRow}>
-              <SummaryPill label="Avg Active Time" value={avgTime} unit="hrs/wk" gradColors={['#8b5cf6','#7c3aed']} />
-            </View>
-            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#8b5cf6' }]}>
-              <SectionHeader label="Active Time" sub="Last 8 weeks (hrs)" />
-              <View style={{ overflow: 'hidden' }}>
-                <BarChart
-                  data={timeData}
-                  height={200} width={CHART_W}
-                  barWidth={BAR_W} roundedTop
-                  maxValue={Math.ceil(maxTime * 1.2)}
-                  initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                  {...chartBase}
-                />
-              </View>
-            </Card>
-          </Animated.View>
-        )}
-
-        {/* ════ CALORIES ════ */}
-        {tab === 'calories' && (
-          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
-            <View style={st.pillRow}>
-              <SummaryPill label="Avg Calories/Wk" value={avgCalories} gradColors={['#ef4444','#dc2626']} />
-            </View>
-            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#ef4444' }]}>
-              <SectionHeader label="Calories Burned" sub="Last 8 weeks (kcal)" />
-              <View style={{ overflow: 'hidden' }}>
-                <BarChart
-                  data={caloriesData}
-                  height={200} width={CHART_W}
-                  barWidth={BAR_W} roundedTop
-                  maxValue={Math.ceil(maxCalories * 1.2)}
-                  initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                  {...chartBase}
-                />
-              </View>
-            </Card>
-          </Animated.View>
-        )}
-
-        {/* ════ POWER ════ */}
-        {tab === 'power' && (
-          <Animated.View entering={FadeInDown.duration(400)} layout={Layout.springify()}>
-            <View style={st.pillRow}>
-              <SummaryPill label="Avg Power" value={avgPower} unit="W" gradColors={['#f97316','#ea580c']} />
-            </View>
-            <Card style={[st.chartCard, { borderTopWidth: 3, borderTopColor: '#f97316' }]}>
-              <SectionHeader label="Average Power" sub="Last 20 activities with power" />
-              {powerData.length > 1 ? (
-                <View style={{ overflow: 'hidden' }}>
-                  <LineChart
-                    data={powerData}
-                    height={200} width={CHART_W}
-                    thickness={4} color={theme.colors.accent} hideDataPoints
-                    initialSpacing={12}
-                    spacing={Math.max((CHART_W - 12) / Math.max(powerData.length - 1, 1), 18)}
-                    curved areaChart
-                    startFillColor={theme.colors.accent} endFillColor={theme.colors.background}
-                    startOpacity={0.6} endOpacity={0}
-                    yAxisLabelSuffix=" W"
-                    pointerConfig={getPointerConfig('W', theme.colors.accent)}
-                    {...chartBase}
-                  />
-                </View>
-              ) : <EmptyChart msg="No power data available" />}
-            </Card>
-          </Animated.View>
+        {activeKeys.length === 0 && (
+          <View style={{ alignItems: 'center', paddingTop: 60 }}>
+            <BarChart3 size={48} color={theme.colors.textSecondary} />
+            <Typography style={{ color: theme.colors.textSecondary, marginTop: 16, fontSize: 15 }}>No graphs enabled</Typography>
+            <TouchableOpacity style={{ marginTop: 12 }} onPress={() => setShowManageModal(true)}>
+              <Typography style={{ color: theme.colors.primary, fontWeight: '700' }}>Tap Manage to add some →</Typography>
+            </TouchableOpacity>
+          </View>
         )}
 
       </ScrollView>
 
-      {/* MANAGE GRAPHS MODAL */}
+      {/* Manage modal */}
       <Modal animationType="slide" transparent visible={showManageModal} onRequestClose={() => setShowManageModal(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: theme.colors.surface, padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
@@ -697,11 +678,8 @@ export default function InsightsScreen() {
             {ALL_TABS.map(t => (
               <View key={t.key} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
                 <Typography>{t.label}</Typography>
-                <Switch 
-                  value={activeKeys.includes(t.key)}
-                  onValueChange={() => toggleGraph(t.key)}
-                  trackColor={{ true: theme.colors.primary, false: theme.colors.border }}
-                />
+                <Switch value={activeKeys.includes(t.key)} onValueChange={() => toggleGraph(t.key)}
+                  trackColor={{ true: theme.colors.primary, false: theme.colors.border }} />
               </View>
             ))}
           </View>
@@ -711,33 +689,28 @@ export default function InsightsScreen() {
     </SafeAreaView>
   );
 }
-
 const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background },
   scroll:    { padding: 16, paddingBottom: 40 },
-  pageTitle: { fontSize: 26, fontWeight: '800', color: theme.colors.text, marginBottom: 16 },
 
-  tabRow: {
-    flexDirection: 'row', backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.md, padding: 4, marginBottom: 20,
-    borderWidth: 1, borderColor: theme.colors.border,
-  },
-  tab:          { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
-  tabActive:    { backgroundColor: theme.colors.primary },
-  tabText:      { fontSize: 12, fontWeight: '600', color: theme.colors.textSecondary },
-  tabTextActive:{ color: '#fff' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
+  pageTitle: { fontSize: 24, fontWeight: '800', color: theme.colors.text },
+  pageSub:   { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
+  manageBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '15' },
+  manageBtnText: { fontSize: 12, fontWeight: '700', color: theme.colors.primary },
 
-  pillRow:   { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  pill:      { flex: 1, borderRadius: theme.borderRadius.md, padding: 14, overflow: 'hidden' },
-  pillLabel: { fontSize: 10, color: 'rgba(255,255,255,0.75)', marginBottom: 4, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-  pillValue: { fontSize: 20, fontWeight: '800', color: '#fff' },
-  pillUnit:  { fontSize: 11, color: 'rgba(255,255,255,0.7)', fontWeight: '400' },
+  card: { padding: 16, marginBottom: 14 },
+  cardHeader: { flexDirection: 'row', alignItems: 'center' },
+  cardAccent: { width: 4, height: 44, borderRadius: 2 },
+  cardTitle:  { fontSize: 15, fontWeight: '700', color: theme.colors.text },
+  cardSub:    { fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 },
+  statChip:   { borderRadius: 10, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 6, alignItems: 'center' },
+  statChipVal:  { fontSize: 16, fontWeight: '800' },
+  statChipUnit: { fontSize: 10, fontWeight: '600', marginTop: 1 },
 
-  chartCard: { padding: 16, marginBottom: 16 },
+  insightBar:  { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 14, padding: 10, borderRadius: 8, borderLeftWidth: 3 },
+  insightText: { fontSize: 12, flex: 1, lineHeight: 18, fontWeight: '600' },
 
-  emptyChart: { height: 120, alignItems: 'center', justifyContent: 'center' },
+  emptyChart: { height: 120, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
   emptyText:  { color: theme.colors.textSecondary, fontSize: 13, textAlign: 'center' },
-
-  tooltip:     { marginTop: 10, backgroundColor: theme.colors.primary + '22', borderRadius: 8, padding: 8, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.primary + '55' },
-  tooltipText: { fontSize: 12, color: theme.colors.primary, fontWeight: '700' },
 });
