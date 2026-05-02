@@ -2,23 +2,70 @@ import { Activity, useStore, secureSettingsStorage } from '../store/useStore';
 import axios from 'axios';
 
 let accessToken: string | null = null;
+let refreshToken: string | null = null;
+let expiresAt: number | null = null;
 
 export const StravaService = {
   initialize: async () => {
     const token = await secureSettingsStorage.getSecret('strava_access_token');
+    const refresh = await secureSettingsStorage.getSecret('strava_refresh_token');
+    const expires = await secureSettingsStorage.getSecret('strava_expires_at');
+    
     if (token) {
       accessToken = token;
+    }
+    if (refresh) {
+      refreshToken = refresh;
+    }
+    if (expires) {
+      expiresAt = parseInt(expires, 10);
     }
   },
 
   isAuthenticated: () => !!accessToken,
 
-  setToken: async (token: string) => {
+  setToken: async (token: string, refresh?: string, expires?: number) => {
     accessToken = token;
     await secureSettingsStorage.setSecret('strava_access_token', token);
+    
+    if (refresh) {
+      refreshToken = refresh;
+      await secureSettingsStorage.setSecret('strava_refresh_token', refresh);
+    }
+    
+    if (expires) {
+      expiresAt = expires;
+      await secureSettingsStorage.setSecret('strava_expires_at', expires.toString());
+    }
+  },
+
+  checkAndRefreshToken: async () => {
+    if (!accessToken || !refreshToken || !expiresAt) return;
+    
+    // Check if token is expired (adding 5 min buffer)
+    if (Date.now() / 1000 >= expiresAt - 300) {
+      const { stravaClientId, stravaClientSecret } = useStore.getState().settings;
+      if (!stravaClientId || !stravaClientSecret) return;
+
+      try {
+        const res = await axios.post('https://www.strava.com/oauth/token', {
+          client_id: stravaClientId,
+          client_secret: stravaClientSecret,
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken
+        });
+
+        const { access_token, refresh_token, expires_at } = res.data;
+        await StravaService.setToken(access_token, refresh_token, expires_at);
+      } catch (error) {
+        console.error('Error refreshing token:', error);
+        throw error;
+      }
+    }
   },
 
   syncActivities: async (): Promise<Activity[]> => {
+    await StravaService.checkAndRefreshToken();
     if (!accessToken) {
       throw new Error('Not authenticated with Strava');
     }
@@ -82,6 +129,7 @@ export const StravaService = {
   },
 
   fetchAthleteStats: async (): Promise<any> => {
+    await StravaService.checkAndRefreshToken();
     if (!accessToken) {
       throw new Error('Not authenticated with Strava');
     }
@@ -104,6 +152,10 @@ export const StravaService = {
 
   disconnect: async () => {
     accessToken = null;
+    refreshToken = null;
+    expiresAt = null;
     await secureSettingsStorage.removeSecret('strava_access_token');
+    await secureSettingsStorage.removeSecret('strava_refresh_token');
+    await secureSettingsStorage.removeSecret('strava_expires_at');
   }
 };

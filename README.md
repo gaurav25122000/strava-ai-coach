@@ -1,4 +1,4 @@
-# Streav — Strava AI Coach
+# Strava AI Coach — Strava AI Coach
 
 A premium React Native (Expo) training companion that connects to your Strava account and turns your activity data into actionable coaching insights, intelligent goals, and personalised AI plans.
 

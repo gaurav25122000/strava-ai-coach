@@ -63,8 +63,8 @@ export default function SettingsScreen() {
         grant_type: 'authorization_code',
       });
 
-      const { access_token } = res.data;
-      await StravaService.setToken(access_token);
+      const { access_token, refresh_token, expires_at } = res.data;
+      await StravaService.setToken(access_token, refresh_token, expires_at);
       setIsAuthenticated(true);
 
       // Auto-sync activities

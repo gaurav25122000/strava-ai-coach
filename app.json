@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Streav",
+    "name": "Strava AI Coach",
     "scheme": "aicoachapp",
-    "slug": "Strava AI Coach",
+    "slug": "Strava-AI-Coach",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -46,7 +46,7 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "067b2c50-90e7-4265-aa8b-7a47423cd5f5"
+        "projectId": "17d358db-beb5-4cd4-a9b6-3e0397e4244b"
       }
     }
   }
