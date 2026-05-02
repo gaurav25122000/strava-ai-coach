@@ -321,15 +321,21 @@ export default function OverviewScreen() {
           <View style={styles.heroLeft}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
               <Flame color={theme.colors.primary} size={16} />
-              <Typography style={[styles.heroLabel, { marginBottom: 0 }]}>CURRENT STREAK</Typography>
+              <Typography style={[styles.heroLabel, { marginBottom: 0 }]}>DAILY STREAK</Typography>
             </View>
             <View style={[styles.heroValueRow, { alignItems: 'flex-end', marginTop: 0 }]}>
               <Typography style={styles.heroNumber}>{userStats.currentStreak}</Typography>
               <Typography style={[styles.heroDays, { marginBottom: 12 }]}>days</Typography>
             </View>
-            <Typography style={styles.heroSub}>
-              🏆 Best: {userStats.bestStreak} days
-            </Typography>
+            
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, marginBottom: 4 }}>
+              <Flame color={theme.colors.secondary} size={16} />
+              <Typography style={[styles.heroLabel, { marginBottom: 0 }]}>WEEKLY STREAK</Typography>
+            </View>
+            <View style={[styles.heroValueRow, { alignItems: 'flex-end', marginTop: 0 }]}>
+              <Typography style={[styles.heroNumber, { color: theme.colors.secondary, fontSize: 36, lineHeight: 40 }]}>{userStats.currentWeeklyStreak || 0}</Typography>
+              <Typography style={[styles.heroDays, { marginBottom: 4 }]}>wks</Typography>
+            </View>
           </View>
           <View style={styles.heroRight}>
             <View style={styles.heroStatPill}>

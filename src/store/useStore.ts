@@ -91,6 +91,8 @@ export interface Goal {
 interface UserStats {
   currentStreak: number;
   bestStreak: number;
+  currentWeeklyStreak?: number;
+  bestWeeklyStreak?: number;
   totalRuns: number;
   totalWalks: number;
   totalKm: number;
@@ -181,8 +183,8 @@ function localDateStr(d: Date): string {
 }
 
 // Compute current streak and best streak from a list of activities
-function computeStreaks(activities: Activity[]): { currentStreak: number; bestStreak: number } {
-  if (!activities.length) return { currentStreak: 0, bestStreak: 0 };
+function computeStreaks(activities: Activity[]): { currentStreak: number; bestStreak: number; currentWeeklyStreak: number; bestWeeklyStreak: number } {
+  if (!activities.length) return { currentStreak: 0, bestStreak: 0, currentWeeklyStreak: 0, bestWeeklyStreak: 0 };
 
   // Get unique dates that had at least one activity
   const runDates = new Set(
@@ -194,7 +196,7 @@ function computeStreaks(activities: Activity[]): { currentStreak: number; bestSt
       })
   );
 
-  if (!runDates.size) return { currentStreak: 0, bestStreak: 0 };
+  if (!runDates.size) return { currentStreak: 0, bestStreak: 0, currentWeeklyStreak: 0, bestWeeklyStreak: 0 };
 
   const sorted = Array.from(runDates).sort(); // ascending YYYY-MM-DD strings
 
@@ -231,7 +233,57 @@ function computeStreaks(activities: Activity[]): { currentStreak: number; bestSt
     }
   }
 
-  return { currentStreak: current, bestStreak: best };
+  // Weekly Streaks
+  const runWeeks = new Set(
+    activities.map(a => {
+      const d = new Date(a.startDate.split('T')[0]);
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday
+      const monday = new Date(d.setDate(diff));
+      return localDateStr(monday);
+    })
+  );
+
+  const sortedWeeks = Array.from(runWeeks).sort();
+  let bestWeekly = 1;
+  let streakWeekly = 1;
+
+  for (let i = 1; i < sortedWeeks.length; i++) {
+    const prev = new Date(sortedWeeks[i - 1]);
+    const curr = new Date(sortedWeeks[i]);
+    const diffDays = Math.round((curr.getTime() - prev.getTime()) / 86400000);
+    if (diffDays === 7) {
+      streakWeekly++;
+      if (streakWeekly > bestWeekly) bestWeekly = streakWeekly;
+    } else {
+      streakWeekly = 1;
+    }
+  }
+
+  const todayDate = new Date();
+  const todayDay = todayDate.getDay();
+  const diffToday = todayDate.getDate() - todayDay + (todayDay === 0 ? -6 : 1);
+  const thisMonday = new Date(new Date().setDate(diffToday));
+  const thisWeekStr = localDateStr(thisMonday);
+  
+  const lastMonday = new Date(thisMonday.getTime() - 7 * 86400000);
+  const lastWeekStr = localDateStr(lastMonday);
+
+  const lastRunWeek = sortedWeeks[sortedWeeks.length - 1];
+  let currentWeekly = 0;
+
+  if (lastRunWeek === thisWeekStr || lastRunWeek === lastWeekStr) {
+    currentWeekly = 1;
+    for (let i = sortedWeeks.length - 2; i >= 0; i--) {
+      const later = new Date(sortedWeeks[i + 1]);
+      const earlier = new Date(sortedWeeks[i]);
+      const diffDays = Math.round((later.getTime() - earlier.getTime()) / 86400000);
+      if (diffDays === 7) currentWeekly++;
+      else break;
+    }
+  }
+
+  return { currentStreak: current, bestStreak: best, currentWeeklyStreak: currentWeekly, bestWeeklyStreak: bestWeekly };
 }
 
 interface AppState {
@@ -320,7 +372,7 @@ export const useStore = create<AppState>()(
         const sorted = [...activities].sort((a,b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
         const lastRunDate = sorted.length > 0 ? sorted[0].startDate.split('T')[0] : '';
 
-        const { currentStreak, bestStreak } = computeStreaks(activities);
+        const { currentStreak, bestStreak, currentWeeklyStreak, bestWeeklyStreak } = computeStreaks(activities);
 
         return {
           activities,
@@ -334,6 +386,8 @@ export const useStore = create<AppState>()(
              bestPace: bestPace === 999 ? '0:00' : bestPace.toFixed(2).replace('.', ':'),
              currentStreak,
              bestStreak,
+             currentWeeklyStreak,
+             bestWeeklyStreak,
           }
         };
       }),

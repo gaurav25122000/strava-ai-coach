@@ -75,57 +75,72 @@ export const StravaService = {
     }
 
     try {
-      // Fetch the last 30 activities
-      const response = await axios.get('https://www.strava.com/api/v3/athlete/activities?per_page=30', {
-        headers: {
-          Authorization: `Bearer ${accessToken}`
-        }
-      });
+      let allActivities: Activity[] = [];
+      let page = 1;
+      let hasMore = true;
 
-      const activities: Activity[] = response.data.map((item: any) => {
-        const durationMins = item.moving_time / 60;
-        const type: string = item.type || '';
+      while (hasMore) {
+        const response = await axios.get(`https://www.strava.com/api/v3/athlete/activities?per_page=200&page=${page}`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`
+          }
+        });
 
-        // Strava cadence for Run = one-leg steps/min → multiply by 2 for full steps
-        // Strava cadence for Walk/Hike = already full steps/min (both feet)
-        let calculatedSteps: number | undefined;
-        if (item.average_cadence && item.moving_time) {
-          const isRun = type === 'Run' || type === 'TrailRun' || type === 'VirtualRun';
-          calculatedSteps = Math.round(
-            isRun
-              ? item.average_cadence * 2 * durationMins    // running: multiply by 2
-              : item.average_cadence * durationMins          // walking/hiking: as-is
-          );
-        } else if (item.distance && item.moving_time) {
-          // Fallback: use avg stride length by type (metres per step)
-          const strideM = type === 'Run' || type === 'TrailRun'
-            ? 1.4   // avg running stride ~1.4 m
-            : 0.75; // avg walking stride ~0.75 m
-          calculatedSteps = Math.round(item.distance / strideM);
+        const pageData = response.data;
+        if (pageData.length === 0) {
+          hasMore = false;
+          break;
         }
 
-        return {
-          id: item.id.toString(),
-          name: item.name,
-          type,
-          distance: item.distance,
-          movingTime: item.moving_time,
-          elapsedTime: item.elapsed_time,
-          totalElevationGain: item.total_elevation_gain,
-          startDate: item.start_date,
-          averageSpeed: item.average_speed,
-          maxSpeed: item.max_speed,
-          averageHeartRate: item.average_heartrate,
-          maxHeartRate: item.max_heartrate,
-          averageCadence: item.average_cadence,
-          steps: calculatedSteps,
-          calories: item.calories,          // only use actual calories field; kilojoules ≠ kcal
-          averageWatts: item.average_watts,
-          sufferScore: item.suffer_score,
-        };
-      });
+        const activities: Activity[] = pageData.map((item: any) => {
+          const durationMins = item.moving_time / 60;
+          const type: string = item.type || '';
 
-      return activities;
+          let calculatedSteps: number | undefined;
+          if (item.average_cadence && item.moving_time) {
+            const isRun = type === 'Run' || type === 'TrailRun' || type === 'VirtualRun';
+            calculatedSteps = Math.round(
+              isRun
+                ? item.average_cadence * 2 * durationMins
+                : item.average_cadence * durationMins
+            );
+          } else if (item.distance && item.moving_time) {
+            const strideM = type === 'Run' || type === 'TrailRun' ? 1.4 : 0.75;
+            calculatedSteps = Math.round(item.distance / strideM);
+          }
+
+          return {
+            id: item.id.toString(),
+            name: item.name,
+            type,
+            distance: item.distance,
+            movingTime: item.moving_time,
+            elapsedTime: item.elapsed_time,
+            totalElevationGain: item.total_elevation_gain,
+            startDate: item.start_date,
+            averageSpeed: item.average_speed,
+            maxSpeed: item.max_speed,
+            averageHeartRate: item.average_heartrate,
+            maxHeartRate: item.max_heartrate,
+            averageCadence: item.average_cadence,
+            steps: calculatedSteps,
+            calories: item.calories,
+            averageWatts: item.average_watts,
+            sufferScore: item.suffer_score,
+          };
+        });
+
+        allActivities = [...allActivities, ...activities];
+        
+        // If we got fewer than 200, it's the last page
+        if (pageData.length < 200) {
+          hasMore = false;
+        } else {
+          page++;
+        }
+      }
+
+      return allActivities;
     } catch (error: any) {
       console.error('Error syncing activities:', error);
       if (error.response?.status === 401) {

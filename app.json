@@ -13,6 +13,12 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/17d358db-beb5-4cd4-a9b6-3e0397e4244b"
+    },
     "ios": {
       "bundleIdentifier": "com.phonenix.aicoach",
       "supportsTablet": true,
