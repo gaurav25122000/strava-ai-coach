@@ -1997,7 +1997,11 @@ export default function OverviewScreen() {
                       </Typography>
                     </View>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      {getAllMilestoneDefs().map((def) => {
+                      {[...getAllMilestoneDefs()].sort((a, b) => {
+                        const aEarned = milestones.some((m) => m.id === a.id) ? 0 : 1;
+                        const bEarned = milestones.some((m) => m.id === b.id) ? 0 : 1;
+                        return aEarned - bEarned;
+                      }).map((def) => {
                         const earned = milestones.find((m) => m.id === def.id);
                         return (
                           <TouchableOpacity

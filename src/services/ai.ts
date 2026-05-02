@@ -137,7 +137,84 @@ function buildChatContents(
   ];
 }
 
+export type ChatMessage = { role: 'user' | 'assistant'; text: string };
+
 export const AIService = {
+  chatWithCoach: async (
+    messages: ChatMessage[],
+    provider: 'openai' | 'anthropic' | 'gemini',
+    apiKey: string,
+    personality: string,
+    userProfile: Partial<UserProfile>,
+    activities: Activity[],
+    goal?: Goal
+  ): Promise<string> => {
+    const runs = activities.filter(a => a.type === 'Run');
+    const last4Weeks = activities.filter(a => (Date.now() - new Date(a.startDate).getTime()) / 86400000 <= 28);
+    const avgWeeklyKm = (last4Weeks.reduce((s, a) => s + a.distance / 1000, 0) / 4).toFixed(1);
+    const longestRun = (runs.reduce((max, a) => a.distance > max ? a.distance : max, 0) / 1000).toFixed(1);
+    const age = userProfile.dob ? Math.floor((Date.now() - new Date(userProfile.dob).getTime()) / (365.25 * 86400000)) : null;
+
+    const goalContext = goal ? `
+ACTIVE TRAINING GOAL:
+- Goal: "${goal.title}" — target date ${goal.targetDate} (${goal.daysRemaining} days away)
+${goal.phases && goal.phases.length > 0
+  ? goal.phases.map((p, i) => `- Phase ${i + 1}: ${p.name} — weekly target ${p.weeklyVolumeTarget} km, long run ${p.longRunTarget} km\n  Key workout: ${p.keyWorkout}`).join('\n')
+  : `- Current phase: ${goal.phase}\n- Weekly volume target: ${goal.weeklyVolume?.target} km\n- Long run target: ${goal.longRun?.target} km\n- Key workout: ${goal.keyWorkout}`}
+` : '';
+
+    const system = `You are an elite running coach with a ${personality} style. You have full access to the athlete's data.
+
+ATHLETE CONTEXT:
+${age ? `Age: ${age}` : ''}
+${userProfile.fitnessLevel ? `Fitness: ${userProfile.fitnessLevel}` : ''}
+${userProfile.weight ? `Weight: ${userProfile.weight} kg` : ''}
+Avg weekly km (last 4 weeks): ${avgWeeklyKm} km
+Longest recent run: ${longestRun} km
+${userProfile.injuries ? `Injury history: ${userProfile.injuries}` : ''}
+${goalContext}
+Answer concisely in markdown. Be direct, specific, and data-driven.`;
+
+    if (provider === 'gemini') {
+      const contents = messages.map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.text }],
+      }));
+      const resp = await axios.post(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
+        { system_instruction: { parts: [{ text: system }] }, contents },
+        { headers: { 'Content-Type': 'application/json', 'X-goog-api-key': apiKey } }
+      );
+      return resp.data.candidates[0].content.parts[0].text;
+    } else if (provider === 'openai') {
+      const resp = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          model: 'gpt-4o',
+          messages: [
+            { role: 'system', content: system },
+            ...messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.text })),
+          ],
+        },
+        { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' } }
+      );
+      return resp.data.choices[0].message.content;
+    } else {
+      const resp = await axios.post(
+        'https://api.anthropic.com/v1/messages',
+        {
+          model: 'claude-opus-4-5',
+          max_tokens: 1024,
+          system,
+          messages: messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.text })),
+        },
+        { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' } }
+      );
+      return resp.data.content[0].text;
+    }
+  },
+
+
   // Continue an existing AI plan as a stateful multi-turn chat (Gemini only for now)
   continueTrainingPlan: async (
     existingGoal: Goal,

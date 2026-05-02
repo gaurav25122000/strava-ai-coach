@@ -1,17 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView, FlatList } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
 import { ProgressBar } from '../components/ProgressBar';
 import { useStore, Goal } from '../store/useStore';
-import { Flame, PersonStanding, Plus, Zap, X, Calendar, Trophy, TrendingUp, Clock, Heart, MapPin, Activity, Pencil } from 'lucide-react-native';
-import { AIService } from '../services/ai';
+import { Flame, PersonStanding, Plus, Zap, X, Calendar, Trophy, TrendingUp, Clock, Heart, MapPin, Activity, Pencil, MessageCircle, Send, Bot } from 'lucide-react-native';
+import { AIService, ChatMessage } from '../services/ai';
 import { differenceInDays, parseISO, format, getWeek, getMonth, getYear, startOfWeek, startOfMonth, endOfWeek, endOfMonth } from 'date-fns';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown, Layout, useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSequence, Easing } from 'react-native-reanimated';
+import { secureSettingsStorage } from '../store/useStore';
 
 const GENERATING_MESSAGES = [
   'Analyzing your training history...',
@@ -38,6 +39,13 @@ export default function GoalsScreen() {
   const [generatingMsgIdx, setGeneratingMsgIdx] = useState(0);
   const msgIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [chatMessage, setChatMessage] = useState('');
+
+  // Per-goal coach chat
+  const [goalChatTarget, setGoalChatTarget] = useState<Goal | null>(null);
+  const [goalChatMessages, setGoalChatMessages] = useState<ChatMessage[]>([]);
+  const [goalChatInput, setGoalChatInput] = useState('');
+  const [goalChatLoading, setGoalChatLoading] = useState(false);
+  const goalChatListRef = useRef<FlatList>(null);
 
   const pulseScale = useSharedValue(1);
   const pulseOpacity = useSharedValue(0.7);
@@ -382,6 +390,11 @@ export default function GoalsScreen() {
                 </View>
               </View>
               <View style={styles.actionButtons}>
+                {!goal.isSimple && (
+                  <TouchableOpacity style={styles.iconButton} onPress={() => { setGoalChatTarget(goal); setGoalChatMessages([]); setGoalChatInput(''); }}>
+                    <MessageCircle size={14} color={theme.colors.accent} />
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity style={styles.iconButton} onPress={() => openEdit(goal)}>
                   <Pencil size={14} color={theme.colors.textSecondary} />
                 </TouchableOpacity>
@@ -816,6 +829,105 @@ export default function GoalsScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* ── Per-Goal Coach Chat Modal ── */}
+      <Modal
+        visible={!!goalChatTarget}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setGoalChatTarget(null)}
+      >
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior="padding">
+          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+            <View style={{ width: 40, height: 4, backgroundColor: theme.colors.border, borderRadius: 2, alignSelf: 'center', marginBottom: 12 }} />
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Bot size={16} color={theme.colors.accent} />
+                <View>
+                  <Typography variant="h3">Ask Coach</Typography>
+                  <Typography variant="caption" style={{ color: theme.colors.textSecondary, marginTop: 1 }}>
+                    {goalChatTarget?.title}
+                  </Typography>
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => setGoalChatTarget(null)}>
+                <X size={22} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {goalChatMessages.length === 0 ? (
+              <View style={{ paddingVertical: 24, alignItems: 'center', gap: 8 }}>
+                <Typography style={{ fontSize: 13, color: theme.colors.textSecondary, textAlign: 'center', lineHeight: 20 }}>
+                  Ask anything about this goal — pacing, workouts, adjustments, or recovery.
+                </Typography>
+              </View>
+            ) : (
+              <FlatList
+                ref={goalChatListRef}
+                data={goalChatMessages}
+                keyExtractor={(_, i) => String(i)}
+                style={{ maxHeight: 340 }}
+                onContentSizeChange={() => goalChatListRef.current?.scrollToEnd({ animated: true })}
+                showsVerticalScrollIndicator={false}
+                renderItem={({ item }) => (
+                  <View style={[
+                    item.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleBot,
+                    { marginBottom: 8 }
+                  ]}>
+                    <Typography style={styles.chatBubbleText}>{item.text}</Typography>
+                  </View>
+                )}
+                ListFooterComponent={goalChatLoading ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10 }}>
+                    <ActivityIndicator size="small" color={theme.colors.accent} />
+                    <Typography style={{ fontSize: 12, color: theme.colors.textSecondary }}>Thinking…</Typography>
+                  </View>
+                ) : null}
+              />
+            )}
+
+            <View style={[styles.inputBar, { marginTop: 8 }]}>
+              <TextInput
+                style={styles.chatInput}
+                value={goalChatInput}
+                onChangeText={setGoalChatInput}
+                placeholder="Ask your coach…"
+                placeholderTextColor={theme.colors.textSecondary}
+                multiline
+                maxLength={400}
+              />
+              <TouchableOpacity
+                style={[styles.sendBtn, (!goalChatInput.trim() || goalChatLoading) && styles.sendBtnDisabled]}
+                disabled={!goalChatInput.trim() || goalChatLoading}
+                onPress={async () => {
+                  if (!goalChatInput.trim() || !goalChatTarget) return;
+                  const apiKey = settings.llmApiKey || await secureSettingsStorage.getSecret('llmApiKey') || '';
+                  if (!apiKey) { setToast({ title: 'Error', message: 'Add API key in Settings.', type: 'error' }); return; }
+                  const userMsg: ChatMessage = { role: 'user', text: goalChatInput.trim() };
+                  const next = [...goalChatMessages, userMsg];
+                  setGoalChatMessages(next);
+                  setGoalChatInput('');
+                  setGoalChatLoading(true);
+                  try {
+                    const reply = await AIService.chatWithCoach(
+                      next, settings.llmProvider, apiKey,
+                      settings.coachPersonality, userProfile, activities, goalChatTarget
+                    );
+                    setGoalChatMessages([...next, { role: 'assistant', text: reply }]);
+                  } catch (e: any) {
+                    setToast({ title: 'Error', message: e?.message || 'Request failed.', type: 'error' });
+                  } finally {
+                    setGoalChatLoading(false);
+                    setTimeout(() => goalChatListRef.current?.scrollToEnd({ animated: true }), 100);
+                  }
+                }}
+              >
+                <Send size={16} color={!goalChatInput.trim() || goalChatLoading ? theme.colors.textSecondary : '#fff'} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -947,8 +1059,41 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 2,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    marginBottom: 6,
     maxWidth: '85%',
   },
-  chatBubbleText: { fontSize: 13, color: theme.colors.text },
+  chatBubbleBot: {
+    alignSelf: 'flex-start',
+    backgroundColor: theme.colors.background,
+    borderRadius: 12,
+    borderBottomLeftRadius: 2,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    maxWidth: '90%',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  chatBubbleText: { fontSize: 13, color: theme.colors.text, lineHeight: 19 },
+  inputBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  chatInput: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: theme.colors.text,
+    fontSize: 14,
+    maxHeight: 100,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  sendBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: theme.colors.accent,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  sendBtnDisabled: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border },
 });
