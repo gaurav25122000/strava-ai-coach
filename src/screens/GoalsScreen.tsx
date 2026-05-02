@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '../theme';
@@ -6,12 +6,21 @@ import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
 import { ProgressBar } from '../components/ProgressBar';
 import { useStore, Goal } from '../store/useStore';
-import { Flame, PersonStanding, Plus, Zap, X, Calendar, Trophy, TrendingUp, Clock, Heart, MapPin, Activity } from 'lucide-react-native';
+import { Flame, PersonStanding, Plus, Zap, X, Calendar, Trophy, TrendingUp, Clock, Heart, MapPin, Activity, Pencil } from 'lucide-react-native';
 import { AIService } from '../services/ai';
 import { differenceInDays, parseISO, format, getWeek, getMonth, getYear, startOfWeek, startOfMonth, endOfWeek, endOfMonth } from 'date-fns';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
+import Animated, { FadeInDown, Layout, useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSequence, Easing } from 'react-native-reanimated';
+
+const GENERATING_MESSAGES = [
+  'Analyzing your training history...',
+  'Applying the 10% volume rule...',
+  'Building your phase structure...',
+  'Calculating threshold paces...',
+  'Designing your key workouts...',
+  'Finalizing your coaching plan...',
+];
 
 export default function GoalsScreen() {
   const { goals, deleteGoal, addGoal, updateGoal, activities, settings, userProfile, setToast } = useStore();
@@ -26,6 +35,23 @@ export default function GoalsScreen() {
   const [simplePeriod, setSimplePeriod] = useState<'Week' | 'Month'>('Week');
   const [simpleTarget, setSimpleTarget] = useState('10');
   const [simpleActivityType, setSimpleActivityType] = useState<'All' | 'Run' | 'Walk' | 'Ride'>('All');
+  const [generatingMsgIdx, setGeneratingMsgIdx] = useState(0);
+  const msgIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [chatMessage, setChatMessage] = useState('');
+
+  const pulseScale = useSharedValue(1);
+  const pulseOpacity = useSharedValue(0.7);
+  const dot1Opacity = useSharedValue(0.3);
+  const dot2Opacity = useSharedValue(0.3);
+  const dot3Opacity = useSharedValue(0.3);
+
+  const pulseStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pulseScale.value }],
+    opacity: pulseOpacity.value,
+  }));
+  const dot1Style = useAnimatedStyle(() => ({ opacity: dot1Opacity.value }));
+  const dot2Style = useAnimatedStyle(() => ({ opacity: dot2Opacity.value }));
+  const dot3Style = useAnimatedStyle(() => ({ opacity: dot3Opacity.value }));
 
   const goalDate = newGoalDate ? new Date(newGoalDate) : new Date();
 
@@ -102,6 +128,36 @@ export default function GoalsScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (isGenerating) {
+      setGeneratingMsgIdx(0);
+      msgIntervalRef.current = setInterval(() => {
+        setGeneratingMsgIdx(i => (i + 1) % GENERATING_MESSAGES.length);
+      }, 2000);
+      pulseScale.value = withRepeat(
+        withSequence(
+          withTiming(1.2, { duration: 900, easing: Easing.inOut(Easing.sin) }),
+          withTiming(1, { duration: 900, easing: Easing.inOut(Easing.sin) }),
+        ), -1);
+      pulseOpacity.value = withRepeat(
+        withSequence(withTiming(1, { duration: 900 }), withTiming(0.5, { duration: 900 })), -1);
+      dot1Opacity.value = withRepeat(
+        withSequence(withTiming(1, { duration: 400 }), withTiming(0.3, { duration: 400 }), withTiming(0.3, { duration: 400 })), -1);
+      dot2Opacity.value = withRepeat(
+        withSequence(withTiming(0.3, { duration: 400 }), withTiming(1, { duration: 400 }), withTiming(0.3, { duration: 400 })), -1);
+      dot3Opacity.value = withRepeat(
+        withSequence(withTiming(0.3, { duration: 400 }), withTiming(0.3, { duration: 400 }), withTiming(1, { duration: 400 })), -1);
+    } else {
+      if (msgIntervalRef.current) clearInterval(msgIntervalRef.current);
+      pulseScale.value = withTiming(1);
+      pulseOpacity.value = withTiming(0.7);
+      dot1Opacity.value = withTiming(0.3);
+      dot2Opacity.value = withTiming(0.3);
+      dot3Opacity.value = withTiming(0.3);
+    }
+    return () => { if (msgIntervalRef.current) clearInterval(msgIntervalRef.current); };
+  }, [isGenerating]);
+
   const calculateSimpleGoalProgress = (goal: Goal) => {
     if (!goal.isSimple) return 0;
     const now = new Date();
@@ -133,6 +189,16 @@ export default function GoalsScreen() {
     setEditingGoal(goal.id);
     setNewGoalTitle(goal.title);
     setNewGoalDate(goal.targetDate);
+    setChatMessage('');
+    if (goal.isSimple) {
+      setGoalMode('Simple');
+      setSimpleCategory((goal.simpleCategory as any) || 'Frequency');
+      setSimplePeriod((goal.simplePeriod as any) || 'Week');
+      setSimpleTarget(String(goal.simpleTarget ?? '10'));
+      setSimpleActivityType((goal.simpleActivityType as any) || 'All');
+    } else {
+      setGoalMode('AI');
+    }
     setModalVisible(true);
   };
 
@@ -176,6 +242,44 @@ export default function GoalsScreen() {
       };
       if (editingGoal) updateGoal(finalGoal); else addGoal(finalGoal);
       closeModal();
+      return;
+    }
+
+    // Editing an AI goal — continue as chat, preserving history
+    if (editingGoal && goalMode === 'AI') {
+      const existing = goals.find(g => g.id === editingGoal);
+      if (!existing) return;
+      if (!chatMessage.trim()) {
+        setToast({ title: 'Empty message', message: 'Tell the coach what to change.', type: 'error' });
+        return;
+      }
+      if (!settings.llmApiKey) {
+        setToast({ title: 'Error', message: 'Configure your API Key in settings first.', type: 'error' });
+        return;
+      }
+      try {
+        setIsGenerating(true);
+        const { plan, updatedHistory } = await AIService.continueTrainingPlan(
+          existing,
+          chatMessage.trim(),
+          settings.llmProvider,
+          settings.llmApiKey,
+          settings.coachPersonality
+        );
+        updateGoal({
+          ...existing,
+          ...plan,
+          chatHistory: updatedHistory,
+        });
+        setChatMessage('');
+        setEditingGoal(null);
+        setModalVisible(false);
+        setToast({ title: 'Plan Updated', message: 'Your coach revised the plan.', type: 'success' });
+      } catch {
+        setToast({ title: 'Error', message: 'Failed to update plan. Check API Key.', type: 'error' });
+      } finally {
+        setIsGenerating(false);
+      }
       return;
     }
 
@@ -279,10 +383,10 @@ export default function GoalsScreen() {
               </View>
               <View style={styles.actionButtons}>
                 <TouchableOpacity style={styles.iconButton} onPress={() => openEdit(goal)}>
-                  <Typography variant="caption">Edit</Typography>
+                  <Pencil size={14} color={theme.colors.textSecondary} />
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.iconButton} onPress={() => deleteGoal(goal.id)}>
-                  <X size={16} color={theme.colors.error} />
+                  <X size={14} color={theme.colors.error} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -463,6 +567,28 @@ export default function GoalsScreen() {
 
       </ScrollView>
 
+      {/* ── AI Generating Overlay ── */}
+      <Modal visible={isGenerating} transparent animationType="fade" statusBarTranslucent>
+        <View style={styles.genOverlay}>
+          <LinearGradient colors={['#0a0a18', '#1a0a33', '#0a0a18']} style={styles.genGradient}>
+            <Animated.View style={[styles.genIconWrap, pulseStyle]}>
+              <LinearGradient colors={['#7c3aed', '#4f46e5']} style={styles.genIconBg}>
+                <Zap size={44} color="#fff" />
+              </LinearGradient>
+            </Animated.View>
+            <Typography style={styles.genTitle}>Building Your Plan</Typography>
+            <Typography style={styles.genSubtitle}>AI coaching intelligence at work</Typography>
+            <Typography style={styles.genMessage}>{GENERATING_MESSAGES[generatingMsgIdx]}</Typography>
+            <View style={styles.genDotsRow}>
+              <Animated.View style={[styles.genDot, dot1Style]} />
+              <Animated.View style={[styles.genDot, dot2Style]} />
+              <Animated.View style={[styles.genDot, dot3Style]} />
+            </View>
+            <Typography style={styles.genHint}>This may take up to 30 seconds</Typography>
+          </LinearGradient>
+        </View>
+      </Modal>
+
       <Modal
         animationType="slide"
         transparent={true}
@@ -485,6 +611,8 @@ export default function GoalsScreen() {
 
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
 
+            {/* Tab switcher — hidden when editing AI goal */}
+            {!(editingGoal && goalMode === 'AI') && (
             <View style={{ flexDirection: 'row', marginBottom: 16, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 4 }}>
               <TouchableOpacity style={{ flex: 1, paddingVertical: 8, alignItems: 'center', backgroundColor: goalMode === 'AI' ? theme.colors.primary : 'transparent', borderRadius: 6 }} onPress={() => setGoalMode('AI')}>
                 <Typography weight="600">AI Plan</Typography>
@@ -493,24 +621,65 @@ export default function GoalsScreen() {
                 <Typography weight="600">Simple Target</Typography>
               </TouchableOpacity>
             </View>
+            )}
 
             {goalMode === 'AI' ? (
               <>
-                <Typography variant="body" color={theme.colors.textSecondary} style={{marginBottom: 16}}>
-                  Enter your goal and our AI will generate a personalized training plan.
-                </Typography>
-                <View style={styles.inputGroup}>
-                  <Typography variant="label" style={{marginBottom: 8}}>GOAL TITLE</Typography>
-                  <TextInput style={styles.input} value={newGoalTitle} onChangeText={setNewGoalTitle} placeholder="e.g. Marathon, 10k PB" placeholderTextColor={theme.colors.textSecondary} />
-                </View>
-                <View style={styles.inputGroup}>
-                  <Typography variant="label" style={{marginBottom: 8}}>TARGET DATE</Typography>
-                  <TouchableOpacity onPress={() => setShowDatePicker(true)} activeOpacity={0.7}>
-                    <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', minHeight: 44 }]}>
-                      <Typography style={{ color: newGoalDate ? theme.colors.text : theme.colors.textSecondary, fontSize: 15, flex: 1 }}>{newGoalDate || 'Tap to pick a date'}</Typography>
+                {editingGoal ? (
+                  // ── Chat UI for editing existing AI plan ──
+                  (() => {
+                    const existing = goals.find(g => g.id === editingGoal);
+                    const history = existing?.chatHistory || [];
+                    return (
+                      <>
+                        <Typography variant="caption" style={{ color: theme.colors.textSecondary, marginBottom: 12 }}>
+                          Ask your coach to refine the plan. Changes are applied on each send.
+                        </Typography>
+                        {/* Chat history */}
+                        {history.length > 0 && (
+                          <View style={{ marginBottom: 12, maxHeight: 200 }}>
+                            <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false}>
+                              {history.filter(h => h.role === 'user').map((h, i) => (
+                                <View key={i} style={styles.chatBubbleUser}>
+                                  <Typography style={styles.chatBubbleText}>{h.text}</Typography>
+                                </View>
+                              ))}
+                            </ScrollView>
+                          </View>
+                        )}
+                        <TextInput
+                          style={[styles.input, { minHeight: 80, textAlignVertical: 'top' }]}
+                          value={chatMessage}
+                          onChangeText={setChatMessage}
+                          placeholder={history.length === 0
+                            ? 'e.g. "Make week 3 harder" or "I have 8 weeks not 12"'
+                            : 'Continue the conversation...'}
+                          placeholderTextColor={theme.colors.textSecondary}
+                          multiline
+                        />
+                      </>
+                    );
+                  })()
+                ) : (
+                  // ── New AI goal form ──
+                  <>
+                    <Typography variant="body" color={theme.colors.textSecondary} style={{ marginBottom: 16 }}>
+                      Enter your goal and our AI will generate a personalized training plan.
+                    </Typography>
+                    <View style={styles.inputGroup}>
+                      <Typography variant="label" style={{marginBottom: 8}}>GOAL TITLE</Typography>
+                      <TextInput style={styles.input} value={newGoalTitle} onChangeText={setNewGoalTitle} placeholder="e.g. Marathon, 10k PB" placeholderTextColor={theme.colors.textSecondary} />
                     </View>
-                  </TouchableOpacity>
-                </View>
+                    <View style={styles.inputGroup}>
+                      <Typography variant="label" style={{marginBottom: 8}}>TARGET DATE</Typography>
+                      <TouchableOpacity onPress={() => setShowDatePicker(true)} activeOpacity={0.7}>
+                        <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', minHeight: 44 }]}>
+                          <Typography style={{ color: newGoalDate ? theme.colors.text : theme.colors.textSecondary, fontSize: 15, flex: 1 }}>{newGoalDate || 'Tap to pick a date'}</Typography>
+                        </View>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -638,7 +807,9 @@ export default function GoalsScreen() {
               {isGenerating ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Typography weight="bold" color="#fff">{goalMode === 'AI' ? 'Generate Plan' : 'Save Goal'}</Typography>
+                <Typography weight="bold" color="#fff">
+                  {editingGoal ? 'Save Changes' : goalMode === 'AI' ? 'Generate Plan' : 'Save Goal'}
+                </Typography>
               )}
             </TouchableOpacity>
           </View>
@@ -735,7 +906,8 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: theme.borderRadius.xl,
     borderTopRightRadius: theme.borderRadius.xl,
     padding: theme.spacing.lg,
-    minHeight: 400,
+    maxHeight: '85%',
+    minHeight: 320,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -758,4 +930,25 @@ const styles = StyleSheet.create({
   pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   pickerSheet: { backgroundColor: theme.colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16 },
   pickerHeader: { flexDirection: 'row', justifyContent: 'flex-end', padding: 16, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  genOverlay: { flex: 1 },
+  genGradient: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
+  genIconWrap: { marginBottom: 36 },
+  genIconBg: { width: 110, height: 110, borderRadius: 55, alignItems: 'center', justifyContent: 'center', shadowColor: '#7c3aed', shadowOpacity: 0.8, shadowRadius: 24, shadowOffset: { width: 0, height: 0 } },
+  genTitle: { fontSize: 26, fontWeight: '700', textAlign: 'center', color: '#fff', marginBottom: 8 },
+  genSubtitle: { fontSize: 13, textAlign: 'center', color: 'rgba(255,255,255,0.45)', marginBottom: 40 },
+  genMessage: { fontSize: 15, textAlign: 'center', color: 'rgba(255,255,255,0.85)', marginBottom: 32, minHeight: 22 },
+  genDotsRow: { flexDirection: 'row', gap: 10, marginBottom: 48 },
+  genDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: theme.colors.primary },
+  genHint: { fontSize: 12, textAlign: 'center', color: 'rgba(255,255,255,0.25)' },
+  chatBubbleUser: {
+    alignSelf: 'flex-end',
+    backgroundColor: theme.colors.primary + '33',
+    borderRadius: 12,
+    borderBottomRightRadius: 2,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 6,
+    maxWidth: '85%',
+  },
+  chatBubbleText: { fontSize: 13, color: theme.colors.text },
 });

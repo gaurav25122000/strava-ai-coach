@@ -12,6 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Animated, { FadeInDown, Layout } from "react-native-reanimated";
 import { theme } from "../theme";
 import { StravaService } from "../services/strava";
+import { AIService } from "../services/ai";
 import { Card } from "../components/Card";
 import { Typography } from "../components/Typography";
 import { HeatmapCalendar } from "../components/HeatmapCalendar";
@@ -202,10 +203,15 @@ export default function OverviewScreen() {
   } | null>(null);
   const [layoutModalVisible, setLayoutModalVisible] = useState(false);
   const { settings, updateSettings } = useStore();
+  const coachInsight = useMemo(
+    () => AIService.getMotivationalInsight(activities, userStats),
+    [activities, userStats]
+  );
 
   const defaultLayout = [
     "HeroBanner",
     "CurrentFocus",
+    "CoachInsight",
     "WeeklyDigest",
     "RecoveryAdvisor",
     "InjuryAlert",
@@ -1725,6 +1731,20 @@ export default function OverviewScreen() {
                   </Animated.View>
                 </View>
               );
+            case "CoachInsight":
+              return (
+                <LinearGradient
+                  key={widgetId + idx}
+                  colors={['#1a1a2e', '#16213e']}
+                  style={{ borderRadius: 14, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 }}>
+                    <Typography style={{ fontSize: 20 }}>{coachInsight.emoji}</Typography>
+                    <Typography style={{ fontSize: 11, fontWeight: '700', color: theme.colors.primary, textTransform: 'uppercase', letterSpacing: 0.8 }}>{coachInsight.label}</Typography>
+                  </View>
+                  <Typography style={{ fontSize: 14, color: 'rgba(255,255,255,0.85)', lineHeight: 20 }}>{coachInsight.text}</Typography>
+                </LinearGradient>
+              );
             case "ActiveGoals":
               return (
                 <View key={widgetId + idx} style={{ marginBottom: 16 }}>
@@ -1760,7 +1780,7 @@ export default function OverviewScreen() {
                             </View>
                             <View style={styles.goalDays}>
                               <Typography style={styles.goalDaysNum}>
-                                {goal.daysRemaining}
+                                {Math.max(0, Math.round((new Date(goal.targetDate).getTime() - Date.now()) / 86400000))}
                               </Typography>
                               <Typography style={styles.goalDaysLabel}>
                                 days
@@ -2104,6 +2124,7 @@ export default function OverviewScreen() {
                 TrainingLoad: "Training Load (ATL/CTL)",
                 BestEfforts: "Estimated Best Efforts",
                 Badges: "Milestones & Badges",
+                CoachInsight: "Coach Insight",
               };
               const title = WIDGET_NAMES[id] || id;
               return (
@@ -2207,6 +2228,7 @@ export default function OverviewScreen() {
                   TrainingLoad: "Training Load (ATL/CTL)",
                   BestEfforts: "Estimated Best Efforts",
                   Badges: "Milestones & Badges",
+                  CoachInsight: "Coach Insight",
                 };
                 const title = WIDGET_NAMES[id] || id;
                 return (

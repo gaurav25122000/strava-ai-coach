@@ -86,6 +86,7 @@ export interface Goal {
   keyWorkout: string;
   targetFinishTime?: string;
   phases?: Phase[];
+  chatHistory?: Array<{ role: 'user' | 'model'; text: string }>;
 }
 
 interface UserStats {
@@ -432,11 +433,10 @@ export const useStore = create<AppState>()(
         coachPersonality: 'Encouraging Supporter',
         privacyZones: false,
         widgetLayout: [
-          'HeroBanner', 'WeeklyDigest', 'InjuryAlert', 'RecoveryAdvisor', 
-          'CurrentFocus', 'ThisWeek', 'WeeklyGoalTracker', 'ShoeTracker', 
-          'ActivityMap', 'RecentActivities', 'MonthlyVolume', 'HeartRate', 
-          'IntensityDistribution', 'PersonalBests', 'RacePredictor', 
-          'ActivityMix', 'YearToDate', 'AllTimeStats', 'ActiveGoals', 
+          'HeroBanner', 'CurrentFocus', 'CoachInsight', 'WeeklyDigest', 'InjuryAlert', 'RecoveryAdvisor',
+          'WeeklyGoalTracker', 'ThisWeek', 'ShoeTracker', 'ActivityMap', 'RecentActivities', 'MonthlyVolume', 'HeartRate',
+          'IntensityDistribution', 'PersonalBests', 'RacePredictor',
+          'ActivityMix', 'YearToDate', 'AllTimeStats', 'ActiveGoals',
           'TrainingLoad', 'BestEfforts', 'Badges'
         ],
       },
