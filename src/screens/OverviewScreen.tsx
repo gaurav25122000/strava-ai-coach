@@ -211,12 +211,16 @@ export default function OverviewScreen() {
   const defaultLayout = [
     "HeroBanner",
     "CurrentFocus",
+    "UpcomingWorkout",
     "CoachInsight",
     "WeeklyDigest",
     "RecoveryAdvisor",
+    "WellnessScore",
     "InjuryAlert",
     "WeeklyGoalTracker",
     "ThisWeek",
+    "PaceTrend",
+    "Cadence",
     "IntensityDistribution",
     "ShoeTracker",
     "ActivityMap",
@@ -515,6 +519,83 @@ export default function OverviewScreen() {
   }, [activities]);
 
   const weekTrend = Number(thisWeekStats.km) >= Number(lastWeekKm);
+
+  // Pace trend: avg pace per week for last 8 weeks (runs only)
+  const paceTrend = useMemo(() => {
+    const runs = activities.filter(a => a.type === 'Run' && a.averageSpeed > 0);
+    const weeks: { label: string; pace: number }[] = [];
+    for (let i = 7; i >= 0; i--) {
+      const wStart = subWeeks(startOfWeek(new Date(), { weekStartsOn: 1 }), i);
+      const wEnd = endOfWeek(wStart, { weekStartsOn: 1 });
+      const wRuns = runs.filter(a => isWithinInterval(parseISO(a.startDate), { start: wStart, end: wEnd }));
+      const avgPace = wRuns.length
+        ? wRuns.reduce((s, a) => s + 1000 / a.averageSpeed / 60, 0) / wRuns.length
+        : 0;
+      weeks.push({ label: format(wStart, 'MMM d'), pace: avgPace });
+    }
+    return weeks;
+  }, [activities]);
+
+  // Cadence stats: avg cadence over last 4 weeks (runs)
+  const cadenceStats = useMemo(() => {
+    const runs = activities.filter(a => a.type === 'Run' && (a.averageCadence || 0) > 0);
+    if (!runs.length) return null;
+    const last4w = runs.filter(a => (Date.now() - new Date(a.startDate).getTime()) / 86400000 <= 28);
+    if (!last4w.length) return null;
+    const avg = Math.round(last4w.reduce((s, a) => s + (a.averageCadence || 0), 0) / last4w.length);
+    // Strava returns cadence as steps/min for one foot; multiply by 2 for total spm
+    const spm = avg * 2;
+    const trend = runs.length > 1
+      ? (() => {
+          const recent = runs.slice(0, Math.min(5, Math.floor(runs.length / 2))).reduce((s, a) => s + (a.averageCadence || 0), 0) / Math.min(5, Math.floor(runs.length / 2));
+          const older = runs.slice(Math.min(5, Math.floor(runs.length / 2))).reduce((s, a) => s + (a.averageCadence || 0), 0) / Math.max(1, runs.length - Math.min(5, Math.floor(runs.length / 2)));
+          return recent > older ? 'up' : recent < older - 1 ? 'down' : 'flat';
+        })()
+      : 'flat';
+    return { spm, trend };
+  }, [activities]);
+
+  // Wellness score: 0-100 derived from TSB, consistency, avg HR vs resting
+  const wellnessScore = useMemo(() => {
+    let score = 50;
+    // TSB contribution (max ±20)
+    if (trainingLoad.tsb !== 0) score += Math.max(-20, Math.min(20, trainingLoad.tsb));
+    // Consistency (last 30 days active days, max +20)
+    score += Math.min(20, consistencyScore * 0.2);
+    // HR zone: if avg HR is close to resting it's good (+10), high is bad (-10)
+    if (hrStats && userProfile.restingHR > 0) {
+      const hrDelta = hrStats.avg - userProfile.restingHR;
+      if (hrDelta < 40) score += 10;
+      else if (hrDelta > 70) score -= 10;
+    }
+    // Recent rest: if ran last 2 days lose some (-5)
+    const daysSinceLast = activities.length
+      ? (Date.now() - new Date([...activities].sort((a,b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime())[0].startDate).getTime()) / 86400000
+      : 7;
+    if (daysSinceLast < 1) score -= 5;
+    if (daysSinceLast > 2) score += 5;
+    const clamped = Math.round(Math.max(0, Math.min(100, score)));
+    const label = clamped >= 75 ? 'Great' : clamped >= 50 ? 'Good' : clamped >= 30 ? 'Fair' : 'Low';
+    const color = clamped >= 75 ? theme.colors.success : clamped >= 50 ? '#0ea5e9' : clamped >= 30 ? '#f59e0b' : theme.colors.error;
+    return { score: clamped, label, color };
+  }, [trainingLoad, consistencyScore, hrStats, userProfile, activities]);
+
+  // Upcoming workout from first active non-simple AI goal
+  const upcomingWorkout = useMemo(() => {
+    const aiGoal = goals.find(g => !g.isSimple && (g.phases?.length || g.keyWorkout));
+    if (!aiGoal) return null;
+    // Find current phase: earliest phase index relative to days remaining
+    const totalDays = Math.max(1, (new Date(aiGoal.targetDate).getTime() - Date.now()) / 86400000);
+    if (aiGoal.phases && aiGoal.phases.length > 0) {
+      const phaseIdx = Math.min(
+        aiGoal.phases.length - 1,
+        Math.floor((1 - totalDays / Math.max(1, aiGoal.daysRemaining + (aiGoal.phases.length * 7))) * aiGoal.phases.length)
+      );
+      const phase = aiGoal.phases[Math.max(0, phaseIdx)];
+      return { goalTitle: aiGoal.title, phaseName: phase.name, workout: phase.keyWorkout, weeklyTarget: phase.weeklyVolumeTarget };
+    }
+    return { goalTitle: aiGoal.title, phaseName: aiGoal.phase?.split('\n')[0] || 'Current Phase', workout: aiGoal.keyWorkout, weeklyTarget: aiGoal.weeklyVolume?.target };
+  }, [goals]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -2042,6 +2123,174 @@ export default function OverviewScreen() {
                   </Animated.View>
                 </View>
               );
+            case "PaceTrend": {
+              const hasData = paceTrend.some(w => w.pace > 0);
+              if (!hasData) return null;
+              const validPaces = paceTrend.filter(w => w.pace > 0);
+              const minPace = Math.min(...validPaces.map(w => w.pace));
+              const maxPace = Math.max(...validPaces.map(w => w.pace));
+              const paceRange = maxPace - minPace || 1;
+              const latestPace = validPaces[validPaces.length - 1]?.pace || 0;
+              const firstPace = validPaces[0]?.pace || 0;
+              const improving = latestPace < firstPace - 0.05;
+              return (
+                <View key={widgetId + idx} style={{ marginBottom: 16 }}>
+                  <Animated.View entering={FadeInDown.delay(970).springify()} layout={Layout.springify()}>
+                    <View style={[styles.sectionHeader, { marginTop: 20 }]}>
+                      <TrendingUp color={improving ? theme.colors.success : theme.colors.primary} size={16} />
+                      <Typography style={styles.sectionTitle}>Pace Trend</Typography>
+                      <Typography style={{ fontSize: 11, color: improving ? theme.colors.success : theme.colors.textSecondary }}>
+                        {improving ? '▼ Improving' : firstPace > 0 && latestPace > firstPace + 0.05 ? '▲ Slowing' : '→ Stable'}
+                      </Typography>
+                    </View>
+                    <View style={{ backgroundColor: theme.colors.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: theme.colors.border }}>
+                      {/* Sparkline */}
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 56, gap: 4, marginBottom: 8 }}>
+                        {paceTrend.map((w, i) => {
+                          const h = w.pace > 0 ? Math.max(8, ((maxPace - w.pace) / paceRange) * 48 + 8) : 4;
+                          return (
+                            <View key={i} style={{ flex: 1, alignItems: 'center' }}>
+                              <View style={{ width: '100%', height: h, borderRadius: 3, backgroundColor: w.pace > 0 ? (improving ? theme.colors.success : theme.colors.primary) : theme.colors.border, opacity: w.pace > 0 ? 1 : 0.3 }} />
+                            </View>
+                          );
+                        })}
+                      </View>
+                      {/* X labels */}
+                      <View style={{ flexDirection: 'row', gap: 4 }}>
+                        {paceTrend.map((w, i) => (
+                          <Typography key={i} style={{ flex: 1, fontSize: 8, color: theme.colors.textSecondary, textAlign: 'center' }} numberOfLines={1}>{i % 2 === 0 ? w.label.split(' ')[0] : ''}</Typography>
+                        ))}
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
+                        <Typography style={{ fontSize: 12, color: theme.colors.textSecondary }}>Best: <Typography style={{ color: theme.colors.success, fontWeight: '700' }}>{Math.floor(minPace)}:{Math.round((minPace % 1) * 60).toString().padStart(2,'0')}/km</Typography></Typography>
+                        <Typography style={{ fontSize: 12, color: theme.colors.textSecondary }}>Latest: <Typography style={{ color: theme.colors.text, fontWeight: '700' }}>{Math.floor(latestPace)}:{Math.round((latestPace % 1) * 60).toString().padStart(2,'0')}/km</Typography></Typography>
+                      </View>
+                    </View>
+                  </Animated.View>
+                </View>
+              );
+            }
+            case "Cadence": {
+              if (!cadenceStats) return null;
+              const { spm, trend } = cadenceStats;
+              const isOptimal = spm >= 170 && spm <= 180;
+              const isLow = spm < 170;
+              const cadColor = isOptimal ? theme.colors.success : isLow ? '#f59e0b' : theme.colors.accent;
+              const cadLabel = isOptimal ? 'Optimal ✓' : isLow ? 'Below target' : 'Above target';
+              const fillPct = Math.min(100, Math.max(0, ((spm - 140) / (200 - 140)) * 100));
+              const optStart = ((170 - 140) / 60) * 100;
+              const optEnd = ((180 - 140) / 60) * 100;
+              return (
+                <View key={widgetId + idx} style={{ marginBottom: 16 }}>
+                  <Animated.View entering={FadeInDown.delay(975).springify()} layout={Layout.springify()}>
+                    <View style={[styles.sectionHeader, { marginTop: 20 }]}>
+                      <Activity color={theme.colors.primary} size={16} />
+                      <Typography style={styles.sectionTitle}>Cadence</Typography>
+                      <Typography style={{ fontSize: 11, color: cadColor }}>{cadLabel}</Typography>
+                    </View>
+                    <View style={{ backgroundColor: theme.colors.surface, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: theme.colors.border }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 14 }}>
+                        <Typography style={{ fontSize: 42, fontWeight: '800', color: cadColor, lineHeight: 46 }}>{spm}</Typography>
+                        <Typography style={{ fontSize: 14, color: theme.colors.textSecondary, marginBottom: 6, marginLeft: 6 }}>spm {trend === 'up' ? '↑' : trend === 'down' ? '↓' : '→'}</Typography>
+                      </View>
+                      {/* Gauge bar */}
+                      <View style={{ height: 10, borderRadius: 5, backgroundColor: theme.colors.background, overflow: 'hidden', position: 'relative' }}>
+                        {/* Optimal zone highlight */}
+                        <View style={{ position: 'absolute', left: `${optStart}%`, width: `${optEnd - optStart}%`, height: '100%', backgroundColor: theme.colors.success + '33' }} />
+                        {/* Marker */}
+                        <View style={{ position: 'absolute', left: `${Math.max(0, Math.min(97, fillPct))}%`, width: 4, height: '100%', borderRadius: 2, backgroundColor: cadColor }} />
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+                        <Typography style={{ fontSize: 10, color: theme.colors.textSecondary }}>140 spm</Typography>
+                        <Typography style={{ fontSize: 10, color: theme.colors.success }}>Optimal: 170–180</Typography>
+                        <Typography style={{ fontSize: 10, color: theme.colors.textSecondary }}>200 spm</Typography>
+                      </View>
+                    </View>
+                  </Animated.View>
+                </View>
+              );
+            }
+            case "WellnessScore": {
+              if (!wellnessScore) return null;
+              const { score, label, color } = wellnessScore;
+              const arc = (score / 100) * 180; // degrees for semicircle
+              return (
+                <View key={widgetId + idx} style={{ marginBottom: 16 }}>
+                  <Animated.View entering={FadeInDown.delay(972).springify()} layout={Layout.springify()}>
+                    <View style={[styles.sectionHeader, { marginTop: 20 }]}>
+                      <Heart color={color} size={16} />
+                      <Typography style={styles.sectionTitle}>Wellness Score</Typography>
+                    </View>
+                    <LinearGradient
+                      colors={['#1a1a2e', '#16213e']}
+                      style={{ borderRadius: 14, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+                        {/* Score ring (simplified) */}
+                        <View style={{ width: 72, height: 72, borderRadius: 36, borderWidth: 6, borderColor: color + '33', alignItems: 'center', justifyContent: 'center', backgroundColor: color + '11' }}>
+                          <Typography style={{ fontSize: 24, fontWeight: '800', color }}>{score}</Typography>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Typography style={{ fontSize: 20, fontWeight: '700', color, marginBottom: 4 }}>{label}</Typography>
+                          <Typography style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', lineHeight: 17 }}>
+                            Based on your training load, consistency, and recent heart rate data.
+                          </Typography>
+                          <View style={{ flexDirection: 'row', gap: 12, marginTop: 10 }}>
+                            <View style={{ alignItems: 'center' }}>
+                              <Typography style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase' }}>Form</Typography>
+                              <Typography style={{ fontSize: 13, fontWeight: '700', color: trainingLoad.tsb > 0 ? theme.colors.success : theme.colors.error }}>{trainingLoad.tsb > 0 ? '+' : ''}{trainingLoad.tsb}</Typography>
+                            </View>
+                            <View style={{ alignItems: 'center' }}>
+                              <Typography style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase' }}>Consist.</Typography>
+                              <Typography style={{ fontSize: 13, fontWeight: '700', color: theme.colors.text }}>{consistencyScore}%</Typography>
+                            </View>
+                            {hrStats && <View style={{ alignItems: 'center' }}>
+                              <Typography style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase' }}>Avg HR</Typography>
+                              <Typography style={{ fontSize: 13, fontWeight: '700', color: theme.colors.text }}>{hrStats.avg}</Typography>
+                            </View>}
+                          </View>
+                        </View>
+                      </View>
+                    </LinearGradient>
+                  </Animated.View>
+                </View>
+              );
+            }
+            case "UpcomingWorkout": {
+              if (!upcomingWorkout) return null;
+              const lines = (upcomingWorkout.workout || '').split('\n').filter(Boolean);
+              const title = lines[0] || 'Key Workout';
+              const detail = lines.slice(1).join(' ').replace(/\*\*(.*?)\*\*/g, '$1').trim();
+              return (
+                <View key={widgetId + idx} style={{ marginBottom: 16 }}>
+                  <Animated.View entering={FadeInDown.delay(210).springify()} layout={Layout.springify()}>
+                    <View style={[styles.sectionHeader, { marginTop: 4 }]}>
+                      <Zap color="#FBBF24" size={16} />
+                      <Typography style={styles.sectionTitle}>Upcoming Workout</Typography>
+                    </View>
+                    <LinearGradient
+                      colors={['#1c1506', '#2a1d06']}
+                      style={{ borderRadius: 14, padding: 16, borderWidth: 1, borderColor: '#FBBF2430' }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <View style={{ backgroundColor: '#FBBF2420', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1, borderColor: '#FBBF2440' }}>
+                          <Typography style={{ fontSize: 11, color: '#FBBF24', fontWeight: '700' }}>{upcomingWorkout.phaseName}</Typography>
+                        </View>
+                        <Typography style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{upcomingWorkout.goalTitle}</Typography>
+                      </View>
+                      <Typography style={{ fontSize: 16, fontWeight: '700', color: '#fff', marginBottom: 6 }}>{title.replace(/\*\*/g, '')}</Typography>
+                      {detail ? <Typography style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)', lineHeight: 19 }}>{detail}</Typography> : null}
+                      {upcomingWorkout.weeklyTarget ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
+                          <Target size={12} color="#FBBF24" />
+                          <Typography style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>Weekly target: <Typography style={{ color: '#FBBF24', fontWeight: '700' }}>{upcomingWorkout.weeklyTarget} km</Typography></Typography>
+                        </View>
+                      ) : null}
+                    </LinearGradient>
+                  </Animated.View>
+                </View>
+              );
+            }
             default:
               return null;
           }
@@ -2233,6 +2482,10 @@ export default function OverviewScreen() {
                   BestEfforts: "Estimated Best Efforts",
                   Badges: "Milestones & Badges",
                   CoachInsight: "Coach Insight",
+                  PaceTrend: "Pace Trend (8 Weeks)",
+                  Cadence: "Cadence Tracker",
+                  WellnessScore: "Wellness Score",
+                  UpcomingWorkout: "Upcoming Workout",
                 };
                 const title = WIDGET_NAMES[id] || id;
                 return (
