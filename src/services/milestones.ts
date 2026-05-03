@@ -140,14 +140,22 @@ export function computeBestEfforts(activities: Activity[]): Record<number, BestE
 
 // ── Training load (ATL / CTL / TSB) ──────────────────────────────────────────
 
-/** Returns the daily suffer score for the last N days */
+/** Returns the daily training load for the last N days.
+ *  Uses sufferScore if available, otherwise falls back to
+ *  distance-based proxy (km × 10) so the widget works for
+ *  users without HR data or Strava premium suffer scores.
+ */
 function dailySufferScores(activities: Activity[], days: number): number[] {
   const scores = new Array(days).fill(0);
   const now = new Date();
   for (const act of activities) {
     const daysAgo = Math.floor((now.getTime() - new Date(act.startDate).getTime()) / 86400000);
     if (daysAgo >= 0 && daysAgo < days) {
-      scores[days - 1 - daysAgo] += (act.sufferScore || 0);
+      // prefer real suffer score; fall back to km-based proxy
+      const load = act.sufferScore
+        ? act.sufferScore
+        : Math.round((act.distance / 1000) * 10);
+      scores[days - 1 - daysAgo] += load;
     }
   }
   return scores;

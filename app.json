@@ -1,6 +1,7 @@
 {
   "expo": {
     "name": "Strava AI Coach",
+    "owner": "phoenix25",
     "scheme": "aicoachapp",
     "slug": "Strava-AI-Coach",
     "version": "1.0.0",

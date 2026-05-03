@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useCallback, useEffect } from "react";
+import { useNavigation } from "@react-navigation/native";
 import {
   View,
   StyleSheet,
@@ -46,7 +47,6 @@ import {
   TrainingLoad,
   getAllMilestoneDefs,
 } from "../services/milestones";
-import { ActivityDetailScreen } from "./ActivityDetailScreen";
 import { Activity as ActivityType } from "../store/useStore";
 import * as Haptics from "expo-haptics";
 import {
@@ -187,15 +187,14 @@ export default function OverviewScreen() {
     setLifetimeStats,
     setToast,
     setShoes,
+    setHRZones,
     shoes,
     injuries,
     weeklyDigest,
     userProfile,
   } = useStore();
+  const navigation = useNavigation();
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedActivity, setSelectedActivity] = useState<ActivityType | null>(
-    null,
-  );
   const [infoSheet, setInfoSheet] = useState<{
     title: string;
     body: string;
@@ -271,6 +270,8 @@ export default function OverviewScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activities]);
 
+
+
   const trainingLoad = useMemo<TrainingLoad>(
     () => computeTrainingLoad(activities),
     [activities],
@@ -280,9 +281,17 @@ export default function OverviewScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setRefreshing(true);
     try {
+      await StravaService.initialize();
       if (StravaService.isAuthenticated()) {
         const newActivities = await StravaService.syncActivities();
         setActivities(newActivities);
+        // Fetch Strava HR zones
+        try {
+          const zones = await StravaService.fetchZones();
+          if (zones.length) setHRZones(zones);
+        } catch (zErr) {
+          console.warn('Could not fetch HR zones:', zErr);
+        }
         try {
           const { stats, athlete } = await StravaService.fetchAthleteStats();
           setLifetimeStats(stats);
@@ -320,7 +329,7 @@ export default function OverviewScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [setActivities, setLifetimeStats, setToast]);
+  }, [setActivities, setLifetimeStats, setToast, setHRZones]);
 
   const heatmapData = useMemo(() => {
     return activities.map((act) => {
@@ -1463,7 +1472,7 @@ export default function OverviewScreen() {
                         return (
                           <TouchableOpacity
                             key={act.id}
-                            onPress={() => setSelectedActivity(act)}
+                            onPress={() => (navigation as any).navigate('Activities', { screen: 'ActivityDetail', params: { activity: act } })}
                             activeOpacity={0.8}
                           >
                             <Card
@@ -1817,13 +1826,13 @@ export default function OverviewScreen() {
                 <LinearGradient
                   key={widgetId + idx}
                   colors={['#1a1a2e', '#16213e']}
-                  style={{ borderRadius: 14, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' }}
+                  style={{ borderRadius: 16, padding: 18, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' }}
                 >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 }}>
-                    <Typography style={{ fontSize: 20 }}>{coachInsight.emoji}</Typography>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 8 }}>
+                    <Typography style={{ fontSize: 22 }}>{coachInsight.emoji}</Typography>
                     <Typography style={{ fontSize: 11, fontWeight: '700', color: theme.colors.primary, textTransform: 'uppercase', letterSpacing: 0.8 }}>{coachInsight.label}</Typography>
                   </View>
-                  <Typography style={{ fontSize: 14, color: 'rgba(255,255,255,0.85)', lineHeight: 20 }}>{coachInsight.text}</Typography>
+                  <Typography style={{ fontSize: 14, color: 'rgba(255,255,255,0.85)', lineHeight: 22, flexShrink: 1 }}>{coachInsight.text}</Typography>
                 </LinearGradient>
               );
             case "ActiveGoals":
@@ -1878,7 +1887,7 @@ export default function OverviewScreen() {
               return (
                 <View key={widgetId + idx} style={{ marginBottom: 16 }}>
                   {/* ── Training Load ── */}
-                  {trainingLoad.ctl > 0 && (
+                  {activities.length > 0 && (
                     <Animated.View
                       entering={FadeInDown.delay(950).springify()}
                       layout={Layout.springify()}
@@ -1924,7 +1933,7 @@ export default function OverviewScreen() {
                         <GradientStatCard
                           label="ATL (Fatigue)"
                           value={trainingLoad.atl}
-                          sub="7-day avg suffer"
+                          sub="7-day load avg"
                           colors={["#ef4444", "#dc2626"]}
                           icon={<Heart color="#fff" size={14} />}
                         />
@@ -1932,7 +1941,7 @@ export default function OverviewScreen() {
                         <GradientStatCard
                           label="CTL (Fitness)"
                           value={trainingLoad.ctl}
-                          sub="42-day avg suffer"
+                          sub="42-day load avg"
                           colors={["#10b981", "#059669"]}
                           icon={<TrendingUp color="#fff" size={14} />}
                         />

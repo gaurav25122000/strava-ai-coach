@@ -32,7 +32,7 @@ const ALL_TABS: { key: Tab; label: string }[] = [
 
 
 export default function InsightsScreen() {
-  const { activities, settings, updateSettings } = useStore();
+  const { activities, settings, updateSettings, hrZones } = useStore();
   const activeKeys = settings.activeGraphs || ['steps', 'time', 'volume', 'pace', 'heart'];
   const [showManageModal, setShowManageModal] = useState(false);
 
@@ -109,30 +109,37 @@ export default function InsightsScreen() {
 
   // ── HR Zones ──────────────────────────────────────────────────────
   const { pieData, zoneStats } = useMemo(() => {
-    let z1 = 0, z2 = 0, z3 = 0, z4 = 0, z5 = 0;
+    // Use Strava zones if available, else fallback thresholds
+    const boundaries: number[] = hrZones.length >= 5
+      ? hrZones.map(z => z.min)
+      : [0, 115, 135, 155, 170];
+
+    const counts = [0, 0, 0, 0, 0];
     activities.forEach(a => {
       const hr = a.averageHeartRate || 0;
       if (hr <= 0) return;
-      if (hr < 115) z1++;
-      else if (hr < 135) z2++;
-      else if (hr < 155) z3++;
-      else if (hr < 170) z4++;
-      else z5++;
+      // Find highest zone whose min <= hr
+      let z = 0;
+      for (let i = 0; i < boundaries.length; i++) {
+        if (hr >= boundaries[i]) z = i;
+      }
+      counts[z]++;
     });
-    const total = z1 + z2 + z3 + z4 + z5;
+    const total = counts.reduce((a, b) => a + b, 0);
     if (!total) return { pieData: [{ value: 1, color: theme.colors.border }], zoneStats: [] };
-    const zones = [
-      { label: 'Z1 Recovery',  value: z1, color: '#60A5FA' },
-      { label: 'Z2 Aerobic',   value: z2, color: '#34D399' },
-      { label: 'Z3 Tempo',     value: z3, color: '#FBBF24' },
-      { label: 'Z4 Threshold', value: z4, color: '#F97316' },
-      { label: 'Z5 Max',       value: z5, color: '#EF4444' },
-    ].filter(z => z.value > 0);
+    const ZONE_DEFS = [
+      { label: 'Z1 Recovery',  color: '#60A5FA' },
+      { label: 'Z2 Aerobic',   color: '#34D399' },
+      { label: 'Z3 Tempo',     color: '#FBBF24' },
+      { label: 'Z4 Threshold', color: '#F97316' },
+      { label: 'Z5 Max',       color: '#EF4444' },
+    ];
+    const zones = ZONE_DEFS.map((d, i) => ({ ...d, value: counts[i] })).filter(z => z.value > 0);
     return {
       pieData:   zones.map(z => ({ value: z.value, color: z.color, text: `${Math.round(z.value / total * 100)}%` })),
       zoneStats: zones.map(z => ({ ...z, pct: Math.round(z.value / total * 100) })),
     };
-  }, [activities]);
+  }, [activities, hrZones]);
 
   // ── Elevation ─────────────────────────────────────────────────────
   const elevData = useMemo(() => {
@@ -511,18 +518,33 @@ export default function InsightsScreen() {
                             )} />
                         </View>
                         <View style={{ gap: 8 }}>
-                          {zoneStats.map(z => (
-                            <View key={z.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                              <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: z.color }} />
-                              <View style={{ flex: 1 }}>
-                                <Typography style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 3 }}>{z.label}</Typography>
-                                <View style={{ height: 5, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
-                                  <View style={{ height: '100%', width: `${z.pct}%`, backgroundColor: z.color, borderRadius: 3 }} />
+                          {zoneStats.map((z, i) => {
+                            const boundaries: number[] = hrZones.length >= 5
+                              ? hrZones.map(hz => hz.min)
+                              : [0, 115, 135, 155, 170];
+                            const maxBounds = hrZones.length >= 5
+                              ? hrZones.map((hz, j) => hrZones[j + 1] ? hrZones[j + 1].min - 1 : 999)
+                              : [114, 134, 154, 169, 999];
+                            const zoneIdx = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5'].findIndex(zl => z.label.includes(zl));
+                            const bpmRange = zoneIdx >= 0
+                              ? (maxBounds[zoneIdx] < 999 ? `${boundaries[zoneIdx]}–${maxBounds[zoneIdx]} bpm` : `${boundaries[zoneIdx]}+ bpm`)
+                              : '';
+                            return (
+                              <View key={z.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: z.color }} />
+                                <View style={{ flex: 1 }}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                                    <Typography style={{ fontSize: 11, color: theme.colors.text, fontWeight: '600' }}>{z.label}</Typography>
+                                    <Typography style={{ fontSize: 10, color: theme.colors.textSecondary }}>({bpmRange})</Typography>
+                                  </View>
+                                  <View style={{ height: 5, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
+                                    <View style={{ height: '100%', width: `${z.pct}%`, backgroundColor: z.color, borderRadius: 3 }} />
+                                  </View>
                                 </View>
+                                <Typography style={{ fontSize: 12, fontWeight: '700', color: z.color, width: 36, textAlign: 'right' }}>{z.pct}%</Typography>
                               </View>
-                              <Typography style={{ fontSize: 12, fontWeight: '700', color: z.color, width: 36, textAlign: 'right' }}>{z.pct}%</Typography>
-                            </View>
-                          ))}
+                            );
+                          })}
                         </View>
                         {(() => { const ez=(zoneStats.find(z=>z.label.includes('Z1'))?.pct||0)+(zoneStats.find(z=>z.label.includes('Z2'))?.pct||0); return <Insight color="#ef4444" text={`${ez}% easy effort. Elite runners target 80% in Z1–Z2 for aerobic base building.`} />; })()}
                       </>

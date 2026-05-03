@@ -1,23 +1,24 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Home, BarChart2, Target, MessageCircle, User } from 'lucide-react-native';
+import { Home, BarChart2, Target, MessageCircle, User, List } from 'lucide-react-native';
 import OverviewScreen from '../screens/OverviewScreen';
 import InsightsScreen from '../screens/InsightsScreen';
 import GoalsScreen from '../screens/GoalsScreen';
 import ChatScreen from '../screens/ChatScreen';
 import ProfileStack from './ProfileStack';
+import ActivitiesStack from './ActivitiesStack';
 import { theme } from '../theme';
 import { Platform } from 'react-native';
 
 const Tab = createBottomTabNavigator();
 
-// Per-tab accent colors
 const TAB_COLORS = {
-  Overview:  '#f97316', // orange
-  Insights:  '#6366f1', // indigo
-  Goals:     '#10b981', // emerald
-  Chat:      '#ec4899', // pink
-  Profile:   '#8b5cf6', // violet
+  Overview:   '#f97316',
+  Activities: '#e11d48',
+  Insights:   '#6366f1',
+  Goals:      '#10b981',
+  Chat:       '#ec4899',
+  Profile:    '#8b5cf6',
 };
 
 export default function TabNavigator() {
@@ -41,6 +42,14 @@ export default function TabNavigator() {
         options={{
           tabBarActiveTintColor: TAB_COLORS.Overview,
           tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
+        }}
+      />
+      <Tab.Screen
+        name="Activities"
+        component={ActivitiesStack}
+        options={{
+          tabBarActiveTintColor: TAB_COLORS.Activities,
+          tabBarIcon: ({ color, size }) => <List color={color} size={size} />,
         }}
       />
       <Tab.Screen

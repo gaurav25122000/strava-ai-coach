@@ -5,54 +5,47 @@ import { theme } from '../theme';
 import { Typography } from '../components/Typography';
 import { useStore } from '../store/useStore';
 import * as WebBrowser from 'expo-web-browser';
-import * as AuthSession from 'expo-auth-session';
+import * as Linking from 'expo-linking';
 import { StravaService } from '../services/strava';
 import axios from 'axios';
 import { useEffect, useState } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
-WebBrowser.maybeCompleteAuthSession();
-
 export default function SettingsScreen() {
   const { settings, updateSettings, setActivities, setLifetimeStats, setToast } = useStore();
-  const [isAuthenticated, setIsAuthenticated] = useState(StravaService.isAuthenticated());
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    // Check authentication status after App mounts and loads from storage
-    setIsAuthenticated(StravaService.isAuthenticated());
+    // initialize() loads token from SecureStore into memory first
+    StravaService.initialize().then(() => {
+      setIsAuthenticated(StravaService.isAuthenticated());
+    });
   }, []);
 
-  const redirectUri = AuthSession.makeRedirectUri({
-    scheme: 'aicoachapp',
-    path: 'localhost'
-  });
+  const REDIRECT_URI = 'aicoachapp://localhost';
 
-  // Dummy config to satisfy types when clientId is missing
-  const dummyConfig = {
-    clientId: 'dummy',
-    scopes: ['activity:read_all'],
-    redirectUri,
+  const handleStravaConnect = async () => {
+    const authUrl =
+      `https://www.strava.com/oauth/mobile/authorize` +
+      `?client_id=${settings.stravaClientId}` +
+      `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+      `&response_type=code` +
+      `&approval_prompt=force` +
+      `&scope=read_all,activity:read_all,profile:read_all`;
+
+    const result = await WebBrowser.openAuthSessionAsync(authUrl, REDIRECT_URI);
+    if (result.type === 'success') {
+      const url = result.url;
+      const parsed = Linking.parse(url);
+      const code = parsed.queryParams?.code as string | undefined;
+      if (code) {
+        await exchangeCodeForToken(code);
+      } else {
+        setToast({ title: 'Error', message: 'No auth code returned', type: 'error' });
+      }
+    }
   };
-
-  const [request, response, promptAsync] = AuthSession.useAuthRequest(
-    settings.stravaClientId ? {
-      clientId: settings.stravaClientId,
-      scopes: ['activity:read_all'],
-      redirectUri,
-    } : dummyConfig,
-    {
-      authorizationEndpoint: 'https://www.strava.com/oauth/mobile/authorize',
-      tokenEndpoint: 'https://www.strava.com/oauth/token',
-    }
-  );
-
-  useEffect(() => {
-    if (response?.type === 'success') {
-      const { code } = response.params;
-      exchangeCodeForToken(code);
-    }
-  }, [response]);
 
   const exchangeCodeForToken = async (code: string) => {
     try {
@@ -143,13 +136,27 @@ export default function SettingsScreen() {
 
           <TouchableOpacity
             style={[styles.providerButton, { marginTop: 16, backgroundColor: isAuthenticated ? theme.colors.success : theme.colors.primary }]}
-            onPress={() => isAuthenticated ? syncStrava() : promptAsync()}
-            disabled={!settings.stravaClientId || !settings.stravaClientSecret || (!isAuthenticated && !request)}
+            onPress={() => isAuthenticated ? syncStrava() : handleStravaConnect()}
+            disabled={!settings.stravaClientId || !settings.stravaClientSecret}
           >
              <Typography weight="bold" color="#fff">
                 {isAuthenticated ? 'Sync Activities' : 'Connect Strava'}
              </Typography>
           </TouchableOpacity>
+          {isAuthenticated && (
+            <TouchableOpacity
+              style={[styles.providerButton, { marginTop: 8, backgroundColor: 'transparent', borderColor: '#ff4444' }]}
+              onPress={async () => {
+                await StravaService.disconnect();
+                setIsAuthenticated(false);
+                setActivities([]);
+                setLifetimeStats(null);
+                setToast({ title: 'Disconnected', message: 'Strava account disconnected', type: 'error' });
+              }}
+            >
+              <Typography weight="bold" color="#ff4444">Disconnect Strava</Typography>
+            </TouchableOpacity>
+          )}
         </View>
 
         <View style={styles.section}>

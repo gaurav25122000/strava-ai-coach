@@ -47,9 +47,18 @@ export default function App() {
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    StravaService.initialize().then(() => {
-      setTimeout(() => setIsReady(true), 1500);
-    });
+    const init = async () => {
+      const start = Date.now();
+      try {
+        await StravaService.initialize();
+      } catch (e) {
+        console.warn('Strava init error:', e);
+      }
+      const elapsed = Date.now() - start;
+      const remaining = Math.max(0, 800 - elapsed);
+      setTimeout(() => setIsReady(true), remaining);
+    };
+    init();
 
     // Schedule notifications after a short delay (gives store time to hydrate)
     const notifTimer = setTimeout(async () => {

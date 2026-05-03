@@ -46,6 +46,7 @@ export interface Activity {
   averageCadence?: number;
   steps?: number;
   calories?: number;
+  kilojoules?: number;
   averageWatts?: number;
   sufferScore?: number;
   name?: string;
@@ -168,6 +169,11 @@ export interface WeeklyDigest {
   summary: string;
   highlight: string;
   tip: string;
+}
+
+export interface HRZone {
+  min: number;
+  max: number; // -1 means ∞
 }
 
 export interface ToastOptions {
@@ -314,6 +320,8 @@ interface AppState {
   setMilestones: (milestones: Milestone[]) => void;
   setBestEfforts: (efforts: Record<number, BestEffort>) => void;
   setWeeklyDigest: (digest: WeeklyDigest) => void;
+  hrZones: HRZone[];
+  setHRZones: (zones: HRZone[]) => void;
   toast: ToastOptions | null;
   setToast: (toast: ToastOptions | null) => void;
 }
@@ -326,6 +334,8 @@ export const useStore = create<AppState>()(
       milestones: [],
       bestEfforts: {},
       weeklyDigest: null,
+      hrZones: [],
+      setHRZones: (hrZones) => set({ hrZones }),
       toast: null,
       setToast: (toast) => set({ toast }),
       userStats: {
@@ -464,6 +474,7 @@ export const useStore = create<AppState>()(
         milestones: state.milestones,
         bestEfforts: state.bestEfforts,
         weeklyDigest: state.weeklyDigest,
+        hrZones: state.hrZones,
       }),
     }
   )
