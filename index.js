@@ -1,4 +1,5 @@
 import 'react-native-gesture-handler';
+import './src/services/backgroundSync';
 import 'react-native-reanimated';
 import { registerRootComponent } from 'expo';
 

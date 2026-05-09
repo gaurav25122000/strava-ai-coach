@@ -5,6 +5,7 @@ import TabNavigator from './src/navigation/TabNavigator';
 import { theme } from './src/theme';
 import { StravaService } from './src/services/strava';
 import { NotificationService } from './src/services/notifications';
+import { registerBackgroundSync } from './src/services/backgroundSync';
 import { useStore } from './src/store/useStore';
 import { useEffect, useState } from 'react';
 import Animated, { FadeOut, FadeIn } from 'react-native-reanimated';
@@ -51,6 +52,7 @@ export default function App() {
       const start = Date.now();
       try {
         await StravaService.initialize();
+        await registerBackgroundSync();
       } catch (e) {
         console.warn('Strava init error:', e);
       }
