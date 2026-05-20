@@ -1,19 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, Dimensions, Image, Platform,
+  ActivityIndicator, Dimensions, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import MapView, { Polyline } from 'react-native-maps';
+import Svg, { Path, Circle, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import { theme } from '../theme';
 import { Typography } from '../components/Typography';
 import { Card } from '../components/Card';
 import { AnimatedNumber } from '../components/AnimatedNumber';
 import { Activity, useStore, HRZone } from '../store/useStore';
 import { StravaService } from '../services/strava';
-import { decodePolyline, regionForCoords } from '../utils/polyline';
+import { decodePolyline } from '../utils/polyline';
 import {
   ArrowLeft, Clock, Heart, Zap, Mountain,
   Footprints, Flame, TrendingUp, Wind, MapPin, Trophy,
@@ -27,6 +27,7 @@ import { format, parseISO } from 'date-fns';
 const { width } = Dimensions.get('window');
 const CHART_W = width - 48;
 const MAP_H = 210;
+const MAP_W = width - 64; // card margin 16*2 + card padding 16*2
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 function formatPace(speed: number): string {
@@ -86,16 +87,44 @@ function getTypeGradient(type: string): [string, string] {
   }
 }
 
-// Dark map styling — Apple Maps ignores customMapStyle; only affects Android+Google
-const DARK_MAP_STYLE: any[] = [
-  { elementType: 'geometry', stylers: [{ color: '#1f2030' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#1f2030' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#9ca3af' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#252636' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#11131f' }] },
-  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-];
+// Projects geo coords into an SVG view box, preserving aspect ratio
+function projectRoute(
+  coords: { latitude: number; longitude: number }[],
+  vw: number,
+  vh: number,
+  padding = 16,
+) {
+  if (!coords.length) return { d: '', points: [] as { x: number; y: number }[] };
+  let minLat = coords[0].latitude;
+  let maxLat = coords[0].latitude;
+  let minLng = coords[0].longitude;
+  let maxLng = coords[0].longitude;
+  for (const c of coords) {
+    if (c.latitude < minLat) minLat = c.latitude;
+    if (c.latitude > maxLat) maxLat = c.latitude;
+    if (c.longitude < minLng) minLng = c.longitude;
+    if (c.longitude > maxLng) maxLng = c.longitude;
+  }
+  const latRange = Math.max(maxLat - minLat, 1e-6);
+  const lngRange = Math.max(maxLng - minLng, 1e-6);
+  const xScale = (vw - 2 * padding) / lngRange;
+  const yScale = (vh - 2 * padding) / latRange;
+  const scale = Math.min(xScale, yScale);
+  const renderedW = lngRange * scale;
+  const renderedH = latRange * scale;
+  const xOffset = (vw - renderedW) / 2;
+  const yOffset = (vh - renderedH) / 2;
+  const points = coords.map(c => ({
+    x: xOffset + (c.longitude - minLng) * scale,
+    y: yOffset + (maxLat - c.latitude) * scale, // invert Y so north is up
+  }));
+  let d = '';
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    d += `${i === 0 ? 'M' : ' L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
+  }
+  return { d, points };
+}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 function StatBox({ label, value, sub, color = '#fff', animated, decimals = 0 }: { label: string; value: string | number; sub?: string; color?: string; animated?: boolean; decimals?: number }) {
@@ -434,7 +463,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
   // Mini-map polyline
   const polylineStr: string = detail?.map?.summary_polyline || detail?.map?.polyline || '';
   const coords = useMemo(() => decodePolyline(polylineStr), [polylineStr]);
-  const mapRegion = useMemo(() => regionForCoords(coords, 1.25), [coords]);
+  const projected = useMemo(() => projectRoute(coords, MAP_W, MAP_H, 18), [coords]);
 
   // Similar activities: same type, ±15% distance, exclude self
   const similarActivities = useMemo(() => {
@@ -509,38 +538,72 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
         )}
 
         {/* Route Map */}
-        {coords.length > 1 && (
+        {projected.points.length > 1 && (
           <Animated.View entering={FadeInDown.delay(next() * 60).duration(360)}>
             <Card variant="elevated" style={sc.card}>
               <SectionTitle title="Route" icon={<MapPin color={gradColors[0]} size={15} style={{ marginRight: 6 }} />} />
               <View style={sc.mapWrap}>
-                <MapView
-                  style={{ flex: 1 }}
-                  initialRegion={mapRegion}
-                  scrollEnabled={false}
-                  zoomEnabled={false}
-                  rotateEnabled={false}
-                  pitchEnabled={false}
-                  showsCompass={false}
-                  showsScale={false}
-                  showsMyLocationButton={false}
-                  customMapStyle={Platform.OS === 'android' ? DARK_MAP_STYLE : undefined}
-                  userInterfaceStyle="dark"
-                >
-                  <Polyline
-                    coordinates={coords}
-                    strokeColor={gradColors[0]}
-                    strokeWidth={4}
-                    lineCap="round"
-                    lineJoin="round"
-                  />
-                </MapView>
-                {/* Subtle overlay vignette for premium look */}
                 <LinearGradient
-                  colors={['transparent', 'rgba(20,21,32,0.5)']}
-                  style={sc.mapVignette}
-                  pointerEvents="none"
+                  colors={['#1f2030', '#11131f']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFillObject}
                 />
+                <Svg width={MAP_W} height={MAP_H}>
+                  <Defs>
+                    <SvgLinearGradient id="routeGrad" x1="0" y1="0" x2="1" y2="1">
+                      <Stop offset="0" stopColor={gradColors[0]} stopOpacity="1" />
+                      <Stop offset="1" stopColor={gradColors[1]} stopOpacity="1" />
+                    </SvgLinearGradient>
+                  </Defs>
+                  {/* Soft glow underlay */}
+                  <Path
+                    d={projected.d}
+                    stroke={gradColors[0]}
+                    strokeOpacity={0.25}
+                    strokeWidth={8}
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  {/* Main route */}
+                  <Path
+                    d={projected.d}
+                    stroke="url(#routeGrad)"
+                    strokeWidth={3.5}
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  {/* Start marker (green) */}
+                  <Circle
+                    cx={projected.points[0].x}
+                    cy={projected.points[0].y}
+                    r={5}
+                    fill="#10b981"
+                    stroke="#fff"
+                    strokeWidth={1.5}
+                  />
+                  {/* End marker (red) */}
+                  <Circle
+                    cx={projected.points[projected.points.length - 1].x}
+                    cy={projected.points[projected.points.length - 1].y}
+                    r={5}
+                    fill="#ef4444"
+                    stroke="#fff"
+                    strokeWidth={1.5}
+                  />
+                </Svg>
+                <View style={sc.mapLegend}>
+                  <View style={sc.legendItem}>
+                    <View style={[sc.legendDot, { backgroundColor: '#10b981' }]} />
+                    <Typography style={sc.legendText}>Start</Typography>
+                  </View>
+                  <View style={sc.legendItem}>
+                    <View style={[sc.legendDot, { backgroundColor: '#ef4444' }]} />
+                    <Typography style={sc.legendText}>End</Typography>
+                  </View>
+                </View>
               </View>
             </Card>
           </Animated.View>
@@ -988,9 +1051,16 @@ const sc = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#1f2030',
   },
-  mapVignette: {
-    position: 'absolute', left: 0, right: 0, bottom: 0, height: 60,
+  mapLegend: {
+    position: 'absolute', top: 10, left: 12,
+    flexDirection: 'row', gap: 12,
+    backgroundColor: 'rgba(20,21,32,0.6)',
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 999,
   },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  legendDot: { width: 6, height: 6, borderRadius: 3 },
+  legendText: { fontSize: 10, color: 'rgba(255,255,255,0.85)', fontWeight: '700' },
   photo: { width: '100%', height: 220, borderRadius: 14 },
 
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
