@@ -413,31 +413,43 @@ export default function GoalsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
 
-        <View style={styles.header}>
-          <View>
-            <Typography variant="h2">Training Goals</Typography>
-            <Typography variant="caption" style={{marginTop: 4}}>Track your race, get phase-by-phase training guidance.</Typography>
+        <LinearGradient
+          colors={theme.colors.gradients.hero}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.heroHeader}
+        >
+          <View style={{ flex: 1 }}>
+            <Typography style={styles.heroTitle}>Training Goals</Typography>
+            <Typography style={styles.heroSub}>Track your race, get phase-by-phase guidance.</Typography>
           </View>
-        </View>
+          <TouchableOpacity
+            style={styles.heroAddBtn}
+            onPress={() => { setEditingGoal(null); setNewGoalTitle(''); setNewGoalDate(''); setModalVisible(true); }}
+            activeOpacity={0.85}
+          >
+            <Plus size={20} color="#fff" />
+          </TouchableOpacity>
+        </LinearGradient>
 
-        <TouchableOpacity style={styles.addButton} onPress={() => { setEditingGoal(null); setNewGoalTitle(''); setNewGoalDate(''); setModalVisible(true); }}>
-          <Plus size={20} color="#fff" />
-          <Typography weight="600" style={{marginLeft: 8}}>Add Goal</Typography>
-        </TouchableOpacity>
+        {goals.length === 0 && (
+          <View style={styles.emptyState}>
+            <Trophy size={42} color={theme.colors.textSecondary} />
+            <Typography style={styles.emptyTitle}>No goals yet</Typography>
+            <Typography style={styles.emptySub}>Add your first goal to get a personalised plan.</Typography>
+          </View>
+        )}
 
         {goals.map((goal, idx) => (
-          <Animated.View 
+          <Animated.View
             key={goal.id}
-            entering={FadeInDown.delay(idx * 100).springify()}
+            entering={FadeInDown.delay(idx * 80).duration(360)}
             layout={Layout.springify()}
           >
-            <Card style={[
-              styles.goalCard,
-              { borderColor: goal.id === '1' ? '#4C1D95' : theme.colors.success }
-            ]}>
+            <Card variant="elevated" style={styles.goalCard}>
             <View style={styles.goalHeader}>
               <View style={styles.goalTitleRow}>
                 {goal.id === '1' ? <Flame color={theme.colors.error} size={24}/> : <PersonStanding color={theme.colors.success} size={24}/>}
@@ -993,12 +1005,36 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background,
   },
   scrollContent: {
-    padding: theme.spacing.md,
     paddingBottom: theme.spacing.xxl,
   },
   header: {
     marginBottom: theme.spacing.lg,
   },
+  heroHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 20,
+    marginBottom: 16,
+  },
+  heroTitle: { fontSize: 24, fontWeight: '900', color: '#fff' },
+  heroSub: { fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 4 },
+  heroAddBtn: {
+    width: 48, height: 48, borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
+    ...theme.shadows.md,
+  },
+  emptyState: {
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 24, paddingVertical: 60,
+    marginHorizontal: 16,
+  },
+  emptyTitle: { fontSize: 17, fontWeight: '800', color: theme.colors.text, marginTop: 16 },
+  emptySub: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 6, textAlign: 'center' },
   addButton: {
     backgroundColor: theme.colors.primary,
     flexDirection: 'row',
@@ -1011,9 +1047,8 @@ const styles = StyleSheet.create({
   },
   goalCard: {
     padding: theme.spacing.lg,
-    marginBottom: theme.spacing.xl,
-    borderWidth: 1,
-    backgroundColor: '#1E1F2E',
+    marginBottom: theme.spacing.lg,
+    marginHorizontal: theme.spacing.md,
   },
   goalHeader: {
     flexDirection: 'row',
@@ -1043,9 +1078,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   phaseBox: {
-    backgroundColor: 'rgba(59, 130, 246, 0.1)', // Light blue tint
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
     padding: theme.spacing.md,
     borderRadius: theme.borderRadius.md,
+    borderLeftWidth: 3,
+    borderLeftColor: '#6366f1',
   },
   progressSection: {
     marginBottom: theme.spacing.lg,

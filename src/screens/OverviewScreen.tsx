@@ -692,7 +692,7 @@ export default function OverviewScreen() {
                           Weekly Goal Progress
                         </Typography>
                       </View>
-                      <Card style={styles.card}>
+                      <Card variant="elevated" style={styles.card}>
                         <View
                           style={{
                             flexDirection: "row",
@@ -774,7 +774,7 @@ export default function OverviewScreen() {
                           ⓘ info
                         </Typography>
                       </TouchableOpacity>
-                      <Card style={styles.card}>
+                      <Card variant="elevated" style={styles.card}>
                         <View
                           style={{
                             flexDirection: "row",
@@ -1471,7 +1471,7 @@ export default function OverviewScreen() {
                         Activity Map
                       </Typography>
                     </View>
-                    <Card style={styles.card}>
+                    <Card variant="elevated" style={styles.card}>
                       <HeatmapCalendar data={heatmapData} />
                     </Card>
                   </Animated.View>
@@ -1573,7 +1573,7 @@ export default function OverviewScreen() {
                           Monthly Volume
                         </Typography>
                       </View>
-                      <Card style={styles.card}>
+                      <Card variant="elevated" style={styles.card}>
                         <View style={styles.barContainer}>
                           {monthlyData.map(({ month, km }) => {
                             const maxKm = Math.max(
@@ -1592,10 +1592,17 @@ export default function OverviewScreen() {
                                       styles.barFill,
                                       {
                                         height: `${Math.max(pct * 100, 4)}%`,
-                                        backgroundColor: theme.colors.primary,
+                                        overflow: 'hidden',
                                       },
                                     ]}
-                                  />
+                                  >
+                                    <LinearGradient
+                                      colors={theme.colors.gradients.primary}
+                                      start={{ x: 0, y: 1 }}
+                                      end={{ x: 0, y: 0 }}
+                                      style={{ flex: 1 }}
+                                    />
+                                  </View>
                                 </View>
                                 <Typography style={styles.barLabel}>
                                   {month}
@@ -1786,7 +1793,7 @@ export default function OverviewScreen() {
                           Activity Mix
                         </Typography>
                       </View>
-                      <Card style={styles.card}>
+                      <Card variant="elevated" style={styles.card}>
                         {typeDistribution.map(({ type, count, pct }) => {
                           const color = getActivityColor(type);
                           return (

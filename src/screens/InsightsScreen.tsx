@@ -1,13 +1,12 @@
-import React, { useMemo, useState } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Dimensions, Modal, Switch } from 'react-native';
+import React, { useMemo, useState, useDeferredValue, useCallback } from 'react';
+import { View, StyleSheet, FlatList, TouchableOpacity, Dimensions, Modal, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
-import { Skeleton } from '../components/Skeleton';
 import { LineChart, BarChart, PieChart } from 'react-native-gifted-charts';
-import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useStore } from '../store/useStore';
 import { format, parseISO, startOfWeek, endOfWeek, eachWeekOfInterval, subWeeks } from 'date-fns';
 import { Heart, BarChart3, Zap, X, Activity, Settings2 } from 'lucide-react-native';
@@ -36,7 +35,18 @@ const ALL_TABS: { key: Tab; label: string }[] = [
   { key: 'power',     label: 'Power'     },
 ];
 
-
+const CARD_COLORS: Record<Tab, [string, string]> = {
+  steps:     ['#10b981', '#059669'],
+  time:      ['#8b5cf6', '#7c3aed'],
+  volume:    ['#0ea5e9', '#0284c7'],
+  pace:      ['#6366f1', '#8b5cf6'],
+  heart:     ['#ef4444', '#dc2626'],
+  cadence:   ['#ec4899', '#db2777'],
+  mix:       ['#6366f1', '#8b5cf6'],
+  elevation: ['#f59e0b', '#d97706'],
+  calories:  ['#ef4444', '#dc2626'],
+  power:     ['#f97316', '#ea580c'],
+};
 
 export default function InsightsScreen() {
   const { activities, settings, updateSettings, hrZones } = useStore();
@@ -45,15 +55,85 @@ export default function InsightsScreen() {
   const [range, setRange] = useState<Range>('3m');
   const [compareHR, setCompareHR] = useState(false);
 
-  const rangeDays = RANGE_DAYS[range];
-  const rangeWeeks = RANGE_WEEKS[range];
+  // Deferred range — keeps the pills snappy while heavy memos recompute lazily
+  const deferredRange = useDeferredValue(range);
+  const rangeDays = RANGE_DAYS[deferredRange];
+  const rangeWeeks = RANGE_WEEKS[deferredRange];
 
-  // Activities falling inside the selected window (used by per-activity charts)
+  // ── Window of activities for the selected range (per-activity charts) ──
   const windowedActivities = useMemo(() => {
     if (rangeDays === Infinity) return activities;
     const cutoff = Date.now() - rangeDays * 86400000;
     return activities.filter((a) => new Date(a.startDate).getTime() >= cutoff);
   }, [activities, rangeDays]);
+
+  // ── Single weekly bucket pass — feeds volume / time / steps / calories ──
+  const weeklyBuckets = useMemo(() => {
+    const now = new Date();
+    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), rangeWeeks - 1);
+    const end = endOfWeek(now, { weekStartsOn: 1 });
+    const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-rangeWeeks);
+    const labelStep = Math.max(1, Math.ceil(weeks.length / 6));
+    return weeks.map((ws, i, arr) => {
+      const we = endOfWeek(ws, { weekStartsOn: 1 });
+      let km = 0, hours = 0, steps = 0, cals = 0;
+      for (const a of activities) {
+        const d = parseISO(a.startDate);
+        if (d < ws || d > we) continue;
+        km += a.distance / 1000;
+        hours += a.movingTime / 3600;
+        if (a.steps) steps += a.steps;
+        else if (a.type === 'Run') steps += a.distance / 1.0;
+        else if (a.type === 'Walk') steps += a.distance / 0.75;
+        cals += a.calories || 0;
+      }
+      const showLabel = (arr.length - 1 - i) % labelStep === 0;
+      const labelComponent = showLabel
+        ? () => (
+            <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
+              <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
+                {format(ws, 'MMM d')}
+              </Typography>
+            </View>
+          )
+        : undefined;
+      return { ws, km, hours, steps: Math.round(steps), cals: Math.round(cals), labelComponent };
+    });
+  }, [activities, rangeWeeks]);
+
+  // Derived chart data (cheap — just maps existing buckets)
+  const volumeData = useMemo(
+    () => weeklyBuckets.map(b => ({
+      value: Number(b.km.toFixed(1)),
+      labelComponent: b.labelComponent,
+      frontColor: b.km > 0 ? theme.colors.primary : theme.colors.border,
+    })),
+    [weeklyBuckets]
+  );
+  const timeData = useMemo(
+    () => weeklyBuckets.map(b => ({
+      value: Number(b.hours.toFixed(1)),
+      labelComponent: b.labelComponent,
+      frontColor: b.hours > 0 ? '#8B5CF6' : theme.colors.border,
+    })),
+    [weeklyBuckets]
+  );
+  const stepsData = useMemo(
+    () => weeklyBuckets.map(b => ({
+      value: b.steps,
+      labelComponent: b.labelComponent,
+      frontColor: b.steps > 0 ? theme.colors.success : theme.colors.border,
+    })),
+    [weeklyBuckets]
+  );
+  const caloriesData = useMemo(
+    () => weeklyBuckets.map(b => ({
+      value: b.cals,
+      labelComponent: b.labelComponent,
+      frontColor: b.cals > 0 ? '#EF4444' : theme.colors.border,
+    })),
+    [weeklyBuckets]
+  );
 
   const toggleGraph = (key: Tab) => {
     let newKeys = [...activeKeys];
@@ -61,7 +141,6 @@ export default function InsightsScreen() {
     else newKeys.push(key);
     updateSettings({ activeGraphs: newKeys });
   };
-
 
   const fmtPace = (v: number) => {
     const m = Math.floor(v); const s = Math.round((v - m) * 60);
@@ -98,7 +177,6 @@ export default function InsightsScreen() {
     });
   }, [paceRuns]);
 
-  // Companion HR series for the pace chart's compare overlay
   const paceHRData = useMemo(() => {
     if (!paceRuns.length) return [] as { value: number }[];
     const hrVals = paceRuns.map((a) => a.averageHeartRate || 0);
@@ -109,46 +187,18 @@ export default function InsightsScreen() {
   const bestPace = paceData.length ? Math.min(...paceData.map((d) => d.value)) : 0;
   const avgPace = paceData.length ? paceData.reduce((s, d) => s + d.value, 0) / paceData.length : 0;
 
-  // ── Volume ────────────────────────────────────────────────────────
-  const volumeData = useMemo(() => {
-    const now = new Date();
-    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), rangeWeeks - 1);
-    const end = endOfWeek(now, { weekStartsOn: 1 });
-    const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-rangeWeeks);
-    const labelStep = Math.max(1, Math.ceil(weeks.length / 6));
-    return weeks.map((ws, i, arr) => {
-      const we = endOfWeek(ws, { weekStartsOn: 1 });
-      const km = activities
-        .filter((a) => {
-          const d = parseISO(a.startDate);
-          return d >= ws && d <= we;
-        })
-        .reduce((s, a) => s + a.distance / 1000, 0);
-      return {
-        value: Number(km.toFixed(1)),
-        labelComponent:
-          (arr.length - 1 - i) % labelStep === 0
-            ? () => (
-                <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
-                  <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
-                    {format(ws, 'MMM d')}
-                  </Typography>
-                </View>
-              )
-            : undefined,
-        frontColor: km > 0 ? theme.colors.primary : theme.colors.border,
-      };
-    });
-  }, [activities, rangeWeeks]);
-
+  // Volume / time / steps / calories aggregates
   const maxWeekVol = volumeData.length ? Math.max(...volumeData.map(d => d.value), 1) : 1;
   const totalVol   = volumeData.reduce((s, d) => s + d.value, 0).toFixed(0);
   const BAR_SPACING = Math.max(CHART_W / Math.max(volumeData.length * 2.2, 1), 10);
   const BAR_W       = Math.max(BAR_SPACING * 0.8, 12);
+  const maxSteps = stepsData.length ? Math.max(...stepsData.map(d => d.value), 1) : 1;
+  const avgSteps = stepsData.length ? Math.round(stepsData.reduce((s,d) => s + d.value, 0) / stepsData.length) : 0;
+  const avgTime = timeData.length ? (timeData.reduce((s,d) => s + d.value, 0) / timeData.length).toFixed(1) : '0';
+  const avgCalories = caloriesData.length ? Math.round(caloriesData.reduce((s,d) => s + d.value, 0) / caloriesData.length) : 0;
 
   // ── HR Zones ──────────────────────────────────────────────────────
   const { pieData, zoneStats } = useMemo(() => {
-    // Use Strava zones if available, else fallback thresholds
     const boundaries: number[] = hrZones.length >= 5
       ? hrZones.map(z => z.min)
       : [0, 115, 135, 155, 170];
@@ -157,7 +207,6 @@ export default function InsightsScreen() {
     activities.forEach(a => {
       const hr = a.averageHeartRate || 0;
       if (hr <= 0) return;
-      // Find highest zone whose min <= hr
       let z = 0;
       for (let i = 0; i < boundaries.length; i++) {
         if (hr >= boundaries[i]) z = i;
@@ -165,7 +214,7 @@ export default function InsightsScreen() {
       counts[z]++;
     });
     const total = counts.reduce((a, b) => a + b, 0);
-    if (!total) return { pieData: [{ value: 1, color: theme.colors.border }], zoneStats: [] };
+    if (!total) return { pieData: [] as any[], zoneStats: [] as any[] };
     const ZONE_DEFS = [
       { label: 'Z1 Recovery',  color: '#60A5FA' },
       { label: 'Z2 Aerobic',   color: '#34D399' },
@@ -182,7 +231,7 @@ export default function InsightsScreen() {
 
   // ── Elevation ─────────────────────────────────────────────────────
   const elevData = useMemo(() => {
-    if (!windowedActivities.length) return [{ value: 0 }];
+    if (!windowedActivities.length) return [];
     return [...windowedActivities]
       .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
       .map(a => ({ value: a.totalElevationGain || 0 }));
@@ -190,114 +239,6 @@ export default function InsightsScreen() {
 
   const totalElev = Math.round(windowedActivities.reduce((s, a) => s + a.totalElevationGain, 0));
   const maxElev   = windowedActivities.length ? Math.max(...windowedActivities.map(a => a.totalElevationGain), 1) : 1;
-
-
-
-  // ── Steps ─────────────────────────────────────────────────────────
-  const stepsData = useMemo(() => {
-    const now = new Date();
-    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), rangeWeeks - 1);
-    const end = endOfWeek(now, { weekStartsOn: 1 });
-    const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-rangeWeeks);
-    const labelStep = Math.max(1, Math.ceil(weeks.length / 6));
-    return weeks.map((ws, i, arr) => {
-      const we = endOfWeek(ws, { weekStartsOn: 1 });
-      const weekActs = activities.filter((a) => {
-        const d = parseISO(a.startDate);
-        return d >= ws && d <= we;
-      });
-      let totalSteps = 0;
-      weekActs.forEach((a) => {
-        if (a.steps) totalSteps += a.steps;
-        else if (a.type === 'Run') totalSteps += a.distance / 1.0;
-        else if (a.type === 'Walk') totalSteps += a.distance / 0.75;
-      });
-      return {
-        value: Math.round(totalSteps),
-        labelComponent:
-          (arr.length - 1 - i) % labelStep === 0
-            ? () => (
-                <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
-                  <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
-                    {format(ws, 'MMM d')}
-                  </Typography>
-                </View>
-              )
-            : undefined,
-        frontColor: totalSteps > 0 ? theme.colors.success : theme.colors.border,
-      };
-    });
-  }, [activities, rangeWeeks]);
-  const maxSteps = stepsData.length ? Math.max(...stepsData.map(d => d.value), 1) : 1;
-  const avgSteps = stepsData.length ? Math.round(stepsData.reduce((s,d) => s + d.value, 0) / stepsData.length) : 0;
-
-  // ── Time ──────────────────────────────────────────────────────────
-  const timeData = useMemo(() => {
-    const now = new Date();
-    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), rangeWeeks - 1);
-    const end = endOfWeek(now, { weekStartsOn: 1 });
-    const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-rangeWeeks);
-    const labelStep = Math.max(1, Math.ceil(weeks.length / 6));
-    return weeks.map((ws, i, arr) => {
-      const we = endOfWeek(ws, { weekStartsOn: 1 });
-      const hrs = activities
-        .filter((a) => {
-          const d = parseISO(a.startDate);
-          return d >= ws && d <= we;
-        })
-        .reduce((s, a) => s + a.movingTime / 3600, 0);
-      return {
-        value: Number(hrs.toFixed(1)),
-        labelComponent:
-          (arr.length - 1 - i) % labelStep === 0
-            ? () => (
-                <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
-                  <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
-                    {format(ws, 'MMM d')}
-                  </Typography>
-                </View>
-              )
-            : undefined,
-        frontColor: hrs > 0 ? '#8B5CF6' : theme.colors.border,
-      };
-    });
-  }, [activities, rangeWeeks]);
-  const maxTime = timeData.length ? Math.max(...timeData.map(d => d.value), 1) : 1;
-  const avgTime = timeData.length ? (timeData.reduce((s,d) => s + d.value, 0) / timeData.length).toFixed(1) : 0;
-
-  // ── Calories ──────────────────────────────────────────────────────
-  const caloriesData = useMemo(() => {
-    const now = new Date();
-    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), rangeWeeks - 1);
-    const end = endOfWeek(now, { weekStartsOn: 1 });
-    const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-rangeWeeks);
-    const labelStep = Math.max(1, Math.ceil(weeks.length / 6));
-    return weeks.map((ws, i, arr) => {
-      const we = endOfWeek(ws, { weekStartsOn: 1 });
-      const cals = activities
-        .filter((a) => {
-          const d = parseISO(a.startDate);
-          return d >= ws && d <= we;
-        })
-        .reduce((s, a) => s + (a.calories || 0), 0);
-      return {
-        value: Math.round(cals),
-        labelComponent:
-          (arr.length - 1 - i) % labelStep === 0
-            ? () => (
-                <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
-                  <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
-                    {format(ws, 'MMM d')}
-                  </Typography>
-                </View>
-              )
-            : undefined,
-        frontColor: cals > 0 ? '#EF4444' : theme.colors.border,
-      };
-    });
-  }, [activities, rangeWeeks]);
-  const maxCalories = caloriesData.length ? Math.max(...caloriesData.map(d => d.value), 1) : 1;
-  const avgCalories = caloriesData.length ? Math.round(caloriesData.reduce((s,d) => s + d.value, 0) / caloriesData.length) : 0;
 
   // ── Power ─────────────────────────────────────────────────────────
   const powerData = useMemo(() => {
@@ -332,7 +273,7 @@ export default function InsightsScreen() {
       .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
     const step = Math.max(1, Math.ceil(items.length / 5));
     return items.map((act, i, arr) => ({
-      value: Math.round((act.averageCadence || 0) * 2), // steps per min (Strava stores as one-leg)
+      value: Math.round((act.averageCadence || 0) * 2),
       labelComponent:
         i % step === 0 || i === arr.length - 1
           ? () => (
@@ -364,7 +305,19 @@ export default function InsightsScreen() {
     };
   }, [activities]);
 
-
+  // ── Chart base config — animations disabled to prevent jank on range change
+  const chartBase = {
+    yAxisColor: 'transparent' as const,
+    xAxisColor: theme.colors.border,
+    yAxisTextStyle: { color: theme.colors.textSecondary, fontSize: 10, fontWeight: '600' as const },
+    xAxisLabelTextStyle: { color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700' as const },
+    noOfSections: 4,
+    rulesColor: theme.colors.border + '66',
+    rulesType: 'dashed' as const,
+    dashWidth: 4,
+    dashGap: 4,
+    isAnimated: false,
+  };
 
   const getPointerConfig = (unit: string, color: string) => ({
     pointerStripHeight: 160,
@@ -389,11 +342,11 @@ export default function InsightsScreen() {
       }
       return (
         <View style={{
-          height: 30, width: 80, backgroundColor: theme.colors.surface, 
+          height: 30, width: 80, backgroundColor: theme.colors.surface,
           borderRadius: 8, justifyContent: 'center', alignItems: 'center',
           shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5,
           borderWidth: 1, borderColor: theme.colors.border,
-          marginTop: -30, marginLeft: -40
+          marginTop: -30, marginLeft: -40,
         }}>
           <Typography style={{ color: theme.colors.text, fontSize: 12, fontWeight: '800' }}>
             {formatted}
@@ -403,58 +356,18 @@ export default function InsightsScreen() {
     },
   });
 
-  // shared chart config
-  const chartBase = {
-    yAxisColor: 'transparent' as const,
-    xAxisColor: theme.colors.border,
-    yAxisTextStyle: { color: theme.colors.textSecondary, fontSize: 10, fontWeight: '600' as const },
-    xAxisLabelTextStyle: { color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700' as const },
-    noOfSections: 4,
-    rulesColor: theme.colors.border + '66',
-    rulesType: 'dashed' as const,
-    dashWidth: 4,
-    dashGap: 4,
-    isAnimated: true,
-    animationDuration: 1000,
-  };
-
-  // Pace y-axis label formatter: 8.5 → "8:30"
   const paceYLabel = (v: string) => {
     const n = parseFloat(v);
     if (isNaN(n)) return v;
     const m = Math.floor(n); const s = Math.round((n - m) * 60);
     return `${m}:${s.toString().padStart(2,'0')}`;
   };
-  // Volume y-axis: "12" → "12km"
 
-
-  const CARD_COLORS: Record<Tab, [string, string]> = {
-    steps:     ['#10b981', '#059669'],
-    time:      ['#8b5cf6', '#7c3aed'],
-    volume:    ['#0ea5e9', '#0284c7'],
-    pace:      ['#6366f1', '#8b5cf6'],
-    heart:     ['#ef4444', '#dc2626'],
-    cadence:   ['#ec4899', '#db2777'],
-    mix:       ['#6366f1', '#8b5cf6'],
-    elevation: ['#f59e0b', '#d97706'],
-    calories:  ['#ef4444', '#dc2626'],
-    power:     ['#f97316', '#ea580c'],
-  };
-
-  const EmptyChart = ({ msg }: { msg: string }) => (
-    <View style={st.emptyChart}>
-      <View style={st.skeletonRow}>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton
-            key={i}
-            width={18}
-            height={40 + (i * 11) % 60}
-            radius={4}
-            style={{ marginHorizontal: 4 }}
-          />
-        ))}
-      </View>
-      <Typography style={st.emptyText}>{msg}</Typography>
+  // ── Empty placeholder for charts with no data — compact, no fake skeleton bars
+  const EmptyRow = ({ icon, msg, color }: { icon: React.ReactNode; msg: string; color: string }) => (
+    <View style={[st.emptyRow, { borderLeftColor: color, backgroundColor: color + '0E' }]}>
+      {icon}
+      <Typography style={[st.emptyRowText, { color: theme.colors.textSecondary }]}>{msg}</Typography>
     </View>
   );
 
@@ -484,6 +397,304 @@ export default function InsightsScreen() {
     </View>
   );
 
+  const visibleTabs = useMemo(
+    () => ALL_TABS.filter(t => activeKeys.includes(t.key)),
+    [activeKeys]
+  );
+
+  const renderCard = useCallback(({ item: t, index }: { item: { key: Tab; label: string }; index: number }) => {
+    const C = CARD_COLORS[t.key] ?? ['#6366f1', '#8b5cf6'];
+
+    return (
+      <Animated.View
+        entering={FadeInDown.delay(Math.min(index * 60, 240)).duration(360)}
+      >
+        <Card style={st.card}>
+
+          {t.key === 'steps' && (
+            <>
+              <CardHeader title="Weekly Steps" sub="Estimated from run & walk distance" colors={C}
+                stat={avgSteps > 0 ? `${Math.round(avgSteps / 1000)}k` : '—'} statUnit="avg/wk" />
+              {stepsData.some(d => d.value > 0) ? (
+                <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                  <BarChart data={stepsData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
+                    maxValue={Math.ceil(maxSteps * 1.25)}
+                    initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
+                    yAxisLabelTexts={Array.from({length:5},(_,i)=>Math.round(maxSteps*1.25*i/4/1000)+'k')}
+                    {...chartBase} />
+                </View>
+              ) : (
+                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No steps in this range" color={C[0]} />
+              )}
+              {avgSteps > 0 && <Insight color={C[0]} text={`${Math.round(avgSteps).toLocaleString()} avg steps/week — 10,000/day target = 70,000/week`} />}
+            </>
+          )}
+
+          {t.key === 'time' && (
+            <>
+              <CardHeader title="Active Time" sub="Hours of movement per week" colors={C}
+                stat={Number(avgTime) > 0 ? avgTime : '—'} statUnit="hrs/wk" />
+              {timeData.some(d => d.value > 0) ? (
+                <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                  <BarChart data={timeData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
+                    maxValue={Math.ceil(Math.max(...timeData.map(d=>d.value),1) * 1.3)}
+                    initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
+                    {...chartBase} />
+                </View>
+              ) : (
+                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No time logged in this range" color={C[0]} />
+              )}
+              {Number(avgTime) > 0 && <Insight color={C[0]} text={`${avgTime} hrs/wk avg — WHO recommends 2.5 hrs moderate activity weekly`} />}
+            </>
+          )}
+
+          {t.key === 'volume' && (
+            <>
+              <CardHeader title="Weekly Volume" sub="Kilometres across all activities" colors={C}
+                stat={maxWeekVol > 0 ? maxWeekVol.toFixed(0) : '—'} statUnit="km peak" />
+              {volumeData.some(d=>d.value>0) ? (
+                <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                  <BarChart data={volumeData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
+                    maxValue={Math.ceil(maxWeekVol * 1.35)}
+                    initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
+                    showGradient gradientColor={C[0]} frontColor={C[0] + '55'}
+                    pointerConfig={getPointerConfig(' km', C[0])}
+                    {...chartBase} />
+                </View>
+              ) : (
+                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No volume in this range" color={C[0]} />
+              )}
+              {Number(totalVol) > 0 && <Insight color={C[0]} text={`${totalVol} km total · increase no more than 10%/week to avoid injury`} />}
+            </>
+          )}
+
+          {t.key === 'pace' && (
+            <>
+              <CardHeader title="Running Pace" sub={`Min/km trend · ${paceData.length} runs in window`} colors={C}
+                stat={bestPace ? fmtPace(bestPace) : '—'} statUnit="/km best" />
+              {paceHRData.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => { Haptics.selectionAsync(); setCompareHR(v => !v); }}
+                  style={[st.compareChip, compareHR && { backgroundColor: '#EF444422', borderColor: '#EF4444' }]}
+                >
+                  <Heart size={11} color={compareHR ? '#EF4444' : theme.colors.textSecondary} />
+                  <Typography style={{ fontSize: 11, fontWeight: '700', color: compareHR ? '#EF4444' : theme.colors.textSecondary }}>
+                    {compareHR ? 'Comparing HR' : 'Compare HR'}
+                  </Typography>
+                </TouchableOpacity>
+              )}
+              {paceData.length > 1 ? (
+                <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                  <LineChart data={paceData}
+                    {...(compareHR && paceHRData.length === paceData.length ? { data2: paceHRData, color2: '#EF4444', secondaryYAxis: { yAxisColor: 'transparent', yAxisTextStyle: { color: '#EF4444', fontSize: 10, fontWeight: '700' } } } : {})}
+                    height={180} width={CHART_W} thickness={3} color={C[0]}
+                    hideDataPoints curved areaChart
+                    maxValue={Math.ceil(Math.max(...paceData.map(d=>d.value)) * 1.15)}
+                    initialSpacing={12}
+                    spacing={Math.max((CHART_W-12)/Math.max(paceData.length-1,1),18)}
+                    startFillColor={C[0]} endFillColor={theme.colors.background}
+                    startOpacity={0.5} endOpacity={0}
+                    yAxisLabelTexts={Array.from({length:5},(_,i)=>{const mx=Math.ceil(Math.max(...paceData.map(d=>d.value))*1.15);const mn=Math.floor(Math.min(...paceData.map(d=>d.value))*0.9);return paceYLabel((mn+(mx-mn)*i/4).toFixed(2));})}
+                    pointerConfig={getPointerConfig('/km', C[0])}
+                    {...chartBase} />
+                </View>
+              ) : (
+                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="Need 2+ runs in this range to plot pace" color={C[0]} />
+              )}
+              {avgPace > 0 && <Insight color={C[0]} text={`Avg ${fmtPace(avgPace)}/km · Best ${bestPace ? fmtPace(bestPace) : '--'}/km · ${paceData.length} runs`} />}
+            </>
+          )}
+
+          {t.key === 'heart' && (
+            <>
+              <CardHeader title="HR Zone Distribution" sub="Where you spend your effort" colors={C} />
+              {zoneStats.length > 0 ? (
+                <>
+                  <View style={{ alignItems: 'center', marginVertical: 16 }}>
+                    <PieChart data={pieData} donut showText textColor="#fff"
+                      radius={100} innerRadius={60} textSize={11}
+                      centerLabelComponent={() => (
+                        <View style={{ alignItems: 'center' }}>
+                          <Heart color="#EF4444" size={18} />
+                          <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginTop: 2 }}>zones</Typography>
+                        </View>
+                      )} />
+                  </View>
+                  <View style={{ gap: 8 }}>
+                    {zoneStats.map((z) => {
+                      const boundaries: number[] = hrZones.length >= 5
+                        ? hrZones.map(hz => hz.min)
+                        : [0, 115, 135, 155, 170];
+                      const maxBounds = hrZones.length >= 5
+                        ? hrZones.map((_, j) => hrZones[j + 1] ? hrZones[j + 1].min - 1 : 999)
+                        : [114, 134, 154, 169, 999];
+                      const zoneIdx = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5'].findIndex(zl => z.label.includes(zl));
+                      const bpmRange = zoneIdx >= 0
+                        ? (maxBounds[zoneIdx] < 999 ? `${boundaries[zoneIdx]}–${maxBounds[zoneIdx]} bpm` : `${boundaries[zoneIdx]}+ bpm`)
+                        : '';
+                      return (
+                        <View key={z.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: z.color }} />
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                              <Typography style={{ fontSize: 11, color: theme.colors.text, fontWeight: '600' }}>{z.label}</Typography>
+                              <Typography style={{ fontSize: 10, color: theme.colors.textSecondary }}>({bpmRange})</Typography>
+                            </View>
+                            <View style={{ height: 5, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
+                              <View style={{ height: '100%', width: `${z.pct}%`, backgroundColor: z.color, borderRadius: 3 }} />
+                            </View>
+                          </View>
+                          <Typography style={{ fontSize: 12, fontWeight: '700', color: z.color, width: 36, textAlign: 'right' }}>{z.pct}%</Typography>
+                        </View>
+                      );
+                    })}
+                  </View>
+                  {(() => { const ez=(zoneStats.find(z=>z.label.includes('Z1'))?.pct||0)+(zoneStats.find(z=>z.label.includes('Z2'))?.pct||0); return <Insight color="#ef4444" text={`${ez}% easy effort. Elite runners target 80% in Z1–Z2 for aerobic base building.`} />; })()}
+                </>
+              ) : (
+                <EmptyRow icon={<Heart size={12} color="#ef4444" />} msg="No HR data — enable heart rate recording on Strava" color="#ef4444" />
+              )}
+            </>
+          )}
+
+          {t.key === 'cadence' && (
+            <>
+              <CardHeader title="Running Cadence" sub="Steps per minute" colors={C}
+                stat={avgCadence || '—'} statUnit="spm avg" />
+              {cadenceData.length > 1 ? (
+                <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                  <LineChart data={cadenceData} height={180} width={CHART_W} thickness={3} color={C[0]}
+                    hideDataPoints curved areaChart
+                    maxValue={Math.max(maxCadence + 10, 200)}
+                    initialSpacing={12}
+                    spacing={Math.max((CHART_W-12)/Math.max(cadenceData.length-1,1),18)}
+                    startFillColor={C[0]} endFillColor={theme.colors.background}
+                    startOpacity={0.5} endOpacity={0}
+                    yAxisLabelSuffix=" spm"
+                    pointerConfig={getPointerConfig(' spm', C[0])}
+                    {...chartBase} />
+                </View>
+              ) : (
+                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No cadence data in this range" color={C[0]} />
+              )}
+              {avgCadence > 0 && <Insight color={C[0]} text={`Target 170–180 spm. Your avg ${avgCadence} spm — ${avgCadence < 165 ? 'try shortening your stride' : avgCadence >= 170 ? 'great cadence!' : 'close to optimal'}`} />}
+            </>
+          )}
+
+          {t.key === 'mix' && (
+            <>
+              <CardHeader title="Activity Mix" sub="All-time breakdown by sport" colors={C} />
+              {mixStats.length > 0 ? (
+                <>
+                  <View style={{ alignItems: 'center', marginVertical: 16 }}>
+                    <PieChart data={mixPieData} donut showText textColor="#fff"
+                      radius={100} innerRadius={60} textSize={11}
+                      centerLabelComponent={() => (
+                        <View style={{ alignItems: 'center' }}>
+                          <Activity color={theme.colors.primary} size={18} />
+                          <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginTop: 2 }}>mix</Typography>
+                        </View>
+                      )} />
+                  </View>
+                  <View style={{ gap: 10 }}>
+                    {mixStats.map(e => (
+                      <View key={e.type} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: e.color }} />
+                        <View style={{ flex: 1 }}>
+                          <Typography style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 3 }}>{e.type} — {e.count} activities</Typography>
+                          <View style={{ height: 5, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
+                            <View style={{ height: '100%', width: `${e.pct}%`, backgroundColor: e.color, borderRadius: 3 }} />
+                          </View>
+                        </View>
+                        <Typography style={{ fontSize: 12, fontWeight: '700', color: e.color, width: 36, textAlign: 'right' }}>{e.pct}%</Typography>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              ) : (
+                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No activities synced yet" color={C[0]} />
+              )}
+            </>
+          )}
+
+          {t.key === 'elevation' && (
+            <>
+              <CardHeader title="Elevation Gain" sub="Metres climbed per activity" colors={C}
+                stat={totalElev > 0 ? totalElev.toLocaleString() : '—'} statUnit="m total" />
+              {elevData.length > 1 ? (
+                <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                  <LineChart data={elevData} height={180} width={CHART_W} thickness={3} color={C[0]}
+                    hideDataPoints curved areaChart
+                    initialSpacing={0}
+                    spacing={Math.max(CHART_W/Math.max(elevData.length-1,1),4)}
+                    startFillColor={C[0]} endFillColor={theme.colors.background}
+                    startOpacity={0.5} endOpacity={0}
+                    yAxisLabelSuffix=" m"
+                    pointerConfig={getPointerConfig('m', C[0])}
+                    {...chartBase} />
+                </View>
+              ) : (
+                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No elevation data in this range" color={C[0]} />
+              )}
+              {totalElev > 0 && <Insight color={C[0]} text={`${totalElev.toLocaleString()}m total climbed · Peak single activity: ${Math.round(maxElev)}m`} />}
+            </>
+          )}
+
+          {t.key === 'calories' && (
+            <>
+              <CardHeader title="Calories Burned" sub="Weekly kcal from Strava" colors={C}
+                stat={avgCalories || '—'} statUnit="kcal/wk avg" />
+              {caloriesData.some(d=>d.value>0) ? (
+                <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                  <BarChart data={caloriesData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
+                    maxValue={Math.ceil(Math.max(...caloriesData.map(d=>d.value),1) * 1.25)}
+                    initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
+                    {...chartBase} />
+                </View>
+              ) : (
+                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No calorie data in this range" color={C[0]} />
+              )}
+              {avgCalories > 0 && <Insight color={C[0]} text={`${avgCalories.toLocaleString()} kcal/wk avg — roughly ${Math.round(avgCalories / 7)} kcal/day from exercise`} />}
+            </>
+          )}
+
+          {t.key === 'power' && (
+            <>
+              <CardHeader title="Average Power" sub="Watts from power meter" colors={C}
+                stat={avgPower || '—'} statUnit="W avg" />
+              {powerData.length > 1 ? (
+                <View style={{ overflow: 'hidden', marginTop: 12 }}>
+                  <LineChart data={powerData} height={180} width={CHART_W} thickness={3} color={C[0]}
+                    hideDataPoints curved areaChart
+                    initialSpacing={12}
+                    spacing={Math.max((CHART_W-12)/Math.max(powerData.length-1,1),18)}
+                    startFillColor={C[0]} endFillColor={theme.colors.background}
+                    startOpacity={0.5} endOpacity={0}
+                    yAxisLabelSuffix=" W"
+                    pointerConfig={getPointerConfig('W', C[0])}
+                    {...chartBase} />
+                </View>
+              ) : (
+                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No power data — requires a power meter" color={C[0]} />
+              )}
+              {avgPower > 0 && <Insight color={C[0]} text={`${avgPower}W avg power across ${powerData.length} sessions`} />}
+            </>
+          )}
+
+        </Card>
+      </Animated.View>
+    );
+    // ESLint exhaustive-deps would over-list; rely on closure semantics. Range is the dominant trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    deferredRange, compareHR,
+    paceData, paceHRData, volumeData, timeData, stepsData, caloriesData,
+    elevData, powerData, cadenceData,
+    zoneStats, pieData, mixPieData, mixStats,
+    avgSteps, avgTime, avgPace, bestPace, totalVol, maxWeekVol,
+    avgPower, avgCadence, totalElev, avgCalories, maxSteps,
+  ]);
+
   return (
     <SafeAreaView style={st.container}>
       {/* Header */}
@@ -498,7 +709,7 @@ export default function InsightsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Range selector — controls every time-series chart below */}
+      {/* Range selector */}
       <View style={st.rangeBar}>
         {(Object.keys(RANGE_LABELS) as Range[]).map((r) => {
           const selected = r === range;
@@ -528,279 +739,17 @@ export default function InsightsScreen() {
         })}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={st.scroll}>
-
-        {/* Active graph cards — vertical feed */}
-        {ALL_TABS.filter(t => activeKeys.includes(t.key)).map((t, idx) => {
-          const C = CARD_COLORS[t.key] ?? ['#6366f1', '#8b5cf6'];
-          return (
-            <Animated.View key={t.key} entering={FadeInDown.delay(idx * 80).duration(400)} layout={Layout.springify()}>
-              <Card style={st.card}>
-
-                {/* ── STEPS ── */}
-                {t.key === 'steps' && (
-                  <>
-                    <CardHeader title="Weekly Steps" sub="Estimated from run &amp; walk distance" colors={C}
-                      stat={avgSteps > 0 ? `${Math.round(avgSteps / 1000)}k` : '--'} statUnit="avg/wk" />
-                    <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                      <BarChart data={stepsData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
-                        maxValue={Math.ceil(stepsData.reduce((m,d)=>Math.max(m,d.value),1) * 1.25)}
-                        initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                        yAxisLabelTexts={Array.from({length:5},(_,i)=>Math.round(stepsData.reduce((m,d)=>Math.max(m,d.value),1)*1.25*i/4/1000)+'k')}
-                        {...chartBase} />
-                    </View>
-                    {avgSteps > 0 && <Insight color={C[0]} text={`${Math.round(avgSteps).toLocaleString()} avg steps/week — 10,000/day target = 70,000/week`} />}
-                  </>
-                )}
-
-                {/* ── TIME ── */}
-                {t.key === 'time' && (
-                  <>
-                    <CardHeader title="Active Time" sub="Hours of movement per week" colors={C}
-                      stat={avgTime} statUnit="hrs/wk" />
-                    <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                      <BarChart data={timeData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
-                        maxValue={Math.ceil(Math.max(...timeData.map(d=>d.value),1) * 1.3)}
-                        initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                        {...chartBase} />
-                    </View>
-                    {Number(avgTime) > 0 && <Insight color={C[0]} text={`${avgTime} hrs/wk avg — WHO recommends 2.5 hrs moderate activity weekly`} />}
-                  </>
-                )}
-
-                {/* ── VOLUME ── */}
-                {t.key === 'volume' && (
-                  <>
-                    <CardHeader title="Weekly Volume" sub="Kilometres across all activities" colors={C}
-                      stat={maxWeekVol.toFixed(0)} statUnit="km peak" />
-                    {volumeData.some(d=>d.value>0) ? (
-                      <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                        <BarChart data={volumeData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
-                          maxValue={Math.ceil(maxWeekVol * 1.35)}
-                          initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                          showGradient gradientColor={C[0]} frontColor={C[0] + '55'}
-                          pointerConfig={getPointerConfig(' km', C[0])}
-                          {...chartBase} />
-                      </View>
-                    ) : <EmptyChart msg="No activity data yet" />}
-                    <Insight color={C[0]} text={`${totalVol} km total in last 8 weeks. Increase no more than 10%/week to avoid injury.`} />
-                  </>
-                )}
-
-                {/* ── PACE ── */}
-                {t.key === 'pace' && (
-                  <>
-                    <CardHeader title="Running Pace" sub={`Min/km trend · ${paceData.length} runs in window`} colors={C}
-                      stat={bestPace ? fmtPace(bestPace) : '--'} statUnit="/km best" />
-                    {paceHRData.length > 0 && (
-                      <TouchableOpacity
-                        onPress={() => { Haptics.selectionAsync(); setCompareHR(v => !v); }}
-                        style={[st.compareChip, compareHR && { backgroundColor: '#EF444422', borderColor: '#EF4444' }]}
-                      >
-                        <Heart size={11} color={compareHR ? '#EF4444' : theme.colors.textSecondary} />
-                        <Typography style={{ fontSize: 11, fontWeight: '700', color: compareHR ? '#EF4444' : theme.colors.textSecondary }}>
-                          {compareHR ? 'Comparing HR' : 'Compare HR'}
-                        </Typography>
-                      </TouchableOpacity>
-                    )}
-                    {paceData.length > 1 ? (
-                      <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                        <LineChart data={paceData}
-                          {...(compareHR && paceHRData.length === paceData.length ? { data2: paceHRData, color2: '#EF4444', secondaryYAxis: { yAxisColor: 'transparent', yAxisTextStyle: { color: '#EF4444', fontSize: 10, fontWeight: '700' } } } : {})}
-                          height={180} width={CHART_W} thickness={3} color={C[0]}
-                          hideDataPoints curved areaChart
-                          maxValue={Math.ceil(Math.max(...paceData.map(d=>d.value)) * 1.15)}
-                          initialSpacing={12}
-                          spacing={Math.max((CHART_W-12)/Math.max(paceData.length-1,1),18)}
-                          startFillColor={C[0]} endFillColor={theme.colors.background}
-                          startOpacity={0.5} endOpacity={0}
-                          yAxisLabelTexts={Array.from({length:5},(_,i)=>{const mx=Math.ceil(Math.max(...paceData.map(d=>d.value))*1.15);const mn=Math.floor(Math.min(...paceData.map(d=>d.value))*0.9);return paceYLabel((mn+(mx-mn)*i/4).toFixed(2));})}
-                          pointerConfig={getPointerConfig('/km', C[0])}
-                          {...chartBase} />
-                      </View>
-                    ) : <EmptyChart msg="Sync Strava runs to see pace trend" />}
-                    {avgPace > 0 && <Insight color={C[0]} text={`Avg ${fmtPace(avgPace)}/km · Best ${bestPace ? fmtPace(bestPace) : '--'}/km · ${paceData.length} runs`} />}
-                  </>
-                )}
-
-                {/* ── HR ZONES ── */}
-                {t.key === 'heart' && (
-                  <>
-                    <CardHeader title="HR Zone Distribution" sub="Where you spend your effort" colors={C} />
-                    {zoneStats.length > 0 ? (
-                      <>
-                        <View style={{ alignItems: 'center', marginVertical: 16 }}>
-                          <PieChart data={pieData} donut showText textColor="#fff"
-                            radius={100} innerRadius={60} textSize={11}
-                            isAnimated animationDuration={800}
-                            centerLabelComponent={() => (
-                              <View style={{ alignItems: 'center' }}>
-                                <Heart color="#EF4444" size={18} />
-                                <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginTop: 2 }}>zones</Typography>
-                              </View>
-                            )} />
-                        </View>
-                        <View style={{ gap: 8 }}>
-                          {zoneStats.map((z, i) => {
-                            const boundaries: number[] = hrZones.length >= 5
-                              ? hrZones.map(hz => hz.min)
-                              : [0, 115, 135, 155, 170];
-                            const maxBounds = hrZones.length >= 5
-                              ? hrZones.map((hz, j) => hrZones[j + 1] ? hrZones[j + 1].min - 1 : 999)
-                              : [114, 134, 154, 169, 999];
-                            const zoneIdx = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5'].findIndex(zl => z.label.includes(zl));
-                            const bpmRange = zoneIdx >= 0
-                              ? (maxBounds[zoneIdx] < 999 ? `${boundaries[zoneIdx]}–${maxBounds[zoneIdx]} bpm` : `${boundaries[zoneIdx]}+ bpm`)
-                              : '';
-                            return (
-                              <View key={z.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: z.color }} />
-                                <View style={{ flex: 1 }}>
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                                    <Typography style={{ fontSize: 11, color: theme.colors.text, fontWeight: '600' }}>{z.label}</Typography>
-                                    <Typography style={{ fontSize: 10, color: theme.colors.textSecondary }}>({bpmRange})</Typography>
-                                  </View>
-                                  <View style={{ height: 5, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
-                                    <View style={{ height: '100%', width: `${z.pct}%`, backgroundColor: z.color, borderRadius: 3 }} />
-                                  </View>
-                                </View>
-                                <Typography style={{ fontSize: 12, fontWeight: '700', color: z.color, width: 36, textAlign: 'right' }}>{z.pct}%</Typography>
-                              </View>
-                            );
-                          })}
-                        </View>
-                        {(() => { const ez=(zoneStats.find(z=>z.label.includes('Z1'))?.pct||0)+(zoneStats.find(z=>z.label.includes('Z2'))?.pct||0); return <Insight color="#ef4444" text={`${ez}% easy effort. Elite runners target 80% in Z1–Z2 for aerobic base building.`} />; })()}
-                      </>
-                    ) : <EmptyChart msg="No HR data. Enable heart rate recording on Strava." />}
-                  </>
-                )}
-
-                {/* ── CADENCE ── */}
-                {t.key === 'cadence' && (
-                  <>
-                    <CardHeader title="Running Cadence" sub="Steps per minute over last 20 runs" colors={C}
-                      stat={avgCadence || '--'} statUnit="spm avg" />
-                    {cadenceData.length > 1 ? (
-                      <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                        <LineChart data={cadenceData} height={180} width={CHART_W} thickness={3} color={C[0]}
-                          hideDataPoints curved areaChart
-                          maxValue={Math.max(maxCadence + 10, 200)}
-                          initialSpacing={12}
-                          spacing={Math.max((CHART_W-12)/Math.max(cadenceData.length-1,1),18)}
-                          startFillColor={C[0]} endFillColor={theme.colors.background}
-                          startOpacity={0.5} endOpacity={0}
-                          yAxisLabelSuffix=" spm"
-                          pointerConfig={getPointerConfig(' spm', C[0])}
-                          {...chartBase} />
-                      </View>
-                    ) : <EmptyChart msg="No cadence data — enable GPS cadence on Strava" />}
-                    <Insight color={C[0]} text={`Target 170–180 spm. ${avgCadence > 0 ? `Your avg ${avgCadence} spm — ${avgCadence < 165 ? 'try shortening your stride' : avgCadence >= 170 ? 'great cadence!' : 'close to optimal'}` : 'Cadence reduces injury risk by cutting ground contact time.'}`} />
-                  </>
-                )}
-
-                {/* ── ACTIVITY MIX ── */}
-                {t.key === 'mix' && (
-                  <>
-                    <CardHeader title="Activity Mix" sub="All-time breakdown by sport" colors={C} />
-                    {mixStats.length > 0 ? (
-                      <>
-                        <View style={{ alignItems: 'center', marginVertical: 16 }}>
-                          <PieChart data={mixPieData} donut showText textColor="#fff"
-                            radius={100} innerRadius={60} textSize={11}
-                            isAnimated animationDuration={800}
-                            centerLabelComponent={() => (
-                              <View style={{ alignItems: 'center' }}>
-                                <Activity color={theme.colors.primary} size={18} />
-                                <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginTop: 2 }}>mix</Typography>
-                              </View>
-                            )} />
-                        </View>
-                        <View style={{ gap: 10 }}>
-                          {mixStats.map(e => (
-                            <View key={e.type} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                              <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: e.color }} />
-                              <View style={{ flex: 1 }}>
-                                <Typography style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 3 }}>{e.type} — {e.count} activities</Typography>
-                                <View style={{ height: 5, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
-                                  <View style={{ height: '100%', width: `${e.pct}%`, backgroundColor: e.color, borderRadius: 3 }} />
-                                </View>
-                              </View>
-                              <Typography style={{ fontSize: 12, fontWeight: '700', color: e.color, width: 36, textAlign: 'right' }}>{e.pct}%</Typography>
-                            </View>
-                          ))}
-                        </View>
-                      </>
-                    ) : <EmptyChart msg="No activities synced yet" />}
-                  </>
-                )}
-
-                {/* ── ELEVATION ── */}
-                {t.key === 'elevation' && (
-                  <>
-                    <CardHeader title="Elevation Gain" sub="Metres climbed per activity" colors={C}
-                      stat={totalElev.toLocaleString()} statUnit="m total" />
-                    {elevData.length > 1 ? (
-                      <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                        <LineChart data={elevData} height={180} width={CHART_W} thickness={3} color={C[0]}
-                          hideDataPoints curved areaChart
-                          initialSpacing={0}
-                          spacing={Math.max(CHART_W/Math.max(elevData.length-1,1),4)}
-                          startFillColor={C[0]} endFillColor={theme.colors.background}
-                          startOpacity={0.5} endOpacity={0}
-                          yAxisLabelSuffix=" m"
-                          pointerConfig={getPointerConfig('m', C[0])}
-                          {...chartBase} />
-                      </View>
-                    ) : <EmptyChart msg="No elevation data yet" />}
-                    <Insight color={C[0]} text={`${totalElev.toLocaleString()}m total climbed · Peak single activity: ${Math.round(maxElev)}m`} />
-                  </>
-                )}
-
-                {/* ── CALORIES ── */}
-                {t.key === 'calories' && (
-                  <>
-                    <CardHeader title="Calories Burned" sub="Weekly kcal from Strava" colors={C}
-                      stat={avgCalories || '--'} statUnit="kcal/wk avg" />
-                    {caloriesData.some(d=>d.value>0) ? (
-                      <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                        <BarChart data={caloriesData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
-                          maxValue={Math.ceil(Math.max(...caloriesData.map(d=>d.value),1) * 1.25)}
-                          initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                          {...chartBase} />
-                      </View>
-                    ) : <EmptyChart msg="No calorie data from Strava" />}
-                    {avgCalories > 0 && <Insight color={C[0]} text={`${avgCalories.toLocaleString()} kcal/wk avg — roughly ${Math.round(avgCalories / 7)} kcal/day from exercise`} />}
-                  </>
-                )}
-
-                {/* ── POWER ── */}
-                {t.key === 'power' && (
-                  <>
-                    <CardHeader title="Average Power" sub="Watts from power meter (last 20)" colors={C}
-                      stat={avgPower || '--'} statUnit="W avg" />
-                    {powerData.length > 1 ? (
-                      <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                        <LineChart data={powerData} height={180} width={CHART_W} thickness={3} color={C[0]}
-                          hideDataPoints curved areaChart
-                          initialSpacing={12}
-                          spacing={Math.max((CHART_W-12)/Math.max(powerData.length-1,1),18)}
-                          startFillColor={C[0]} endFillColor={theme.colors.background}
-                          startOpacity={0.5} endOpacity={0}
-                          yAxisLabelSuffix=" W"
-                          pointerConfig={getPointerConfig('W', C[0])}
-                          {...chartBase} />
-                      </View>
-                    ) : <EmptyChart msg="No power data — requires a power meter" />}
-                    {avgPower > 0 && <Insight color={C[0]} text={`${avgPower}W avg power across ${powerData.length} sessions`} />}
-                  </>
-                )}
-
-              </Card>
-            </Animated.View>
-          );
-        })}
-
-        {activeKeys.length === 0 && (
+      <FlatList
+        data={visibleTabs}
+        keyExtractor={t => t.key}
+        renderItem={renderCard}
+        contentContainerStyle={st.scroll}
+        showsVerticalScrollIndicator={false}
+        removeClippedSubviews
+        initialNumToRender={2}
+        maxToRenderPerBatch={1}
+        windowSize={3}
+        ListEmptyComponent={
           <View style={{ alignItems: 'center', paddingTop: 60 }}>
             <BarChart3 size={48} color={theme.colors.textSecondary} />
             <Typography style={{ color: theme.colors.textSecondary, marginTop: 16, fontSize: 15 }}>No graphs enabled</Typography>
@@ -808,9 +757,8 @@ export default function InsightsScreen() {
               <Typography style={{ color: theme.colors.primary, fontWeight: '700' }}>Tap Manage to add some →</Typography>
             </TouchableOpacity>
           </View>
-        )}
-
-      </ScrollView>
+        }
+      />
 
       {/* Manage modal */}
       <Modal animationType="slide" transparent visible={showManageModal} onRequestClose={() => setShowManageModal(false)}>
@@ -834,6 +782,7 @@ export default function InsightsScreen() {
     </SafeAreaView>
   );
 }
+
 const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background },
   scroll:    { padding: 16, paddingBottom: 40 },
@@ -856,9 +805,17 @@ const st = StyleSheet.create({
   insightBar:  { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 14, padding: 10, borderRadius: 8, borderLeftWidth: 3 },
   insightText: { fontSize: 12, flex: 1, lineHeight: 18, fontWeight: '600' },
 
-  emptyChart: { height: 160, alignItems: 'center', justifyContent: 'center', marginTop: 12, gap: 12 },
-  emptyText:  { color: theme.colors.textSecondary, fontSize: 13, textAlign: 'center' },
-  skeletonRow: { flexDirection: 'row', alignItems: 'flex-end', height: 100 },
+  emptyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    borderRadius: 10,
+    borderLeftWidth: 3,
+  },
+  emptyRowText: { fontSize: 12, fontWeight: '600', flex: 1 },
 
   rangeBar: {
     flexDirection: 'row',

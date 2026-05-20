@@ -12,8 +12,10 @@ import {
   ScrollView,
   Animated,
 } from 'react-native';
+import ReAnimated, { FadeInDown, FadeInRight, FadeInLeft } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 import Markdown from 'react-native-markdown-display';
-import { Send, Bot, RefreshCw } from 'lucide-react-native';
+import { Send, Bot, RefreshCw, Sparkles } from 'lucide-react-native';
 import { useStore } from '../store/useStore';
 import { AIService, ChatMessage } from '../services/ai';
 import { theme } from '../theme';
@@ -179,32 +181,49 @@ export default function ChatScreen() {
 
   const clear = () => { setMessages([]); setError(null); };
 
-  const renderItem = ({ item }: { item: ChatMessage }) => {
+  const renderItem = ({ item, index }: { item: ChatMessage; index: number }) => {
     const isUser = item.role === 'user';
+    const Enter = isUser ? FadeInRight : FadeInLeft;
     return (
-      <View style={[styles.bubbleWrap, isUser ? styles.bubbleWrapUser : styles.bubbleWrapBot]}>
+      <ReAnimated.View
+        entering={Enter.duration(280).springify().damping(18)}
+        style={[styles.bubbleWrap, isUser ? styles.bubbleWrapUser : styles.bubbleWrapBot]}
+      >
         {!isUser && (
           <View style={styles.avatar}>
             <Bot size={14} color={theme.colors.primary} />
           </View>
         )}
-        <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleBot]}>
-          {isUser
-            ? <Text style={styles.bubbleUserText}>{item.text}</Text>
-            : <Markdown style={markdownStyles}>{item.text}</Markdown>
-          }
-        </View>
-      </View>
+        {isUser ? (
+          <LinearGradient
+            colors={theme.colors.gradients.primary}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.bubble, styles.bubbleUser, theme.shadows.sm]}
+          >
+            <Text style={styles.bubbleUserText}>{item.text}</Text>
+          </LinearGradient>
+        ) : (
+          <View style={[styles.bubble, styles.bubbleBot]}>
+            <Markdown style={markdownStyles}>{item.text}</Markdown>
+          </View>
+        )}
+      </ReAnimated.View>
     );
   };
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <LinearGradient
+        colors={theme.colors.gradients.hero}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.header}
+      >
         <View style={styles.headerLeft}>
           <View style={styles.headerIcon}>
-            <Bot size={18} color={theme.colors.primary} />
+            <Bot size={18} color="#fff" />
           </View>
           <View>
             <Text style={styles.headerTitle}>AI Coach</Text>
@@ -213,10 +232,10 @@ export default function ChatScreen() {
         </View>
         {messages.length > 0 && (
           <TouchableOpacity onPress={clear} style={styles.clearBtn}>
-            <RefreshCw size={16} color={theme.colors.textSecondary} />
+            <RefreshCw size={16} color="rgba(255,255,255,0.85)" />
           </TouchableOpacity>
         )}
-      </View>
+      </LinearGradient>
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -225,18 +244,26 @@ export default function ChatScreen() {
         {/* Message list */}
         {messages.length === 0 ? (
           <ScrollView contentContainerStyle={styles.emptyContainer} showsVerticalScrollIndicator={false}>
-            <View style={styles.emptyHero}>
-              <View style={styles.emptyIconBg}>
-                <Bot size={36} color={theme.colors.primary} />
-              </View>
+            <ReAnimated.View entering={FadeInDown.duration(400)} style={styles.emptyHero}>
+              <LinearGradient
+                colors={theme.colors.gradients.hero}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.emptyIconBg}
+              >
+                <Sparkles size={36} color="#fff" />
+              </LinearGradient>
               <Text style={styles.emptyTitle}>Your AI Coach is ready</Text>
               <Text style={styles.emptySub}>Ask about your plans, recovery, pacing, or anything running-related.</Text>
-            </View>
+            </ReAnimated.View>
             <Text style={styles.suggestLabel}>Suggested questions</Text>
             {SUGGESTIONS.map((s, i) => (
-              <TouchableOpacity key={i} style={styles.suggestChip} onPress={() => send(s)}>
-                <Text style={styles.suggestText}>{s}</Text>
-              </TouchableOpacity>
+              <ReAnimated.View key={i} entering={FadeInDown.delay(80 + i * 60).duration(360)}>
+                <TouchableOpacity style={styles.suggestChip} onPress={() => send(s)} activeOpacity={0.85}>
+                  <View style={styles.suggestAccent} />
+                  <Text style={styles.suggestText}>{s}</Text>
+                </TouchableOpacity>
+              </ReAnimated.View>
             ))}
           </ScrollView>
         ) : (
@@ -271,13 +298,22 @@ export default function ChatScreen() {
             maxLength={600}
             returnKeyType="default"
           />
-          <TouchableOpacity
-            style={[styles.sendBtn, (!input.trim() || loading) && styles.sendBtnDisabled]}
-            onPress={() => send(input)}
-            disabled={!input.trim() || loading}
-          >
-            <Send size={18} color={!input.trim() || loading ? theme.colors.textSecondary : '#fff'} />
-          </TouchableOpacity>
+          {(!input.trim() || loading) ? (
+            <View style={[styles.sendBtn, styles.sendBtnDisabled]}>
+              <Send size={18} color={theme.colors.textSecondary} />
+            </View>
+          ) : (
+            <TouchableOpacity onPress={() => send(input)} activeOpacity={0.85}>
+              <LinearGradient
+                colors={theme.colors.gradients.primary}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={[styles.sendBtn, theme.shadows.glow(theme.colors.primary)]}
+              >
+                <Send size={18} color="#fff" />
+              </LinearGradient>
+            </TouchableOpacity>
+          )}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -294,44 +330,43 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerIcon: {
     width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#f973160f',
+    backgroundColor: 'rgba(255,255,255,0.18)',
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: '#f9731640',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
   },
-  headerTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text },
-  headerSub: { fontSize: 11, color: theme.colors.textSecondary, marginTop: 1 },
+  headerTitle: { fontSize: 16, fontWeight: '800', color: '#fff' },
+  headerSub: { fontSize: 11, color: 'rgba(255,255,255,0.8)', marginTop: 1 },
   clearBtn: { padding: 8 },
 
   // Empty state
   emptyContainer: { padding: 24, paddingTop: 32 },
   emptyHero: { alignItems: 'center', marginBottom: 32 },
   emptyIconBg: {
-    width: 72, height: 72, borderRadius: 36,
-    backgroundColor: '#f973160f',
-    borderWidth: 1, borderColor: '#f9731640',
+    width: 84, height: 84, borderRadius: 42,
     alignItems: 'center', justifyContent: 'center',
-    marginBottom: 16,
+    marginBottom: 18,
+    ...theme.shadows.lg,
   },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: theme.colors.text, marginBottom: 8 },
+  emptyTitle: { fontSize: 20, fontWeight: '800', color: theme.colors.text, marginBottom: 8 },
   emptySub: { fontSize: 13, color: theme.colors.textSecondary, textAlign: 'center', lineHeight: 20 },
-  suggestLabel: { fontSize: 12, color: theme.colors.textSecondary, marginBottom: 10, fontWeight: '600', letterSpacing: 0.5, textTransform: 'uppercase' },
+  suggestLabel: { fontSize: 11, color: theme.colors.textSecondary, marginBottom: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
   suggestChip: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 12,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: theme.colors.surfaceElevated,
+    borderRadius: 14,
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 8,
+    paddingVertical: 14,
+    marginBottom: 10,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: 'rgba(255,255,255,0.06)',
+    ...theme.shadows.sm,
   },
-  suggestText: { color: theme.colors.text, fontSize: 14, lineHeight: 20 },
+  suggestAccent: { width: 3, height: 22, borderRadius: 2, backgroundColor: theme.colors.primary, marginRight: 10 },
+  suggestText: { color: theme.colors.text, fontSize: 14, lineHeight: 20, flex: 1 },
 
   // Messages
   list: { padding: 16, paddingBottom: 8 },
@@ -345,10 +380,10 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     marginRight: 8, marginTop: 2,
   },
-  bubble: { maxWidth: '80%', borderRadius: 16, padding: 12 },
-  bubbleUser: { backgroundColor: theme.colors.primary, borderBottomRightRadius: 4 },
-  bubbleBot: { backgroundColor: theme.colors.surface, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: theme.colors.border },
-  bubbleUserText: { color: '#fff', fontSize: 14, lineHeight: 21 },
+  bubble: { maxWidth: '80%', borderRadius: 18, padding: 12 },
+  bubbleUser: { borderBottomRightRadius: 4 },
+  bubbleBot: { backgroundColor: theme.colors.surfaceElevated, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
+  bubbleUserText: { color: '#fff', fontSize: 14, lineHeight: 21, fontWeight: '500' },
 
   // Thinking dots
   typingRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 14 },
