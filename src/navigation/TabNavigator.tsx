@@ -26,6 +26,7 @@ export default function TabNavigator() {
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
+        animation: 'fade',
         tabBarStyle: {
           backgroundColor: theme.colors.surface,
           borderTopColor: theme.colors.border,
@@ -34,6 +35,8 @@ export default function TabNavigator() {
           paddingTop: 8,
         },
         tabBarInactiveTintColor: theme.colors.textSecondary,
+        tabBarLabelStyle: { fontWeight: '700', fontSize: 11 },
+        tabBarHideOnKeyboard: true,
       }}
     >
       <Tab.Screen

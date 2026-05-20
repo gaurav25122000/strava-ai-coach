@@ -1,15 +1,22 @@
 import React, { useMemo, useState } from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity, Dimensions, Modal, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
+import { Skeleton } from '../components/Skeleton';
 import { LineChart, BarChart, PieChart } from 'react-native-gifted-charts';
 import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 import { useStore } from '../store/useStore';
 import { format, parseISO, startOfWeek, endOfWeek, eachWeekOfInterval, subWeeks } from 'date-fns';
 import { Heart, BarChart3, Zap, X, Activity, Settings2 } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+
+type Range = '30d' | '3m' | '6m' | '1y' | 'all';
+const RANGE_LABELS: Record<Range, string> = { '30d': '30D', '3m': '3M', '6m': '6M', '1y': '1Y', all: 'All' };
+const RANGE_DAYS: Record<Range, number> = { '30d': 30, '3m': 90, '6m': 180, '1y': 365, all: Infinity };
+const RANGE_WEEKS: Record<Range, number> = { '30d': 4, '3m': 12, '6m': 26, '1y': 52, all: 104 };
 
 const { width: SCREEN_W } = Dimensions.get('window');
 // scroll padding 16*2 + card padding 16*2 + gifted-charts yAxis ~44 = 108
@@ -35,6 +42,18 @@ export default function InsightsScreen() {
   const { activities, settings, updateSettings, hrZones } = useStore();
   const activeKeys = settings.activeGraphs || ['steps', 'time', 'volume', 'pace', 'heart'];
   const [showManageModal, setShowManageModal] = useState(false);
+  const [range, setRange] = useState<Range>('3m');
+  const [compareHR, setCompareHR] = useState(false);
+
+  const rangeDays = RANGE_DAYS[range];
+  const rangeWeeks = RANGE_WEEKS[range];
+
+  // Activities falling inside the selected window (used by per-activity charts)
+  const windowedActivities = useMemo(() => {
+    if (rangeDays === Infinity) return activities;
+    const cutoff = Date.now() - rangeDays * 86400000;
+    return activities.filter((a) => new Date(a.startDate).getTime() >= cutoff);
+  }, [activities, rangeDays]);
 
   const toggleGraph = (key: Tab) => {
     let newKeys = [...activeKeys];
@@ -50,57 +69,77 @@ export default function InsightsScreen() {
   };
 
   // ── Pace ──────────────────────────────────────────────────────────
-  const paceData = useMemo(() => {
-    return [...activities]
-      .filter(a => a.type === 'Run' && a.averageSpeed > 0)
-      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
-      .slice(-20)
-      .map((act, i, arr) => {
-        const minPerKm = 1000 / act.averageSpeed / 60;
-        const isFirst  = i === 0;
-        const isLast   = i === arr.length - 1;
-        return {
-          value: Number(minPerKm.toFixed(2)),
-          // show label every 4th run + last
-          labelComponent: (i % 4 === 0 || isLast) ? () => (
-            <View style={{ width: 40, transform: [{ translateX: -10 }] }}>
-              <Typography style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700', textAlign: 'center' }}>
-                {format(parseISO(act.startDate), 'MMM d')}
-              </Typography>
-            </View>
-          ) : undefined,
-        };
-      });
-  }, [activities]);
+  const paceRuns = useMemo(
+    () =>
+      [...windowedActivities]
+        .filter((a) => a.type === 'Run' && a.averageSpeed > 0)
+        .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()),
+    [windowedActivities],
+  );
 
-  const bestPace = paceData.length ? Math.min(...paceData.map(d => d.value)) : 0;
-  const avgPace  = paceData.length ? paceData.reduce((s, d) => s + d.value, 0) / paceData.length : 0;
+  const paceData = useMemo(() => {
+    return paceRuns.map((act, i, arr) => {
+      const minPerKm = 1000 / act.averageSpeed / 60;
+      const isLast = i === arr.length - 1;
+      const step = Math.max(1, Math.ceil(arr.length / 5));
+      return {
+        value: Number(minPerKm.toFixed(2)),
+        labelComponent:
+          i % step === 0 || isLast
+            ? () => (
+                <View style={{ width: 40, transform: [{ translateX: -10 }] }}>
+                  <Typography style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700', textAlign: 'center' }}>
+                    {format(parseISO(act.startDate), 'MMM d')}
+                  </Typography>
+                </View>
+              )
+            : undefined,
+      };
+    });
+  }, [paceRuns]);
+
+  // Companion HR series for the pace chart's compare overlay
+  const paceHRData = useMemo(() => {
+    if (!paceRuns.length) return [] as { value: number }[];
+    const hrVals = paceRuns.map((a) => a.averageHeartRate || 0);
+    if (!hrVals.some((v) => v > 0)) return [];
+    return hrVals.map((v) => ({ value: v }));
+  }, [paceRuns]);
+
+  const bestPace = paceData.length ? Math.min(...paceData.map((d) => d.value)) : 0;
+  const avgPace = paceData.length ? paceData.reduce((s, d) => s + d.value, 0) / paceData.length : 0;
 
   // ── Volume ────────────────────────────────────────────────────────
   const volumeData = useMemo(() => {
-    const now   = new Date();
-    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), 7);
-    const end   = endOfWeek(now, { weekStartsOn: 1 });
-    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-8).map((ws, i, arr) => {
-      const we  = endOfWeek(ws, { weekStartsOn: 1 });
-      const km  = activities
-        .filter(a => { const d = parseISO(a.startDate); return d >= ws && d <= we; })
+    const now = new Date();
+    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), rangeWeeks - 1);
+    const end = endOfWeek(now, { weekStartsOn: 1 });
+    const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-rangeWeeks);
+    const labelStep = Math.max(1, Math.ceil(weeks.length / 6));
+    return weeks.map((ws, i, arr) => {
+      const we = endOfWeek(ws, { weekStartsOn: 1 });
+      const km = activities
+        .filter((a) => {
+          const d = parseISO(a.startDate);
+          return d >= ws && d <= we;
+        })
         .reduce((s, a) => s + a.distance / 1000, 0);
-      // e.g. "Jan 5"
-      const isLast = i === arr.length - 1;
-      return { 
-        value: Number(km.toFixed(1)), 
-        labelComponent: (arr.length - 1 - i) % 2 === 0 ? () => (
-          <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
-            <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
-              {format(ws, 'MMM d')}
-            </Typography>
-          </View>
-        ) : undefined,
-        frontColor: km > 0 ? theme.colors.primary : theme.colors.border 
+      return {
+        value: Number(km.toFixed(1)),
+        labelComponent:
+          (arr.length - 1 - i) % labelStep === 0
+            ? () => (
+                <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
+                  <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
+                    {format(ws, 'MMM d')}
+                  </Typography>
+                </View>
+              )
+            : undefined,
+        frontColor: km > 0 ? theme.colors.primary : theme.colors.border,
       };
     });
-  }, [activities]);
+  }, [activities, rangeWeeks]);
 
   const maxWeekVol = volumeData.length ? Math.max(...volumeData.map(d => d.value), 1) : 1;
   const totalVol   = volumeData.reduce((s, d) => s + d.value, 0).toFixed(0);
@@ -143,142 +182,169 @@ export default function InsightsScreen() {
 
   // ── Elevation ─────────────────────────────────────────────────────
   const elevData = useMemo(() => {
-    if (!activities.length) return [{ value: 0 }];
-    return [...activities]
+    if (!windowedActivities.length) return [{ value: 0 }];
+    return [...windowedActivities]
       .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
       .map(a => ({ value: a.totalElevationGain || 0 }));
-  }, [activities]);
+  }, [windowedActivities]);
 
-  const totalElev = Math.round(activities.reduce((s, a) => s + a.totalElevationGain, 0));
-  const maxElev   = activities.length ? Math.max(...activities.map(a => a.totalElevationGain), 1) : 1;
+  const totalElev = Math.round(windowedActivities.reduce((s, a) => s + a.totalElevationGain, 0));
+  const maxElev   = windowedActivities.length ? Math.max(...windowedActivities.map(a => a.totalElevationGain), 1) : 1;
 
 
 
   // ── Steps ─────────────────────────────────────────────────────────
   const stepsData = useMemo(() => {
-    const now   = new Date();
-    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), 7);
-    const end   = endOfWeek(now, { weekStartsOn: 1 });
-    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-8).map((ws, i, arr) => {
-      const we  = endOfWeek(ws, { weekStartsOn: 1 });
-      const weekActs = activities.filter(a => { const d = parseISO(a.startDate); return d >= ws && d <= we; });
+    const now = new Date();
+    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), rangeWeeks - 1);
+    const end = endOfWeek(now, { weekStartsOn: 1 });
+    const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-rangeWeeks);
+    const labelStep = Math.max(1, Math.ceil(weeks.length / 6));
+    return weeks.map((ws, i, arr) => {
+      const we = endOfWeek(ws, { weekStartsOn: 1 });
+      const weekActs = activities.filter((a) => {
+        const d = parseISO(a.startDate);
+        return d >= ws && d <= we;
+      });
       let totalSteps = 0;
-      weekActs.forEach(a => {
-        if (a.steps) {
-          totalSteps += a.steps;
-        } else {
-          if (a.type === 'Run') totalSteps += (a.distance / 1.0);
-          else if (a.type === 'Walk') totalSteps += (a.distance / 0.75);
-        }
+      weekActs.forEach((a) => {
+        if (a.steps) totalSteps += a.steps;
+        else if (a.type === 'Run') totalSteps += a.distance / 1.0;
+        else if (a.type === 'Walk') totalSteps += a.distance / 0.75;
       });
       return {
         value: Math.round(totalSteps),
-        labelComponent: (arr.length - 1 - i) % 2 === 0 ? () => (
-          <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
-            <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
-              {format(ws, 'MMM d')}
-            </Typography>
-          </View>
-        ) : undefined,
-        frontColor: totalSteps > 0 ? theme.colors.success : theme.colors.border
+        labelComponent:
+          (arr.length - 1 - i) % labelStep === 0
+            ? () => (
+                <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
+                  <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
+                    {format(ws, 'MMM d')}
+                  </Typography>
+                </View>
+              )
+            : undefined,
+        frontColor: totalSteps > 0 ? theme.colors.success : theme.colors.border,
       };
     });
-  }, [activities]);
+  }, [activities, rangeWeeks]);
   const maxSteps = stepsData.length ? Math.max(...stepsData.map(d => d.value), 1) : 1;
   const avgSteps = stepsData.length ? Math.round(stepsData.reduce((s,d) => s + d.value, 0) / stepsData.length) : 0;
 
   // ── Time ──────────────────────────────────────────────────────────
   const timeData = useMemo(() => {
-    const now   = new Date();
-    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), 7);
-    const end   = endOfWeek(now, { weekStartsOn: 1 });
-    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-8).map((ws, i, arr) => {
-      const we  = endOfWeek(ws, { weekStartsOn: 1 });
+    const now = new Date();
+    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), rangeWeeks - 1);
+    const end = endOfWeek(now, { weekStartsOn: 1 });
+    const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-rangeWeeks);
+    const labelStep = Math.max(1, Math.ceil(weeks.length / 6));
+    return weeks.map((ws, i, arr) => {
+      const we = endOfWeek(ws, { weekStartsOn: 1 });
       const hrs = activities
-        .filter(a => { const d = parseISO(a.startDate); return d >= ws && d <= we; })
-        .reduce((s, a) => s + (a.movingTime / 3600), 0);
+        .filter((a) => {
+          const d = parseISO(a.startDate);
+          return d >= ws && d <= we;
+        })
+        .reduce((s, a) => s + a.movingTime / 3600, 0);
       return {
         value: Number(hrs.toFixed(1)),
-        labelComponent: (arr.length - 1 - i) % 2 === 0 ? () => (
-          <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
-            <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
-              {format(ws, 'MMM d')}
-            </Typography>
-          </View>
-        ) : undefined,
-        frontColor: hrs > 0 ? '#8B5CF6' : theme.colors.border
+        labelComponent:
+          (arr.length - 1 - i) % labelStep === 0
+            ? () => (
+                <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
+                  <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
+                    {format(ws, 'MMM d')}
+                  </Typography>
+                </View>
+              )
+            : undefined,
+        frontColor: hrs > 0 ? '#8B5CF6' : theme.colors.border,
       };
     });
-  }, [activities]);
+  }, [activities, rangeWeeks]);
   const maxTime = timeData.length ? Math.max(...timeData.map(d => d.value), 1) : 1;
   const avgTime = timeData.length ? (timeData.reduce((s,d) => s + d.value, 0) / timeData.length).toFixed(1) : 0;
 
   // ── Calories ──────────────────────────────────────────────────────
   const caloriesData = useMemo(() => {
-    const now   = new Date();
-    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), 7);
-    const end   = endOfWeek(now, { weekStartsOn: 1 });
-    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-8).map((ws, i, arr) => {
-      const we  = endOfWeek(ws, { weekStartsOn: 1 });
+    const now = new Date();
+    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), rangeWeeks - 1);
+    const end = endOfWeek(now, { weekStartsOn: 1 });
+    const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-rangeWeeks);
+    const labelStep = Math.max(1, Math.ceil(weeks.length / 6));
+    return weeks.map((ws, i, arr) => {
+      const we = endOfWeek(ws, { weekStartsOn: 1 });
       const cals = activities
-        .filter(a => { const d = parseISO(a.startDate); return d >= ws && d <= we; })
+        .filter((a) => {
+          const d = parseISO(a.startDate);
+          return d >= ws && d <= we;
+        })
         .reduce((s, a) => s + (a.calories || 0), 0);
       return {
         value: Math.round(cals),
-        labelComponent: (arr.length - 1 - i) % 2 === 0 ? () => (
-          <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
-            <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
-              {format(ws, 'MMM d')}
-            </Typography>
-          </View>
-        ) : undefined,
-        frontColor: cals > 0 ? '#EF4444' : theme.colors.border
+        labelComponent:
+          (arr.length - 1 - i) % labelStep === 0
+            ? () => (
+                <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
+                  <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
+                    {format(ws, 'MMM d')}
+                  </Typography>
+                </View>
+              )
+            : undefined,
+        frontColor: cals > 0 ? '#EF4444' : theme.colors.border,
       };
     });
-  }, [activities]);
+  }, [activities, rangeWeeks]);
   const maxCalories = caloriesData.length ? Math.max(...caloriesData.map(d => d.value), 1) : 1;
   const avgCalories = caloriesData.length ? Math.round(caloriesData.reduce((s,d) => s + d.value, 0) / caloriesData.length) : 0;
 
   // ── Power ─────────────────────────────────────────────────────────
   const powerData = useMemo(() => {
-    return [...activities]
-      .filter(a => a.averageWatts && a.averageWatts > 0)
-      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
-      .slice(-20)
-      .map((act, i, arr) => {
-        const isLast = i === arr.length - 1;
-        return {
-          value: Math.round(act.averageWatts || 0),
-          labelComponent: (i % 4 === 0 || isLast) ? () => (
-            <View style={{ width: 40, transform: [{ translateX: -10 }] }}>
-              <Typography style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700', textAlign: 'center' }}>
-                {format(parseISO(act.startDate), 'MMM d')}
-              </Typography>
-            </View>
-          ) : undefined,
-        };
-      });
-  }, [activities]);
+    const items = [...windowedActivities]
+      .filter((a) => a.averageWatts && a.averageWatts > 0)
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+    const step = Math.max(1, Math.ceil(items.length / 5));
+    return items.map((act, i, arr) => {
+      const isLast = i === arr.length - 1;
+      return {
+        value: Math.round(act.averageWatts || 0),
+        labelComponent:
+          i % step === 0 || isLast
+            ? () => (
+                <View style={{ width: 40, transform: [{ translateX: -10 }] }}>
+                  <Typography style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700', textAlign: 'center' }}>
+                    {format(parseISO(act.startDate), 'MMM d')}
+                  </Typography>
+                </View>
+              )
+            : undefined,
+      };
+    });
+  }, [windowedActivities]);
   const maxPower = powerData.length ? Math.max(...powerData.map(d => d.value), 1) : 1;
   const avgPower = powerData.length ? Math.round(powerData.reduce((s,d) => s + d.value, 0) / powerData.length) : 0;
 
   // ── Cadence ───────────────────────────────────────────────────────
   const cadenceData = useMemo(() => {
-    return [...activities]
-      .filter(a => (a.averageCadence || 0) > 0)
-      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
-      .slice(-20)
-      .map((act, i, arr) => ({
-        value: Math.round((act.averageCadence || 0) * 2), // steps per min (Strava stores as one-leg)
-        labelComponent: (i % 4 === 0 || i === arr.length - 1) ? () => (
-          <View style={{ width: 40, transform: [{ translateX: -10 }] }}>
-            <Typography style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700', textAlign: 'center' }}>
-              {format(parseISO(act.startDate), 'MMM d')}
-            </Typography>
-          </View>
-        ) : undefined,
-      }));
-  }, [activities]);
+    const items = [...windowedActivities]
+      .filter((a) => (a.averageCadence || 0) > 0)
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+    const step = Math.max(1, Math.ceil(items.length / 5));
+    return items.map((act, i, arr) => ({
+      value: Math.round((act.averageCadence || 0) * 2), // steps per min (Strava stores as one-leg)
+      labelComponent:
+        i % step === 0 || i === arr.length - 1
+          ? () => (
+              <View style={{ width: 40, transform: [{ translateX: -10 }] }}>
+                <Typography style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700', textAlign: 'center' }}>
+                  {format(parseISO(act.startDate), 'MMM d')}
+                </Typography>
+              </View>
+            )
+          : undefined,
+    }));
+  }, [windowedActivities]);
   const avgCadence = cadenceData.length ? Math.round(cadenceData.reduce((s, d) => s + d.value, 0) / cadenceData.length) : 0;
   const maxCadence = cadenceData.length ? Math.max(...cadenceData.map(d => d.value), 1) : 200;
 
@@ -308,7 +374,8 @@ export default function InsightsScreen() {
     radius: 6,
     pointerLabelWidth: 80,
     pointerLabelHeight: 30,
-    activatePointersOnLongPress: true,
+    activatePointersOnLongPress: false,
+    activatePointersDelay: 0,
     autoAdjustPointerLabelPosition: true,
     pointerLabelComponent: (items: any) => {
       if (!items || !items[0]) return null;
@@ -375,7 +442,20 @@ export default function InsightsScreen() {
   };
 
   const EmptyChart = ({ msg }: { msg: string }) => (
-    <View style={st.emptyChart}><Typography style={st.emptyText}>{msg}</Typography></View>
+    <View style={st.emptyChart}>
+      <View style={st.skeletonRow}>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton
+            key={i}
+            width={18}
+            height={40 + (i * 11) % 60}
+            radius={4}
+            style={{ marginHorizontal: 4 }}
+          />
+        ))}
+      </View>
+      <Typography style={st.emptyText}>{msg}</Typography>
+    </View>
   );
 
   const Insight = ({ text, color }: { text: string; color: string }) => (
@@ -416,6 +496,36 @@ export default function InsightsScreen() {
           <Settings2 size={13} color={theme.colors.primary} />
           <Typography style={st.manageBtnText}>Manage</Typography>
         </TouchableOpacity>
+      </View>
+
+      {/* Range selector — controls every time-series chart below */}
+      <View style={st.rangeBar}>
+        {(Object.keys(RANGE_LABELS) as Range[]).map((r) => {
+          const selected = r === range;
+          return (
+            <TouchableOpacity
+              key={r}
+              onPress={() => {
+                Haptics.selectionAsync();
+                setRange(r);
+              }}
+              style={[
+                st.rangePill,
+                selected && { backgroundColor: theme.colors.primary + '22', borderColor: theme.colors.primary },
+              ]}
+            >
+              <Typography
+                style={{
+                  fontSize: 12,
+                  fontWeight: '700',
+                  color: selected ? theme.colors.primary : theme.colors.textSecondary,
+                }}
+              >
+                {RANGE_LABELS[r]}
+              </Typography>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={st.scroll}>
@@ -480,11 +590,24 @@ export default function InsightsScreen() {
                 {/* ── PACE ── */}
                 {t.key === 'pace' && (
                   <>
-                    <CardHeader title="Running Pace" sub="Min/km trend over last 20 runs" colors={C}
+                    <CardHeader title="Running Pace" sub={`Min/km trend · ${paceData.length} runs in window`} colors={C}
                       stat={bestPace ? fmtPace(bestPace) : '--'} statUnit="/km best" />
+                    {paceHRData.length > 0 && (
+                      <TouchableOpacity
+                        onPress={() => { Haptics.selectionAsync(); setCompareHR(v => !v); }}
+                        style={[st.compareChip, compareHR && { backgroundColor: '#EF444422', borderColor: '#EF4444' }]}
+                      >
+                        <Heart size={11} color={compareHR ? '#EF4444' : theme.colors.textSecondary} />
+                        <Typography style={{ fontSize: 11, fontWeight: '700', color: compareHR ? '#EF4444' : theme.colors.textSecondary }}>
+                          {compareHR ? 'Comparing HR' : 'Compare HR'}
+                        </Typography>
+                      </TouchableOpacity>
+                    )}
                     {paceData.length > 1 ? (
                       <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                        <LineChart data={paceData} height={180} width={CHART_W} thickness={3} color={C[0]}
+                        <LineChart data={paceData}
+                          {...(compareHR && paceHRData.length === paceData.length ? { data2: paceHRData, color2: '#EF4444', secondaryYAxis: { yAxisColor: 'transparent', yAxisTextStyle: { color: '#EF4444', fontSize: 10, fontWeight: '700' } } } : {})}
+                          height={180} width={CHART_W} thickness={3} color={C[0]}
                           hideDataPoints curved areaChart
                           maxValue={Math.ceil(Math.max(...paceData.map(d=>d.value)) * 1.15)}
                           initialSpacing={12}
@@ -733,6 +856,33 @@ const st = StyleSheet.create({
   insightBar:  { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 14, padding: 10, borderRadius: 8, borderLeftWidth: 3 },
   insightText: { fontSize: 12, flex: 1, lineHeight: 18, fontWeight: '600' },
 
-  emptyChart: { height: 120, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
+  emptyChart: { height: 160, alignItems: 'center', justifyContent: 'center', marginTop: 12, gap: 12 },
   emptyText:  { color: theme.colors.textSecondary, fontSize: 13, textAlign: 'center' },
+  skeletonRow: { flexDirection: 'row', alignItems: 'flex-end', height: 100 },
+
+  rangeBar: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+  rangePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: theme.borderRadius.full,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  compareChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: theme.borderRadius.full,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginTop: 8,
+  },
 });

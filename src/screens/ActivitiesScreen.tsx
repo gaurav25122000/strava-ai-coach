@@ -8,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '../theme';
 import { Typography } from '../components/Typography';
 import { Card } from '../components/Card';
+import { AnimatedNumber } from '../components/AnimatedNumber';
 import { useStore, Activity } from '../store/useStore';
 import {
   Footprints, Wind, Zap, Heart, TrendingUp,
@@ -90,7 +91,7 @@ export default function ActivitiesScreen() {
     const km = (act.distance / 1000).toFixed(2);
     return (
       <TouchableOpacity onPress={() => openDetail(act)} activeOpacity={0.8}>
-        <Card style={[s.actCard, { borderLeftColor: color, borderLeftWidth: 3 }]}>
+        <Card variant="elevated" style={[s.actCard, { borderLeftColor: color, borderLeftWidth: 3 }]}>
           <View style={s.actRow}>
             <View style={[s.iconWrap, { backgroundColor: color + '22' }]}>
               {getIcon(act.type, color)}
@@ -142,21 +143,26 @@ export default function ActivitiesScreen() {
   return (
     <SafeAreaView style={s.container} edges={['top']}>
       {/* Header */}
-      <LinearGradient colors={['#1a1a2e', '#16213e']} style={s.header}>
-        <Typography style={s.title}>Activities</Typography>
+      <LinearGradient
+        colors={theme.colors.gradients.hero}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={s.header}
+      >
+        <Typography variant="display" style={s.title}>Activities</Typography>
         <View style={s.statRow}>
           <View style={s.headerStat}>
-            <Typography style={s.headerStatVal}>{stats.total}</Typography>
+            <AnimatedNumber value={stats.total} style={s.headerStatVal} />
             <Typography style={s.headerStatLbl}>Total</Typography>
           </View>
           <View style={s.headerDivider} />
           <View style={s.headerStat}>
-            <Typography style={s.headerStatVal}>{stats.runs}</Typography>
+            <AnimatedNumber value={stats.runs} style={s.headerStatVal} />
             <Typography style={s.headerStatLbl}>Runs</Typography>
           </View>
           <View style={s.headerDivider} />
           <View style={s.headerStat}>
-            <Typography style={s.headerStatVal}>{stats.totalKm}</Typography>
+            <AnimatedNumber value={stats.totalKm} style={s.headerStatVal} />
             <Typography style={s.headerStatLbl}>km Total</Typography>
           </View>
         </View>
@@ -208,13 +214,21 @@ export default function ActivitiesScreen() {
       >
         {TYPES.map(t => {
           const active = filter === t;
+          const chipColor = TYPE_COLORS[t] || theme.colors.primary;
           return (
             <TouchableOpacity
               key={t}
-              style={[s.chip, active && { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }]}
+              style={[
+                s.chip,
+                active && {
+                  backgroundColor: chipColor + '22',
+                  borderColor: chipColor,
+                  ...theme.shadows.glow(chipColor),
+                },
+              ]}
               onPress={() => setFilter(t)}
             >
-              <Typography style={[s.chipText, active && { color: '#fff' }]}>{t}</Typography>
+              <Typography style={[s.chipText, active && { color: chipColor }]}>{t}</Typography>
             </TouchableOpacity>
           );
         })}

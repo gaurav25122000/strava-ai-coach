@@ -27,16 +27,25 @@ export const NotificationService = {
     await Notifications.cancelAllScheduledNotificationsAsync();
   },
 
+  cancelStreakReminder: async () => {
+    try {
+      await Notifications.cancelScheduledNotificationAsync('streak-reminder');
+    } catch {
+      // identifier may not exist — ignore
+    }
+  },
+
   // Schedule a weekly recap every Monday at 08:00
   scheduleWeeklyRecap: async (stats: {
     weekKm: number; weekDays: number; streak: number;
   }) => {
-    await Notifications.cancelAllScheduledNotificationsAsync();
-
     const granted = await NotificationService.requestPermission();
     if (!granted) return;
 
-    // Weekly recap — every Monday 8am
+    try {
+      await Notifications.cancelScheduledNotificationAsync('weekly-recap');
+    } catch {}
+
     await Notifications.scheduleNotificationAsync({
       identifier: 'weekly-recap',
       content: {
@@ -53,12 +62,19 @@ export const NotificationService = {
     });
   },
 
-  // Streak at risk reminder — fires daily at 20:00 if streak > 0
-  scheduleStreakReminder: async (streak: number) => {
-    if (streak === 0) return;
+  // Streak at risk reminder — fires daily at 20:00 only when streak is active
+  // and the user hasn't logged today yet. Caller must pass current state on
+  // every state change / app foreground so the schedule stays in sync.
+  scheduleStreakReminder: async (streak: number, hasActivityToday: boolean) => {
+    if (streak <= 0 || hasActivityToday) {
+      await NotificationService.cancelStreakReminder();
+      return;
+    }
 
     const granted = await NotificationService.requestPermission();
     if (!granted) return;
+
+    await NotificationService.cancelStreakReminder();
 
     await Notifications.scheduleNotificationAsync({
       identifier: 'streak-reminder',

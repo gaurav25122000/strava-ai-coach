@@ -4,12 +4,12 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import TabNavigator from './src/navigation/TabNavigator';
 import { theme } from './src/theme';
 import { StravaService } from './src/services/strava';
-import { NotificationService } from './src/services/notifications';
+import { syncAllNotifications } from './src/services/notificationSync';
 import { registerBackgroundSync } from './src/services/backgroundSync';
 import { useStore } from './src/store/useStore';
 import { useEffect, useState } from 'react';
 import Animated, { FadeOut, FadeIn } from 'react-native-reanimated';
-import { View, StyleSheet } from 'react-native';
+import { AppState, StyleSheet } from 'react-native';
 import { Typography } from './src/components/Typography';
 import { Flame } from 'lucide-react-native';
 import { GlobalToast } from './src/components/GlobalToast';
@@ -62,30 +62,32 @@ export default function App() {
     };
     init();
 
-    // Schedule notifications after a short delay (gives store time to hydrate)
-    const notifTimer = setTimeout(async () => {
-      const state = useStore.getState();
-      const { activities, userStats, goals } = state;
-
-      // Weekly recap stats
-      const now = new Date();
-      const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay() + 1);
-      const weekActs = activities.filter(a => new Date(a.startDate) >= weekStart);
-      const weekKm = weekActs.reduce((s, a) => s + a.distance / 1000, 0);
-      const weekDays = new Set(weekActs.map(a => a.startDate.split('T')[0])).size;
-
-      await NotificationService.scheduleWeeklyRecap({ weekKm, weekDays, streak: userStats.currentStreak });
-      await NotificationService.scheduleStreakReminder(userStats.currentStreak);
-
-      // Goal deadline reminders
-      for (const goal of goals) {
-        if (!goal.isSimple && goal.daysRemaining > 0 && goal.daysRemaining <= 7) {
-          await NotificationService.scheduleGoalDeadline(goal.title, goal.daysRemaining);
-        }
-      }
+    // Initial sync after store hydrates
+    const notifTimer = setTimeout(() => {
+      syncAllNotifications().catch(e => console.warn('notif sync error:', e));
     }, 3000);
 
-    return () => clearTimeout(notifTimer);
+    // Re-sync whenever activities change (covers streak going active/inactive
+    // and "logged today" transitions)
+    const unsubActivities = useStore.subscribe((s, prev) => {
+      if (s.activities !== prev.activities || s.userStats !== prev.userStats) {
+        syncAllNotifications().catch(e => console.warn('notif sync error:', e));
+      }
+    });
+
+    // Re-sync on app foreground — day boundary may have crossed while
+    // backgrounded, and the streak may now be broken or already-logged.
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        syncAllNotifications().catch(e => console.warn('notif sync error:', e));
+      }
+    });
+
+    return () => {
+      clearTimeout(notifTimer);
+      unsubActivities();
+      appStateSub.remove();
+    };
   }, []);
 
   const customDarkTheme = {

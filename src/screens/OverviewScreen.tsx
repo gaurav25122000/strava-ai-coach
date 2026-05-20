@@ -16,6 +16,8 @@ import { StravaService } from "../services/strava";
 import { AIService } from "../services/ai";
 import { Card } from "../components/Card";
 import { Typography } from "../components/Typography";
+import { AnimatedNumber } from "../components/AnimatedNumber";
+import { Pulsing } from "../components/Pulsing";
 import { HeatmapCalendar } from "../components/HeatmapCalendar";
 import { useStore } from "../store/useStore";
 import {
@@ -56,6 +58,9 @@ import {
   endOfWeek,
   isWithinInterval,
   subWeeks,
+  startOfMonth,
+  endOfMonth,
+  subMonths,
 } from "date-fns";
 import { ProgressBar } from "../components/ProgressBar";
 
@@ -429,7 +434,7 @@ export default function OverviewScreen() {
       high = 0;
     const threshold = (userProfile?.maxHR || 190) * 0.75;
     hrActs.forEach((a) => {
-      if (a.averageHeartRate <= threshold) low++;
+      if ((a.averageHeartRate ?? 0) <= threshold) low++;
       else high++;
     });
     const total = low + high;
@@ -489,16 +494,29 @@ export default function OverviewScreen() {
 
   const activeGoal = goals.length > 0 ? goals[0] : undefined;
 
-  // Monthly distance for last 4 months
+  // Monthly distance for the last 4 calendar months, ending with the current month.
+  // Buckets by year+month so activities from the same month in different years
+  // don't collapse together.
   const monthlyData = useMemo(() => {
-    const months: Record<string, number> = {};
+    const now = new Date();
+    const buckets: { key: string; label: string; start: Date; end: Date; km: number }[] = [];
+    for (let i = 3; i >= 0; i--) {
+      const ref = subMonths(now, i);
+      buckets.push({
+        key: format(ref, "yyyy-MM"),
+        label: format(ref, "MMM"),
+        start: startOfMonth(ref),
+        end: endOfMonth(ref),
+        km: 0,
+      });
+    }
     activities.forEach((a) => {
-      const key = format(parseISO(a.startDate), "MMM");
-      months[key] = (months[key] || 0) + a.distance / 1000;
+      const d = parseISO(a.startDate);
+      const k = format(d, "yyyy-MM");
+      const bucket = buckets.find((b) => b.key === k);
+      if (bucket) bucket.km += a.distance / 1000;
     });
-    return Object.entries(months)
-      .slice(-4)
-      .map(([month, km]) => ({ month, km: Math.round(km) }));
+    return buckets.map((b) => ({ month: b.label, km: Math.round(b.km) }));
   }, [activities]);
 
   // Heart rate stats
@@ -547,7 +565,11 @@ export default function OverviewScreen() {
 
   // Cadence stats: avg cadence over last 4 weeks (runs)
   const cadenceStats = useMemo(() => {
-    const runs = activities.filter(a => a.type === 'Run' && (a.averageCadence || 0) > 0);
+    // Sort newest → oldest so "recent" really means recent regardless of the
+    // store's insertion order.
+    const runs = activities
+      .filter(a => a.type === 'Run' && (a.averageCadence || 0) > 0)
+      .sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
     if (!runs.length) return null;
     const last4w = runs.filter(a => (Date.now() - new Date(a.startDate).getTime()) / 86400000 <= 28);
     if (!last4w.length) return null;
@@ -556,8 +578,10 @@ export default function OverviewScreen() {
     const spm = avg * 2;
     const trend = runs.length > 1
       ? (() => {
-          const recent = runs.slice(0, Math.min(5, Math.floor(runs.length / 2))).reduce((s, a) => s + (a.averageCadence || 0), 0) / Math.min(5, Math.floor(runs.length / 2));
-          const older = runs.slice(Math.min(5, Math.floor(runs.length / 2))).reduce((s, a) => s + (a.averageCadence || 0), 0) / Math.max(1, runs.length - Math.min(5, Math.floor(runs.length / 2)));
+          const half = Math.max(1, Math.min(5, Math.floor(runs.length / 2)));
+          const recent = runs.slice(0, half).reduce((s, a) => s + (a.averageCadence || 0), 0) / half;
+          const olderCount = Math.max(1, runs.length - half);
+          const older = runs.slice(half).reduce((s, a) => s + (a.averageCadence || 0), 0) / olderCount;
           return recent > older ? 'up' : recent < older - 1 ? 'down' : 'flat';
         })()
       : 'flat';
@@ -889,7 +913,12 @@ export default function OverviewScreen() {
                     entering={FadeInDown.delay(100).springify()}
                     layout={Layout.springify()}
                   >
-                    <View style={styles.heroBanner}>
+                    <LinearGradient
+                      colors={['rgba(249,115,22,0.18)', 'rgba(139,92,246,0.12)']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.heroBanner}
+                    >
                       <View style={styles.heroLeft}>
                         <View
                           style={{
@@ -899,7 +928,13 @@ export default function OverviewScreen() {
                             marginBottom: 4,
                           }}
                         >
-                          <Flame color={theme.colors.primary} size={16} />
+                          {userStats.currentStreak > 0 ? (
+                            <Pulsing>
+                              <Flame color={theme.colors.primary} size={16} />
+                            </Pulsing>
+                          ) : (
+                            <Flame color={theme.colors.primary} size={16} />
+                          )}
                           <Typography
                             style={[styles.heroLabel, { marginBottom: 0 }]}
                           >
@@ -912,9 +947,7 @@ export default function OverviewScreen() {
                             { alignItems: "flex-end", marginTop: 0 },
                           ]}
                         >
-                          <Typography style={styles.heroNumber}>
-                            {userStats.currentStreak}
-                          </Typography>
+                          <AnimatedNumber value={userStats.currentStreak} style={styles.heroNumber as any} />
                           <Typography
                             style={[styles.heroDays, { marginBottom: 12 }]}
                           >
@@ -944,7 +977,8 @@ export default function OverviewScreen() {
                             { alignItems: "flex-end", marginTop: 0 },
                           ]}
                         >
-                          <Typography
+                          <AnimatedNumber
+                            value={userStats.currentWeeklyStreak || 0}
                             style={[
                               styles.heroNumber,
                               {
@@ -952,10 +986,8 @@ export default function OverviewScreen() {
                                 fontSize: 36,
                                 lineHeight: 40,
                               },
-                            ]}
-                          >
-                            {userStats.currentWeeklyStreak || 0}
-                          </Typography>
+                            ] as any}
+                          />
                           <Typography
                             style={[styles.heroDays, { marginBottom: 4 }]}
                           >
@@ -991,7 +1023,7 @@ export default function OverviewScreen() {
                           </Typography>
                         </View>
                       </View>
-                    </View>
+                    </LinearGradient>
                   </Animated.View>
                 </View>
               );
@@ -1323,7 +1355,7 @@ export default function OverviewScreen() {
                               marginLeft: 4,
                             }}
                           >
-                            km run this year
+                            km this year
                           </Typography>
                         </View>
                       </Card>
@@ -1530,7 +1562,7 @@ export default function OverviewScreen() {
               return (
                 <View key={widgetId + idx} style={{ marginBottom: 16 }}>
                   {/* ── Monthly Volume ── */}
-                  {monthlyData.length > 0 && (
+                  {monthlyData.some((m) => m.km > 0) && (
                     <Animated.View
                       entering={FadeInDown.delay(500).springify()}
                       layout={Layout.springify()}
@@ -2363,7 +2395,7 @@ export default function OverviewScreen() {
               Active Widgets
             </Typography>
             {(settings.widgetLayout || defaultLayout).map((id, idx) => {
-              const WIDGET_NAMES = {
+              const WIDGET_NAMES: Record<string, string> = {
                 HeroBanner: "Streaks & Totals",
                 CurrentFocus: "Current Focus",
                 WeeklyDigest: "AI Weekly Digest",
@@ -2387,6 +2419,10 @@ export default function OverviewScreen() {
                 BestEfforts: "Estimated Best Efforts",
                 Badges: "Milestones & Badges",
                 CoachInsight: "Coach Insight",
+                PaceTrend: "Pace Trend (8 Weeks)",
+                Cadence: "Cadence Tracker",
+                WellnessScore: "Wellness Score",
+                UpcomingWorkout: "Upcoming Workout",
               };
               const title = WIDGET_NAMES[id] || id;
               return (
@@ -2467,7 +2503,7 @@ export default function OverviewScreen() {
                 (id) => !(settings.widgetLayout || defaultLayout).includes(id),
               )
               .map((id) => {
-                const WIDGET_NAMES = {
+                const WIDGET_NAMES: Record<string, string> = {
                   HeroBanner: "Streaks & Totals",
                   CurrentFocus: "Current Focus",
                   WeeklyDigest: "AI Weekly Digest",

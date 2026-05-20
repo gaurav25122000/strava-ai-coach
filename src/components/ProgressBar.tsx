@@ -1,37 +1,51 @@
 import React, { useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming, Easing } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, withDelay } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '../theme';
 
 interface ProgressBarProps {
   progress: number; // 0 to 100
   color?: string;
   height?: number;
+  gradient?: [string, string];
+  delay?: number;
 }
 
 export const ProgressBar = ({
   progress,
   color = theme.colors.success,
-  height = 6
+  height = 6,
+  gradient,
+  delay = 0,
 }: ProgressBarProps) => {
   const width = useSharedValue(0);
 
   useEffect(() => {
-    width.value = withTiming(progress, {
-      duration: 1000,
-      easing: Easing.out(Easing.exp),
-    });
-  }, [progress]);
+    width.value = withDelay(
+      delay,
+      withSpring(progress, { damping: 18, stiffness: 110, mass: 0.9 }),
+    );
+  }, [progress, delay]);
 
-  const animatedStyle = useAnimatedStyle(() => {
-    return {
-      width: `${width.value}%`,
-    };
-  });
+  const animatedStyle = useAnimatedStyle(() => ({
+    width: `${width.value}%`,
+  }));
 
   return (
     <View style={[styles.container, { height }]}>
-      <Animated.View style={[styles.bar, { backgroundColor: color }, animatedStyle]} />
+      <Animated.View style={[styles.bar, animatedStyle]}>
+        {gradient ? (
+          <LinearGradient
+            colors={gradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={StyleSheet.absoluteFillObject}
+          />
+        ) : (
+          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: color }]} />
+        )}
+      </Animated.View>
     </View>
   );
 };
