@@ -1,15 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView, FlatList, Animated as RNAnimated } from 'react-native';
+import { View, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView, FlatList, Animated as RNAnimated } from 'react-native';
+import { styles, goalMarkdownStyles } from './GoalsScreen.styles';
 import Markdown from 'react-native-markdown-display';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '../theme';
 import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
 import { ProgressBar } from '../components/ProgressBar';
-import { useStore, Goal } from '../store/useStore';
+import { useStore, Goal, DailyPrescription, CheckIn } from '../store/useStore';
 import { Flame, PersonStanding, Plus, Zap, X, Calendar, Trophy, TrendingUp, Clock, Heart, MapPin, Activity, Pencil, MessageCircle, Send, Bot } from 'lucide-react-native';
 import { AIService, ChatMessage } from '../services/ai';
-import { differenceInDays, parseISO, format, getWeek, getMonth, getYear, startOfWeek, startOfMonth, endOfWeek, endOfMonth } from 'date-fns';
+import { computeProgress } from '../services/goalProgress';
+import { differenceInDays, parseISO, format, getWeek, getMonth, getYear, startOfWeek, startOfMonth, endOfWeek, endOfMonth, addDays } from 'date-fns';
+import { WeekStrip } from '../components/WeekStrip';
+import { DayDetailSheet, DayContext, DayCheckInPayload } from '../components/DayDetailSheet';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown, Layout, useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSequence, Easing } from 'react-native-reanimated';
@@ -59,29 +63,11 @@ function GoalThinkingDots() {
   );
 }
 
-const goalMarkdownStyles = StyleSheet.create({
-  body: { color: theme.colors.text, fontSize: 13, lineHeight: 20 },
-  heading1: { color: theme.colors.text, fontSize: 16, fontWeight: '700', marginBottom: 4, marginTop: 6 },
-  heading2: { color: theme.colors.text, fontSize: 14, fontWeight: '700', marginBottom: 3, marginTop: 4 },
-  heading3: { color: '#f97316', fontSize: 13, fontWeight: '700', marginBottom: 2, marginTop: 3 },
-  strong: { fontWeight: '700', color: theme.colors.text },
-  em: { fontStyle: 'italic', color: theme.colors.textSecondary },
-  bullet_list: { marginVertical: 4 },
-  ordered_list: { marginVertical: 4 },
-  code_inline: { backgroundColor: '#ffffff15', borderRadius: 4, paddingHorizontal: 4, color: '#ec4899', fontSize: 12 },
-  fence: { backgroundColor: '#0f0f1a', borderRadius: 8, padding: 10, marginVertical: 4, borderWidth: 1, borderColor: theme.colors.border },
-  table: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6, marginVertical: 6, overflow: 'hidden' },
-  thead: { backgroundColor: '#f973160f' },
-  th: { padding: 6, fontWeight: '700', color: '#f97316', fontSize: 11, borderRightWidth: 1, borderRightColor: theme.colors.border },
-  td: { padding: 6, color: theme.colors.text, fontSize: 11, borderRightWidth: 1, borderRightColor: theme.colors.border },
-  tr: { borderBottomWidth: 1, borderBottomColor: theme.colors.border, flexDirection: 'row' },
-  paragraph: { marginVertical: 2 },
-  link: { color: '#6366f1' },
-  blockquote: { backgroundColor: '#f9731610', borderLeftWidth: 3, borderLeftColor: '#f97316', paddingLeft: 8, marginVertical: 4, borderRadius: 4 },
-});
-
 export default function GoalsScreen() {
-  const { goals, deleteGoal, addGoal, updateGoal, activities, settings, userProfile, setToast } = useStore();
+  const { goals, deleteGoal, addGoal, updateGoal, addCheckIn, activities, settings, userProfile, setToast } = useStore();
+  // Day-detail bottom sheet target — null when closed. The sheet owns its
+  // own notes/RPE form state; this just routes the open/close + payload.
+  const [dayDetail, setDayDetail] = useState<DayContext | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingGoal, setEditingGoal] = useState<string | null>(null); // goal id being edited
   const [newGoalTitle, setNewGoalTitle] = useState('');
@@ -222,6 +208,62 @@ export default function GoalsScreen() {
     }
     return () => { if (msgIntervalRef.current) clearInterval(msgIntervalRef.current); };
   }, [isGenerating]);
+
+  // ── AI-goal helpers ────────────────────────────────────────────────
+  // Resolve which 7-day phase window covers today. Falls back to first phase
+  // so older plans (no weekStart/weekEnd) still render meaningfully.
+  const activePhase = (goal: Goal) => {
+    const phases = goal.phases || [];
+    if (!phases.length) return undefined;
+    const t = Date.now();
+    return phases.find(p => p.weekStart && p.weekEnd
+      && parseISO(p.weekStart).getTime() <= t
+      && parseISO(p.weekEnd).getTime() >= t) || phases[0];
+  };
+
+  // WeekStrip → day chip tap. Opens the bottom sheet seeded with whatever
+  // check-in already exists for that date (manual or Strava-derived).
+  const handleOpenDay = (goal: Goal, dayIndex: 0|1|2|3|4|5|6) => {
+    const mondayOfThisWeek = startOfWeek(new Date(), { weekStartsOn: 1 });
+    const date = format(addDays(mondayOfThisWeek, dayIndex), 'yyyy-MM-dd');
+    const presc = activePhase(goal)?.schedule?.find(p => p.dayOfWeek === dayIndex);
+    const existing = (goal.checkIns || []).find(c => c.date === date);
+    setDayDetail({ goalId: goal.id, date, dayOfWeek: dayIndex, prescription: presc, existingCheckIn: existing });
+  };
+
+  // DayDetailSheet → manual check-in. Persist, then re-derive plan progress
+  // so the dial and chip ✓ update without waiting for a Strava sync.
+  const handleManualCheckIn = (day: DayContext, payload: DayCheckInPayload) => {
+    const checkIn: CheckIn = {
+      date: day.date,
+      dayOfWeek: day.dayOfWeek,
+      source: 'MANUAL',
+      workoutKind: day.prescription?.kind || 'EASY',
+      completed: payload.completed,
+      notes: payload.notes || undefined,
+      perceivedEffort: payload.rpe,
+    };
+    addCheckIn(day.goalId, checkIn);
+    const fresh = useStore.getState().goals.find(g => g.id === day.goalId);
+    if (fresh) updateGoal(computeProgress(fresh, useStore.getState().activities));
+    setDayDetail(null);
+    setToast({
+      title: payload.completed ? 'Logged ✓' : 'Saved',
+      message: 'Workout updated.',
+      type: 'success',
+    });
+  };
+
+  const handleSyncGoal = (goal: Goal) => {
+    const updated = computeProgress(goal, activities);
+    updateGoal(updated);
+    const matched = (updated.checkIns || []).filter(c => c.source === 'STRAVA').length;
+    setToast({
+      title: 'Synced from Strava',
+      message: `${matched} activit${matched === 1 ? 'y' : 'ies'} matched to your plan.`,
+      type: 'success',
+    });
+  };
 
   const calculateSimpleGoalProgress = (goal: Goal) => {
     if (!goal.isSimple) return 0;
@@ -544,11 +586,21 @@ export default function GoalsScreen() {
                 </>
               );
             })() : (
-              <View style={styles.statBox}>
-                <Typography variant="label">DAYS OUT</Typography>
-                <Typography variant="h1" color={goal.id === '1' ? theme.colors.error : theme.colors.success}>{goal.daysRemaining}</Typography>
-                <Typography variant="caption">{Math.floor(goal.daysRemaining / 7)} weeks to go</Typography>
-              </View>
+              <>
+                <View style={styles.daysOutRow}>
+                  <View style={{ flex: 1 }}>
+                    <Typography variant="label">DAYS OUT</Typography>
+                    <Typography variant="h1" color={goal.id === '1' ? theme.colors.error : theme.colors.success}>{goal.daysRemaining}</Typography>
+                    <Typography variant="caption">{Math.floor(goal.daysRemaining / 7)} weeks to go</Typography>
+                  </View>
+                  <View style={styles.progressDial}>
+                    <Typography style={styles.progressDialPct}>{Math.round(goal.progress || 0)}%</Typography>
+                    <Typography variant="caption" style={{ color: theme.colors.textSecondary, marginTop: 2 }}>plan progress</Typography>
+                  </View>
+                </View>
+
+                <WeekStrip goal={goal} onPressDay={handleOpenDay} onSync={handleSyncGoal} />
+              </>
             )}
 
             {/* Phases Rendering */}
@@ -995,197 +1047,13 @@ export default function GoalsScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
+      <DayDetailSheet
+        day={dayDetail}
+        onClose={() => setDayDetail(null)}
+        onCheckIn={handleManualCheckIn}
+      />
+
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-  },
-  scrollContent: {
-    paddingBottom: theme.spacing.xxl,
-  },
-  header: {
-    marginBottom: theme.spacing.lg,
-  },
-  heroHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 20,
-    marginBottom: 16,
-  },
-  heroTitle: { fontSize: 24, fontWeight: '900', color: '#fff' },
-  heroSub: { fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 4 },
-  heroAddBtn: {
-    width: 48, height: 48, borderRadius: 24,
-    backgroundColor: 'rgba(255,255,255,0.22)',
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
-    ...theme.shadows.md,
-  },
-  emptyState: {
-    alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 24, paddingVertical: 60,
-    marginHorizontal: 16,
-  },
-  emptyTitle: { fontSize: 17, fontWeight: '800', color: theme.colors.text, marginTop: 16 },
-  emptySub: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 6, textAlign: 'center' },
-  addButton: {
-    backgroundColor: theme.colors.primary,
-    flexDirection: 'row',
-    alignSelf: 'flex-start',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.xl,
-  },
-  goalCard: {
-    padding: theme.spacing.lg,
-    marginBottom: theme.spacing.lg,
-    marginHorizontal: theme.spacing.md,
-  },
-  goalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: theme.spacing.lg,
-  },
-  goalTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  iconButton: {
-    padding: 6,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: theme.borderRadius.sm,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    marginBottom: theme.spacing.xl,
-    gap: 16,
-  },
-  statBox: {
-    flex: 1,
-  },
-  phaseBox: {
-    backgroundColor: 'rgba(99, 102, 241, 0.12)',
-    padding: theme.spacing.md,
-    borderRadius: theme.borderRadius.md,
-    borderLeftWidth: 3,
-    borderLeftColor: '#6366f1',
-  },
-  progressSection: {
-    marginBottom: theme.spacing.lg,
-  },
-  progressRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  workoutBox: {
-    marginTop: theme.spacing.md,
-    padding: theme.spacing.md,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: theme.borderRadius.md,
-    borderLeftWidth: 2,
-    borderLeftColor: '#FBBF24',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: theme.colors.surface,
-    borderTopLeftRadius: theme.borderRadius.xl,
-    borderTopRightRadius: theme.borderRadius.xl,
-    padding: theme.spacing.lg,
-    maxHeight: '85%',
-    minHeight: 320,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: theme.spacing.md,
-  },
-  inputGroup: {
-    marginBottom: theme.spacing.lg,
-  },
-  input: {
-    backgroundColor: theme.colors.background,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.sm,
-    padding: theme.spacing.md,
-    color: theme.colors.text,
-    fontSize: 16,
-  },
-  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  pickerSheet: { backgroundColor: theme.colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16 },
-  pickerHeader: { flexDirection: 'row', justifyContent: 'flex-end', padding: 16, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
-  genOverlay: { flex: 1 },
-  genGradient: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
-  genIconWrap: { marginBottom: 36 },
-  genIconBg: { width: 110, height: 110, borderRadius: 55, alignItems: 'center', justifyContent: 'center', shadowColor: '#7c3aed', shadowOpacity: 0.8, shadowRadius: 24, shadowOffset: { width: 0, height: 0 } },
-  genTitle: { fontSize: 26, fontWeight: '700', textAlign: 'center', color: '#fff', marginBottom: 8 },
-  genSubtitle: { fontSize: 13, textAlign: 'center', color: 'rgba(255,255,255,0.45)', marginBottom: 40 },
-  genMessage: { fontSize: 15, textAlign: 'center', color: 'rgba(255,255,255,0.85)', marginBottom: 32, minHeight: 22 },
-  genDotsRow: { flexDirection: 'row', gap: 10, marginBottom: 48 },
-  genDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: theme.colors.primary },
-  genHint: { fontSize: 12, textAlign: 'center', color: 'rgba(255,255,255,0.25)' },
-  chatBubbleUser: {
-    alignSelf: 'flex-end',
-    backgroundColor: theme.colors.primary + '33',
-    borderRadius: 12,
-    borderBottomRightRadius: 2,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    maxWidth: '85%',
-  },
-  chatBubbleBot: {
-    alignSelf: 'flex-start',
-    backgroundColor: theme.colors.background,
-    borderRadius: 12,
-    borderBottomLeftRadius: 2,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    maxWidth: '90%',
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  chatBubbleText: { fontSize: 13, color: theme.colors.text, lineHeight: 19 },
-  inputBar: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
-  },
-  chatInput: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: theme.colors.text,
-    fontSize: 14,
-    maxHeight: 100,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  sendBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: theme.colors.accent,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  sendBtnDisabled: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border },
-});

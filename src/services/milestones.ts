@@ -1,66 +1,167 @@
 import { Activity, Milestone, BestEffort } from '../store/useStore';
 
 // ── Milestone definitions ─────────────────────────────────────────────────────
+//
+// Each definition returns the ISO date the criterion was first met (or null).
+// `computeMilestones` stamps `earnedAt` from that date, so a badge unlocked
+// from a Strava back-sync gets the historical date, not "today".
+
+export type MilestoneCategory = Milestone['category'];
+
+export interface MilestoneStats {
+  totalKm: number;
+  currentStreak: number;
+  bestStreak: number;
+}
 
 export interface MilestoneDef {
   id: string;
   title: string;
   description: string;
   icon: string;
-  category: Milestone['category'];
-  check: (activities: Activity[], stats: { totalKm: number; currentStreak: number; bestStreak: number }) => boolean;
+  category: MilestoneCategory;
+  // Returns ISO date string of the activity that completed the criterion,
+  // or null if criterion isn't met yet. Used to back-date a badge unlocked
+  // from history so the timeline reflects reality.
+  metAt: (activities: Activity[], stats: MilestoneStats) => string | null;
 }
+
+// ── Helpers — reused across defs, kept DRY ────────────────────────────────────
+
+function sortAsc(activities: Activity[]): Activity[] {
+  return [...activities].sort(
+    (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime(),
+  );
+}
+
+// Earliest activity satisfying `predicate` — used for "first time X happened"
+// criteria like "First 10 km" or "Sub-5 Pace".
+function earliestMatching(activities: Activity[], predicate: (a: Activity) => boolean): string | null {
+  const matches = sortAsc(activities).find(predicate);
+  return matches ? matches.startDate : null;
+}
+
+// Date of the activity whose addition pushed a running sum past `threshold`.
+// Used for lifetime totals like "100 km Club" or "Everest! (8849 m elev)".
+function thresholdMetAt(
+  activities: Activity[],
+  value: (a: Activity) => number,
+  threshold: number,
+): string | null {
+  let sum = 0;
+  for (const a of sortAsc(activities)) {
+    sum += value(a);
+    if (sum >= threshold) return a.startDate;
+  }
+  return null;
+}
+
+// Date of the Nth activity matching `predicate` — used for "10 Runs", etc.
+function nthMatchingAt(
+  activities: Activity[],
+  predicate: (a: Activity) => boolean,
+  n: number,
+): string | null {
+  const matches = sortAsc(activities).filter(predicate);
+  return matches[n - 1] ? matches[n - 1].startDate : null;
+}
+
+// Date the user first hit a daily-activity streak of `length`. Walks unique
+// activity dates ascending and returns the date that completed the run.
+function streakMetAt(activities: Activity[], length: number): string | null {
+  const dates = Array.from(
+    new Set(activities.map(a => a.startDate.split('T')[0])),
+  ).sort();
+  if (!dates.length) return null;
+  let streak = 1;
+  if (length === 1) return dates[0];
+  for (let i = 1; i < dates.length; i++) {
+    const diffDays = Math.round(
+      (new Date(dates[i]).getTime() - new Date(dates[i - 1]).getTime()) / 86400000,
+    );
+    streak = diffDays === 1 ? streak + 1 : 1;
+    if (streak >= length) return dates[i];
+  }
+  return null;
+}
+
+// "Triathlete" needs all three sport types logged at least once — the badge
+// is earned on the latest of the earliest dates per sport.
+function multiTypeMetAt(activities: Activity[], types: ReadonlyArray<Activity['type'] | string>): string | null {
+  const earliestPerType = types.map(t => {
+    const match = sortAsc(activities).find(a => (a.type as string) === t);
+    return match ? new Date(match.startDate).getTime() : null;
+  });
+  if (earliestPerType.some(d => d === null)) return null;
+  const latestOfFirsts = Math.max(...(earliestPerType as number[]));
+  return new Date(latestOfFirsts).toISOString();
+}
+
+// ── Predicates ────────────────────────────────────────────────────────────────
+
+const isRunOf = (minMetres: number) => (a: Activity) =>
+  a.type === 'Run' && a.distance >= minMetres;
+const isRunUnderPace = (minPerKm: number) => (a: Activity) =>
+  a.type === 'Run' && a.averageSpeed > 0 && 1000 / a.averageSpeed / 60 < minPerKm;
+const isRunWithElev = (minMetres: number) => (a: Activity) =>
+  a.type === 'Run' && a.totalElevationGain >= minMetres;
+const isRun = (a: Activity) => a.type === 'Run';
+const isRide = (a: Activity) => a.type === 'Ride' || (a.type as string) === 'VirtualRide';
+const isAtHour = (predicate: (h: number) => boolean) => (a: Activity) =>
+  a.type === 'Run' && predicate(new Date(a.startDate).getHours());
+
+// ── Defs ──────────────────────────────────────────────────────────────────────
 
 const MILESTONE_DEFS: MilestoneDef[] = [
   // Distance — single run
-  { id: 'km_5',     title: 'First 5 km',        description: 'Completed a 5 km run',                icon: '🎽', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 5000) },
-  { id: 'km_10',    title: 'First 10 km',        description: 'Completed your first 10 km run',      icon: '🥇', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 10000) },
-  { id: 'km_15',    title: '15 km Warrior',      description: 'Ran 15 km in a single activity',      icon: '🏃', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 15000) },
-  { id: 'km_21',    title: 'Half Marathon',      description: 'Ran a half marathon (21.1 km)',        icon: '🏅', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 21097) },
-  { id: 'km_30',    title: '30 km Beast',        description: 'Ran 30 km in one go',                 icon: '💪', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 30000) },
-  { id: 'km_42',    title: 'Marathon Warrior',   description: 'Completed a full marathon (42.2 km)', icon: '🏆', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 42195) },
-  { id: 'km_50',    title: 'Ultra Runner',       description: 'Ran 50 km in a single activity',      icon: '🦁', category: 'distance',  check: (acts) => acts.some(a => a.type === 'Run' && a.distance >= 50000) },
+  { id: 'km_5',     title: 'First 5 km',      description: 'Completed a 5 km run',                    icon: '🎽', category: 'distance',  metAt: (a) => earliestMatching(a, isRunOf(5000))   },
+  { id: 'km_10',    title: 'First 10 km',     description: 'Completed your first 10 km run',          icon: '🥇', category: 'distance',  metAt: (a) => earliestMatching(a, isRunOf(10000))  },
+  { id: 'km_15',    title: '15 km Warrior',   description: 'Ran 15 km in a single activity',          icon: '🏃', category: 'distance',  metAt: (a) => earliestMatching(a, isRunOf(15000))  },
+  { id: 'km_21',    title: 'Half Marathon',   description: 'Ran a half marathon (21.1 km)',           icon: '🏅', category: 'distance',  metAt: (a) => earliestMatching(a, isRunOf(21097))  },
+  { id: 'km_30',    title: '30 km Beast',     description: 'Ran 30 km in one go',                     icon: '💪', category: 'distance',  metAt: (a) => earliestMatching(a, isRunOf(30000))  },
+  { id: 'km_42',    title: 'Marathon Warrior',description: 'Completed a full marathon (42.2 km)',     icon: '🏆', category: 'distance',  metAt: (a) => earliestMatching(a, isRunOf(42195))  },
+  { id: 'km_50',    title: 'Ultra Runner',    description: 'Ran 50 km in a single activity',          icon: '🦁', category: 'distance',  metAt: (a) => earliestMatching(a, isRunOf(50000))  },
   // Distance — total lifetime
-  { id: 'km100',    title: '100 km Club',        description: 'Logged 100 km total',                 icon: '💯', category: 'distance',  check: (_, s) => s.totalKm >= 100 },
-  { id: 'km250',    title: '250 km Milestone',   description: 'Logged 250 km total',                 icon: '🌍', category: 'distance',  check: (_, s) => s.totalKm >= 250 },
-  { id: 'km500',    title: '500 km Club',        description: 'Logged 500 km total',                 icon: '🌟', category: 'distance',  check: (_, s) => s.totalKm >= 500 },
-  { id: 'km1000',   title: '1000 km Legend',     description: 'Logged 1,000 km total',               icon: '🚀', category: 'distance',  check: (_, s) => s.totalKm >= 1000 },
-  { id: 'km2000',   title: '2000 km Titan',      description: 'Logged 2,000 km total',               icon: '🛸', category: 'distance',  check: (_, s) => s.totalKm >= 2000 },
-  // Streak milestones
-  { id: 'streak3',  title: '3-Day Streak',       description: 'Active 3 days in a row',              icon: '🔥', category: 'streak',    check: (_, s) => s.bestStreak >= 3 },
-  { id: 'streak7',  title: 'Week Warrior',       description: 'Active 7 days in a row',              icon: '⚡', category: 'streak',    check: (_, s) => s.bestStreak >= 7 },
-  { id: 'streak14', title: 'Two-Week Grind',     description: 'Active 14 days in a row',             icon: '🔑', category: 'streak',    check: (_, s) => s.bestStreak >= 14 },
-  { id: 'streak30', title: 'Iron Habit',         description: 'Active 30 days in a row',             icon: '💎', category: 'streak',    check: (_, s) => s.bestStreak >= 30 },
-  { id: 'streak60', title: 'Unstoppable',        description: 'Active 60 days in a row',             icon: '🌈', category: 'streak',    check: (_, s) => s.bestStreak >= 60 },
-  { id: 'streak100',title: 'Century Streak',     description: 'Active 100 days in a row',            icon: '🏺', category: 'streak',    check: (_, s) => s.bestStreak >= 100 },
-  // Frequency milestones
-  { id: 'runs5',    title: 'First 5 Runs',       description: 'Completed 5 runs',                    icon: '👟', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 5 },
-  { id: 'runs10',   title: '10 Runs',            description: 'Completed 10 runs',                   icon: '🎯', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 10 },
-  { id: 'runs25',   title: '25 Runs',            description: 'Completed 25 runs',                   icon: '🏅', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 25 },
-  { id: 'runs50',   title: '50 Runs',            description: 'Completed 50 runs',                   icon: '🎪', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 50 },
-  { id: 'runs100',  title: 'Centurion',          description: 'Completed 100 runs',                  icon: '👑', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 100 },
-  { id: 'runs200',  title: '200 Club',           description: 'Completed 200 runs',                  icon: '🌠', category: 'frequency', check: (acts) => acts.filter(a => a.type === 'Run').length >= 200 },
-  { id: 'acts100',  title: '100 Activities',     description: 'Logged 100 activities of any kind',   icon: '📊', category: 'frequency', check: (acts) => acts.length >= 100 },
+  { id: 'km100',    title: '100 km Club',     description: 'Logged 100 km total',                     icon: '💯', category: 'distance',  metAt: (a) => thresholdMetAt(a, x => x.distance / 1000, 100)   },
+  { id: 'km250',    title: '250 km Milestone',description: 'Logged 250 km total',                     icon: '🌍', category: 'distance',  metAt: (a) => thresholdMetAt(a, x => x.distance / 1000, 250)   },
+  { id: 'km500',    title: '500 km Club',     description: 'Logged 500 km total',                     icon: '🌟', category: 'distance',  metAt: (a) => thresholdMetAt(a, x => x.distance / 1000, 500)   },
+  { id: 'km1000',   title: '1000 km Legend',  description: 'Logged 1,000 km total',                   icon: '🚀', category: 'distance',  metAt: (a) => thresholdMetAt(a, x => x.distance / 1000, 1000)  },
+  { id: 'km2000',   title: '2000 km Titan',   description: 'Logged 2,000 km total',                   icon: '🛸', category: 'distance',  metAt: (a) => thresholdMetAt(a, x => x.distance / 1000, 2000)  },
+  // Streak milestones — date the streak first reached the length.
+  { id: 'streak3',  title: '3-Day Streak',    description: 'Active 3 days in a row',                  icon: '🔥', category: 'streak',    metAt: (a) => streakMetAt(a, 3)   },
+  { id: 'streak7',  title: 'Week Warrior',    description: 'Active 7 days in a row',                  icon: '⚡', category: 'streak',    metAt: (a) => streakMetAt(a, 7)   },
+  { id: 'streak14', title: 'Two-Week Grind',  description: 'Active 14 days in a row',                 icon: '🔑', category: 'streak',    metAt: (a) => streakMetAt(a, 14)  },
+  { id: 'streak30', title: 'Iron Habit',      description: 'Active 30 days in a row',                 icon: '💎', category: 'streak',    metAt: (a) => streakMetAt(a, 30)  },
+  { id: 'streak60', title: 'Unstoppable',     description: 'Active 60 days in a row',                 icon: '🌈', category: 'streak',    metAt: (a) => streakMetAt(a, 60)  },
+  { id: 'streak100',title: 'Century Streak',  description: 'Active 100 days in a row',                icon: '🏺', category: 'streak',    metAt: (a) => streakMetAt(a, 100) },
+  // Frequency milestones — date of the Nth qualifying activity.
+  { id: 'runs5',    title: 'First 5 Runs',    description: 'Completed 5 runs',                        icon: '👟', category: 'frequency', metAt: (a) => nthMatchingAt(a, isRun, 5)    },
+  { id: 'runs10',   title: '10 Runs',         description: 'Completed 10 runs',                       icon: '🎯', category: 'frequency', metAt: (a) => nthMatchingAt(a, isRun, 10)   },
+  { id: 'runs25',   title: '25 Runs',         description: 'Completed 25 runs',                       icon: '🏅', category: 'frequency', metAt: (a) => nthMatchingAt(a, isRun, 25)   },
+  { id: 'runs50',   title: '50 Runs',         description: 'Completed 50 runs',                       icon: '🎪', category: 'frequency', metAt: (a) => nthMatchingAt(a, isRun, 50)   },
+  { id: 'runs100',  title: 'Centurion',       description: 'Completed 100 runs',                      icon: '👑', category: 'frequency', metAt: (a) => nthMatchingAt(a, isRun, 100)  },
+  { id: 'runs200',  title: '200 Club',        description: 'Completed 200 runs',                      icon: '🌠', category: 'frequency', metAt: (a) => nthMatchingAt(a, isRun, 200)  },
+  { id: 'acts100',  title: '100 Activities',  description: 'Logged 100 activities of any kind',       icon: '📊', category: 'frequency', metAt: (a) => nthMatchingAt(a, () => true, 100) },
   // Speed milestones
-  { id: 'sub7',     title: 'Sub-7 Pace',         description: 'Ran at under 7:00 min/km',            icon: '🐢', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 7) },
-  { id: 'sub6',     title: 'Sub-6 Pace',         description: 'Ran at under 6:00 min/km',            icon: '💨', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 6) },
-  { id: 'sub5',     title: 'Sub-5 Pace',         description: 'Ran at under 5:00 min/km',            icon: '⚡', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 5) },
-  { id: 'sub4_5',   title: 'Speed Demon',        description: 'Ran at sub-4:30 min/km pace',         icon: '🔥', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 4.5) },
-  { id: 'sub4',     title: 'Elite Pacer',        description: 'Ran at sub-4:00 min/km pace',         icon: '🚀', category: 'speed',     check: (acts) => acts.some(a => a.type === 'Run' && a.averageSpeed > 0 && (1000 / a.averageSpeed / 60) < 4) },
-  // Elevation milestones — single activity
-  { id: 'elev200',  title: 'Hill Starter',       description: 'Climbed 200 m elevation in a run',    icon: '⛰️', category: 'elevation', check: (acts) => acts.some(a => a.totalElevationGain >= 200) },
-  { id: 'elev500',  title: 'Hill Climber',       description: 'Climbed 500 m elevation in a run',    icon: '🏔️', category: 'elevation', check: (acts) => acts.some(a => a.totalElevationGain >= 500) },
-  { id: 'elev1000', title: 'Mountain Goat',      description: 'Climbed 1000 m elevation in a run',   icon: '🦌', category: 'elevation', check: (acts) => acts.some(a => a.totalElevationGain >= 1000) },
-  { id: 'elev2000', title: 'Everest Dreamer',    description: 'Climbed 2000 m elevation in a run',   icon: '🌋', category: 'elevation', check: (acts) => acts.some(a => a.totalElevationGain >= 2000) },
+  { id: 'sub7',     title: 'Sub-7 Pace',      description: 'Ran at under 7:00 min/km',                icon: '🐢', category: 'speed',     metAt: (a) => earliestMatching(a, isRunUnderPace(7))   },
+  { id: 'sub6',     title: 'Sub-6 Pace',      description: 'Ran at under 6:00 min/km',                icon: '💨', category: 'speed',     metAt: (a) => earliestMatching(a, isRunUnderPace(6))   },
+  { id: 'sub5',     title: 'Sub-5 Pace',      description: 'Ran at under 5:00 min/km',                icon: '⚡', category: 'speed',     metAt: (a) => earliestMatching(a, isRunUnderPace(5))   },
+  { id: 'sub4_5',   title: 'Speed Demon',     description: 'Ran at sub-4:30 min/km pace',             icon: '🔥', category: 'speed',     metAt: (a) => earliestMatching(a, isRunUnderPace(4.5)) },
+  { id: 'sub4',     title: 'Elite Pacer',     description: 'Ran at sub-4:00 min/km pace',             icon: '🚀', category: 'speed',     metAt: (a) => earliestMatching(a, isRunUnderPace(4))   },
+  // Elevation — single activity
+  { id: 'elev200',  title: 'Hill Starter',    description: 'Climbed 200 m elevation in a run',        icon: '⛰️', category: 'elevation', metAt: (a) => earliestMatching(a, isRunWithElev(200))  },
+  { id: 'elev500',  title: 'Hill Climber',    description: 'Climbed 500 m elevation in a run',        icon: '🏔️', category: 'elevation', metAt: (a) => earliestMatching(a, isRunWithElev(500))  },
+  { id: 'elev1000', title: 'Mountain Goat',   description: 'Climbed 1000 m elevation in a run',       icon: '🦌', category: 'elevation', metAt: (a) => earliestMatching(a, isRunWithElev(1000)) },
+  { id: 'elev2000', title: 'Everest Dreamer', description: 'Climbed 2000 m elevation in a run',       icon: '🌋', category: 'elevation', metAt: (a) => earliestMatching(a, isRunWithElev(2000)) },
   // Elevation — lifetime total
-  { id: 'total_elev5000',  title: 'Altitude 5K', description: 'Climbed 5,000 m total elevation',    icon: '🗻', category: 'elevation', check: (acts) => acts.reduce((s, a) => s + a.totalElevationGain, 0) >= 5000 },
-  { id: 'total_elev10000', title: 'Everest!',    description: 'Climbed 8,849 m — the height of Everest', icon: '🏔️', category: 'elevation', check: (acts) => acts.reduce((s, a) => s + a.totalElevationGain, 0) >= 8849 },
-  // Early bird
-  { id: 'early_bird', title: 'Early Bird',       description: 'Completed a run before 7am',          icon: '🌅', category: 'frequency', check: (acts) => acts.some(a => { const h = new Date(a.startDate).getHours(); return (a.type === 'Run') && h < 7; }) },
-  { id: 'night_owl',  title: 'Night Owl',        description: 'Completed a run after 9pm',           icon: '🌙', category: 'frequency', check: (acts) => acts.some(a => { const h = new Date(a.startDate).getHours(); return (a.type === 'Run') && h >= 21; }) },
+  { id: 'total_elev5000',  title: 'Altitude 5K', description: 'Climbed 5,000 m total elevation',     icon: '🗻', category: 'elevation', metAt: (a) => thresholdMetAt(a, x => x.totalElevationGain, 5000) },
+  { id: 'total_elev10000', title: 'Everest!',    description: 'Climbed 8,849 m — the height of Everest', icon: '🏔️', category: 'elevation', metAt: (a) => thresholdMetAt(a, x => x.totalElevationGain, 8849) },
+  // Time-of-day
+  { id: 'early_bird', title: 'Early Bird',    description: 'Completed a run before 7am',              icon: '🌅', category: 'frequency', metAt: (a) => earliestMatching(a, isAtHour(h => h < 7))  },
+  { id: 'night_owl',  title: 'Night Owl',     description: 'Completed a run after 9pm',               icon: '🌙', category: 'frequency', metAt: (a) => earliestMatching(a, isAtHour(h => h >= 21)) },
   // Multi-sport
-  { id: 'cyclist',    title: 'Cyclist',          description: 'Logged a cycling activity',            icon: '🚴', category: 'frequency', check: (acts) => acts.some(a => a.type === 'Ride' || a.type === 'VirtualRide') },
-  { id: 'triathlete', title: 'Triathlete',       description: 'Logged a run, ride, and swim',         icon: '🏊', category: 'frequency', check: (acts) => { const types = new Set(acts.map(a => a.type)); return types.has('Run') && (types.has('Ride') || types.has('VirtualRide')) && types.has('Swim'); } },
+  { id: 'cyclist',    title: 'Cyclist',       description: 'Logged a cycling activity',               icon: '🚴', category: 'frequency', metAt: (a) => earliestMatching(a, isRide) },
+  { id: 'triathlete', title: 'Triathlete',    description: 'Logged a run, ride, and swim',            icon: '🏊', category: 'frequency', metAt: (a) => multiTypeMetAt(a, ['Run', 'Ride', 'Swim']) },
 ];
 
 // ── Compute milestones from activities ────────────────────────────────────────
@@ -72,23 +173,23 @@ export function getAllMilestoneDefs(): MilestoneDef[] {
 export function computeMilestones(
   activities: Activity[],
   existingMilestones: Milestone[],
-  stats: { totalKm: number; currentStreak: number; bestStreak: number }
+  stats: MilestoneStats,
 ): Milestone[] {
   const existing = new Set(existingMilestones.map(m => m.id));
   const newOnes: Milestone[] = [];
 
   for (const def of MILESTONE_DEFS) {
     if (existing.has(def.id)) continue;
-    if (def.check(activities, stats)) {
-      newOnes.push({
-        id: def.id,
-        title: def.title,
-        description: def.description,
-        icon: def.icon,
-        category: def.category,
-        earnedAt: new Date().toISOString(),
-      });
-    }
+    const earnedAt = def.metAt(activities, stats);
+    if (!earnedAt) continue;
+    newOnes.push({
+      id: def.id,
+      title: def.title,
+      description: def.description,
+      icon: def.icon,
+      category: def.category,
+      earnedAt,
+    });
   }
 
   return [...existingMilestones, ...newOnes];

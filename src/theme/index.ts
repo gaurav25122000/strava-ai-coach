@@ -30,6 +30,27 @@ export const theme = {
       danger: ['#EF4444', '#F87171'] as [string, string],
       surface: ['#2A2C40', '#1F2030'] as [string, string],
       hero: ['#F97316', '#8B5CF6'] as [string, string],
+      // Widget-family gradient pairs — mirror the families table below so a
+      // gradient hero card can carry the same identity as a flat accent pill.
+      activity:    ['#F97316', '#EA580C'] as [string, string],
+      health:      ['#EF4444', '#DC2626'] as [string, string],
+      progress:    ['#0EA5E9', '#0284C7'] as [string, string],
+      records:     ['#FCD34D', '#F59E0B'] as [string, string],
+      plan:        ['#8B5CF6', '#7C3AED'] as [string, string],
+      recovery:    ['#22D3EE', '#0EA5E9'] as [string, string],
+      social:      ['#EC4899', '#DB2777'] as [string, string],
+    },
+    // Widget families drive the cross-cutting colour identity of every
+    // dashboard widget, insight card, badge ring, and goal chip. Pick one
+    // family per visual unit so the user can read the screen at a glance.
+    families: {
+      activity: { accent: '#F97316', tint: 'rgba(249,115,22,0.12)', label: 'Activity'  },
+      health:   { accent: '#EF4444', tint: 'rgba(239,68,68,0.12)',  label: 'Health'    },
+      progress: { accent: '#0EA5E9', tint: 'rgba(14,165,233,0.12)', label: 'Progress'  },
+      records:  { accent: '#FCD34D', tint: 'rgba(252,211,77,0.14)', label: 'Records'   },
+      plan:     { accent: '#8B5CF6', tint: 'rgba(139,92,246,0.14)', label: 'Plan'      },
+      recovery: { accent: '#22D3EE', tint: 'rgba(34,211,238,0.12)', label: 'Recovery'  },
+      social:   { accent: '#EC4899', tint: 'rgba(236,72,153,0.12)', label: 'Social'    },
     },
   },
   spacing: {

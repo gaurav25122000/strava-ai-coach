@@ -11,6 +11,7 @@ import { theme } from '../theme';
 import { Typography } from '../components/Typography';
 import { useStore } from '../store/useStore';
 import { Card } from '../components/Card';
+import { BadgeMedal } from '../components/BadgeMedal';
 import { AnimatedNumber } from '../components/AnimatedNumber';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -333,16 +334,24 @@ export default function ProfileScreen() {
         {/* ── Badges strip ── */}
         <Animated.View entering={FadeInDown.delay(next() * 60).duration(360)}>
           <SectionHeader label={`Badges  ${earnedCount}/${totalBadges} unlocked`} accentColor="#FBBF24" />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }} style={{ marginBottom: 20 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }} style={{ marginBottom: 20 }}>
             {[...getAllMilestoneDefs()]
               .sort((a, b) => (milestones.some(m => m.id === a.id) ? 0 : 1) - (milestones.some(m => m.id === b.id) ? 0 : 1))
               .map(def => {
                 const earned = milestones.find(m => m.id === def.id);
                 return (
-                  <View key={def.id} style={[st.badgeCard, !earned && st.badgeCardLocked]}>
-                    <Typography style={{ fontSize: 26 }}>{earned ? def.icon : '🔒'}</Typography>
-                    <Typography style={st.badgeTitle} numberOfLines={2}>{def.title}</Typography>
-                  </View>
+                  <BadgeMedal
+                    key={def.id}
+                    milestone={{
+                      title: def.title,
+                      description: def.description,
+                      icon: def.icon,
+                      category: def.category,
+                      earnedAt: earned?.earnedAt || null,
+                    }}
+                    size={68}
+                    unlocked={!!earned}
+                  />
                 );
               })}
           </ScrollView>

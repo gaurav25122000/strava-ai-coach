@@ -52,12 +52,53 @@ export interface Activity {
   name?: string;
 }
 
+export type WorkoutKind =
+  | 'EASY'        // easy aerobic run / Z1-Z2
+  | 'TEMPO'       // sustained threshold
+  | 'INTERVALS'   // structured speed
+  | 'LONG'        // weekly long run
+  | 'RECOVERY'    // very short, easy
+  | 'CROSS'       // bike, swim, elliptical
+  | 'STRENGTH'    // gym / mobility
+  | 'REST';       // off day
+
+export type RestKind =
+  | 'COMPLETE'    // full off, no movement
+  | 'ACTIVE_WALK' // 20-30 min easy walk
+  | 'MOBILITY'    // stretch / foam roll / yoga
+  | 'CROSS_LOW';  // very easy cross-training
+
+export interface DailyPrescription {
+  dayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0 = Monday, 6 = Sunday
+  kind: WorkoutKind;
+  title: string;                          // "Tempo 5k @ threshold"
+  description: string;                    // 1-2 sentences in plain English
+  distanceKm?: number;
+  durationMin?: number;
+  intensity?: 'Z1' | 'Z2' | 'Z3' | 'Z4' | 'Z5';
+  rest?: { kind: RestKind; note: string };
+}
+
 export interface Phase {
   name: string;
   description: string;
   weeklyVolumeTarget: number;
   longRunTarget: number;
   keyWorkout: string;
+  weekStart?: string;                     // ISO date for phase start (optional for back-compat)
+  weekEnd?: string;                       // ISO date for phase end
+  schedule?: DailyPrescription[];         // 7 entries, dayOfWeek 0..6 (optional for back-compat)
+}
+
+export interface CheckIn {
+  date: string;                            // ISO date (YYYY-MM-DD)
+  dayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  source: 'MANUAL' | 'STRAVA';
+  workoutKind: WorkoutKind;
+  completed: boolean;
+  activityId?: string;                     // present if source === 'STRAVA'
+  notes?: string;                          // present if source === 'MANUAL'
+  perceivedEffort?: number;                // 1-10 RPE, manual only
 }
 
 export interface Goal {
@@ -88,6 +129,8 @@ export interface Goal {
   targetFinishTime?: string;
   phases?: Phase[];
   chatHistory?: Array<{ role: 'user' | 'model'; text: string }>;
+  checkIns?: CheckIn[];                    // per-day completion log (manual + Strava)
+  progressUpdatedAt?: string;              // ISO timestamp of last computeProgress run
 }
 
 interface UserStats {
@@ -305,6 +348,7 @@ interface AppState {
   milestones: Milestone[];
   bestEfforts: Record<number, BestEffort>; // keyed by distance in metres
   weeklyDigest: WeeklyDigest | null;
+  lastSyncedAt: string | null;             // ISO timestamp of most recent Strava sync
   setActivities: (activities: Activity[]) => void;
   setLifetimeStats: (stats: any) => void;
   setGoals: (goals: Goal[]) => void;
@@ -312,6 +356,8 @@ interface AppState {
   addGoal: (goal: Goal) => void;
   updateGoal: (goal: Goal) => void;
   deleteGoal: (id: string) => void;
+  addCheckIn: (goalId: string, checkIn: CheckIn) => void;
+  setLastSyncedAt: (iso: string) => void;
   updateSettings: (settings: Partial<Settings>) => void;
   updateUserProfile: (profile: Partial<UserProfile>) => void;
   addShoe: (shoe: Shoe) => void;
@@ -334,6 +380,7 @@ export const useStore = create<AppState>()(
       milestones: [],
       bestEfforts: {},
       weeklyDigest: null,
+      lastSyncedAt: null,
       hrZones: [],
       setHRZones: (hrZones) => set({ hrZones }),
       toast: null,
@@ -428,6 +475,17 @@ export const useStore = create<AppState>()(
       deleteGoal: (id) => set((state) => ({
         goals: state.goals.filter(g => g.id !== id)
       })),
+      addCheckIn: (goalId, checkIn) => set((state) => ({
+        goals: state.goals.map(g => {
+          if (g.id !== goalId) return g;
+          const existing = g.checkIns || [];
+          // Replace any prior check-in for the same date (manual overrides Strava;
+          // re-syncing replaces an old Strava entry with the latest).
+          const filtered = existing.filter(c => !(c.date === checkIn.date && c.source === checkIn.source));
+          return { ...g, checkIns: [...filtered, checkIn] };
+        }),
+      })),
+      setLastSyncedAt: (iso) => set({ lastSyncedAt: iso }),
       shoes: [],
       injuries: [],
       setMilestones: (milestones) => set({ milestones }),
@@ -474,6 +532,7 @@ export const useStore = create<AppState>()(
         milestones: state.milestones,
         bestEfforts: state.bestEfforts,
         weeklyDigest: state.weeklyDigest,
+        lastSyncedAt: state.lastSyncedAt,
         hrZones: state.hrZones,
       }),
     }

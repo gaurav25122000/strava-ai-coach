@@ -68,13 +68,14 @@ export default function InsightsScreen() {
   }, [activities, rangeDays]);
 
   // ── Single weekly bucket pass — feeds volume / time / steps / calories ──
+  // Only emits weeks that had at least one activity, so charts don't render
+  // empty columns for inactive weeks.
   const weeklyBuckets = useMemo(() => {
     const now = new Date();
     const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), rangeWeeks - 1);
     const end = endOfWeek(now, { weekStartsOn: 1 });
     const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-rangeWeeks);
-    const labelStep = Math.max(1, Math.ceil(weeks.length / 6));
-    return weeks.map((ws, i, arr) => {
+    const raw = weeks.map((ws) => {
       const we = endOfWeek(ws, { weekStartsOn: 1 });
       let km = 0, hours = 0, steps = 0, cals = 0;
       for (const a of activities) {
@@ -87,17 +88,22 @@ export default function InsightsScreen() {
         else if (a.type === 'Walk') steps += a.distance / 0.75;
         cals += a.calories || 0;
       }
+      return { ws, km, hours, steps: Math.round(steps), cals: Math.round(cals) };
+    });
+    const active = raw.filter(b => b.km > 0 || b.hours > 0 || b.steps > 0 || b.cals > 0);
+    const labelStep = Math.max(1, Math.ceil(active.length / 6));
+    return active.map((b, i, arr) => {
       const showLabel = (arr.length - 1 - i) % labelStep === 0;
       const labelComponent = showLabel
         ? () => (
             <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
               <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
-                {format(ws, 'MMM d')}
+                {format(b.ws, 'MMM d')}
               </Typography>
             </View>
           )
         : undefined;
-      return { ws, km, hours, steps: Math.round(steps), cals: Math.round(cals), labelComponent };
+      return { ...b, labelComponent };
     });
   }, [activities, rangeWeeks]);
 
@@ -186,6 +192,11 @@ export default function InsightsScreen() {
 
   const bestPace = paceData.length ? Math.min(...paceData.map((d) => d.value)) : 0;
   const avgPace = paceData.length ? paceData.reduce((s, d) => s + d.value, 0) / paceData.length : 0;
+
+  // How many calendar weeks in the selected range had no logged activity at
+  // all — surfaced as a small caption under the bar charts so the user knows
+  // we trimmed them (instead of silently dropping data).
+  const inactiveWeeks = Math.max(0, rangeWeeks - weeklyBuckets.length);
 
   // Volume / time / steps / calories aggregates
   const maxWeekVol = volumeData.length ? Math.max(...volumeData.map(d => d.value), 1) : 1;
@@ -402,6 +413,16 @@ export default function InsightsScreen() {
     [activeKeys]
   );
 
+  // Small caption shown under bar charts when calendar weeks with no activity
+  // were filtered out of `weeklyBuckets`. Honest > silently trimming.
+  const InactiveCaption = inactiveWeeks > 0
+    ? () => (
+        <Typography style={st.inactiveCaption}>
+          {inactiveWeeks} {inactiveWeeks === 1 ? 'week' : 'weeks'} hidden — no activity recorded
+        </Typography>
+      )
+    : () => null;
+
   const renderCard = useCallback(({ item: t, index }: { item: { key: Tab; label: string }; index: number }) => {
     const C = CARD_COLORS[t.key] ?? ['#6366f1', '#8b5cf6'];
 
@@ -440,6 +461,7 @@ export default function InsightsScreen() {
                     maxValue={Math.ceil(Math.max(...timeData.map(d=>d.value),1) * 1.3)}
                     initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
                     {...chartBase} />
+                  <InactiveCaption />
                 </View>
               ) : (
                 <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No time logged in this range" color={C[0]} />
@@ -460,6 +482,7 @@ export default function InsightsScreen() {
                     showGradient gradientColor={C[0]} frontColor={C[0] + '55'}
                     pointerConfig={getPointerConfig(' km', C[0])}
                     {...chartBase} />
+                  <InactiveCaption />
                 </View>
               ) : (
                 <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No volume in this range" color={C[0]} />
@@ -650,6 +673,7 @@ export default function InsightsScreen() {
                     maxValue={Math.ceil(Math.max(...caloriesData.map(d=>d.value),1) * 1.25)}
                     initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
                     {...chartBase} />
+                  <InactiveCaption />
                 </View>
               ) : (
                 <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No calorie data in this range" color={C[0]} />
@@ -829,6 +853,14 @@ const st = StyleSheet.create({
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
     borderColor: theme.colors.border,
+  },
+  inactiveCaption: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: theme.colors.textSecondary,
+    marginTop: 6,
+    marginLeft: 4,
+    letterSpacing: 0.2,
   },
   compareChip: {
     flexDirection: 'row',

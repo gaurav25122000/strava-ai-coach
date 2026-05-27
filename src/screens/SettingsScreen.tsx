@@ -10,6 +10,7 @@ import { useStore } from '../store/useStore';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import { StravaService } from '../services/strava';
+import { computeAllProgress } from '../services/goalProgress';
 import axios from 'axios';
 import { useEffect, useState } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -27,7 +28,7 @@ function SectionHeader({ icon, title, accentColor }: { icon: React.ReactNode; ti
 }
 
 export default function SettingsScreen() {
-  const { settings, updateSettings, setActivities, setLifetimeStats, setToast } = useStore();
+  const { settings, updateSettings, setActivities, setLifetimeStats, setToast, setLastSyncedAt } = useStore();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
@@ -84,6 +85,9 @@ export default function SettingsScreen() {
     try {
       const activities = await StravaService.syncActivities();
       setActivities(activities);
+      setLastSyncedAt(new Date().toISOString());
+      const { goals: latestGoals, setGoals } = useStore.getState();
+      setGoals(computeAllProgress(latestGoals, activities));
 
       try {
         const stats = await StravaService.fetchAthleteStats();

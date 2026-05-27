@@ -41,4 +41,9 @@ export async function syncAllNotifications() {
       await NotificationService.scheduleGoalDeadline(goal.title, goal.daysRemaining);
     }
   }
+
+  // Re-sync per-day workout reminders from the active phase of every AI goal.
+  // Identifiers are namespaced (workout-<goalId>-<date>) so the call is safe
+  // to repeat without producing duplicates.
+  await NotificationService.syncWorkoutReminders(goals);
 }

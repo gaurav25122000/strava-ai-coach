@@ -33,7 +33,14 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.phonenix.aicoach"
+      "package": "com.phonenix.aicoach",
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.SCHEDULE_EXACT_ALARM"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -42,6 +49,8 @@
       "expo-secure-store",
       "expo-web-browser",
       "@react-native-community/datetimepicker",
+      "expo-task-manager",
+      "expo-background-fetch",
       [
         "expo-notifications",
         {

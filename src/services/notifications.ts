@@ -1,6 +1,8 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import { getWeek, getYear, startOfWeek, endOfWeek } from 'date-fns';
+import { addDays, format, getWeek, getYear, parseISO, startOfWeek, endOfWeek } from 'date-fns';
+import { Goal, WorkoutKind } from '../store/useStore';
+import { WORKOUT_LABELS } from '../utils/workoutKinds';
 
 // Configure how notifications look when app is in foreground
 Notifications.setNotificationHandler({
@@ -146,5 +148,60 @@ export const NotificationService = {
       },
       trigger: null, // immediate
     });
+  },
+
+  // Workout reminder — schedules one notification per non-REST day in the AI
+  // goal's current phase, firing at 07:30 the morning of. Re-syncs every time
+  // the goal is generated / regenerated so swapped days don't double-fire.
+  syncWorkoutReminders: async (goals: Goal[]) => {
+    const granted = await NotificationService.requestPermission();
+    if (!granted) return;
+
+    // Drop any reminders the previous run scheduled — identifiers are
+    // namespaced with `workout-<goalId>-<date>` so this won't touch other
+    // notifications (recap / streak / milestone / etc.).
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    await Promise.all(
+      scheduled
+        .filter(s => s.identifier?.startsWith('workout-'))
+        .map(s => Notifications.cancelScheduledNotificationAsync(s.identifier)),
+    );
+
+    const monday = startOfWeek(new Date(), { weekStartsOn: 1 });
+    const nowMs = Date.now();
+
+    for (const goal of goals) {
+      if (goal.isSimple) continue;
+      const phase = (goal.phases || []).find(p =>
+        p.weekStart && p.weekEnd
+          && parseISO(p.weekStart).getTime() <= nowMs
+          && parseISO(p.weekEnd).getTime() >= nowMs,
+      ) || goal.phases?.[0];
+      if (!phase?.schedule?.length) continue;
+
+      for (const presc of phase.schedule) {
+        if (presc.kind === 'REST') continue;
+        const date = addDays(monday, presc.dayOfWeek);
+        date.setHours(7, 30, 0, 0);
+        if (date.getTime() < nowMs) continue;
+        const identifier = `workout-${goal.id}-${format(date, 'yyyy-MM-dd')}`;
+        const kindLabel = WORKOUT_LABELS[presc.kind as WorkoutKind] || presc.kind;
+        const body = presc.distanceKm
+          ? `${presc.title} · ${presc.distanceKm} km · ${kindLabel}`
+          : `${presc.title} · ${kindLabel}`;
+        await Notifications.scheduleNotificationAsync({
+          identifier,
+          content: {
+            title: '🏃 Today on your plan',
+            body,
+            data: { type: 'workout-reminder', goalId: goal.id, date: format(date, 'yyyy-MM-dd') },
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            date,
+          },
+        });
+      }
+    }
   },
 };

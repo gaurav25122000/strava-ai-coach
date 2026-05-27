@@ -14,6 +14,11 @@ import Animated, { FadeInDown, Layout } from "react-native-reanimated";
 import { theme } from "../theme";
 import { StravaService } from "../services/strava";
 import { AIService } from "../services/ai";
+import { computeAllProgress, computeProgress } from "../services/goalProgress";
+import { BadgeMedal } from "../components/BadgeMedal";
+import { TodayHero } from "../components/TodayHero";
+import { WidgetCatalog, WidgetCatalogEntry } from "../components/WidgetCatalog";
+import { WIDGET_TITLES } from "../utils/widgetFamilies";
 import { Card } from "../components/Card";
 import { Typography } from "../components/Typography";
 import { AnimatedNumber } from "../components/AnimatedNumber";
@@ -193,6 +198,10 @@ export default function OverviewScreen() {
     setToast,
     setShoes,
     setHRZones,
+    setLastSyncedAt,
+    lastSyncedAt,
+    addCheckIn,
+    updateGoal,
     shoes,
     injuries,
     weeklyDigest,
@@ -213,6 +222,7 @@ export default function OverviewScreen() {
   );
 
   const defaultLayout = [
+    "TodayHero",
     "HeroBanner",
     "CurrentFocus",
     "UpcomingWorkout",
@@ -290,6 +300,10 @@ export default function OverviewScreen() {
       if (StravaService.isAuthenticated()) {
         const newActivities = await StravaService.syncActivities();
         setActivities(newActivities);
+        setLastSyncedAt(new Date().toISOString());
+        // Re-derive AI-goal progress against the new activity set.
+        const { goals: latestGoals, setGoals } = useStore.getState();
+        setGoals(computeAllProgress(latestGoals, newActivities));
         // Fetch Strava HR zones
         try {
           const zones = await StravaService.fetchZones();
@@ -334,7 +348,7 @@ export default function OverviewScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [setActivities, setLifetimeStats, setToast, setHRZones]);
+  }, [setActivities, setLifetimeStats, setToast, setHRZones, setLastSyncedAt]);
 
   const heatmapData = useMemo(() => {
     return activities.map((act) => {
@@ -677,6 +691,49 @@ export default function OverviewScreen() {
         </View>
         {(settings.widgetLayout || defaultLayout).map((widgetId, idx) => {
           switch (widgetId) {
+            case "TodayHero": {
+              const activeGoal = goals.find(g => !g.isSimple && (g.phases?.length || 0) > 0);
+              const stravaConnected = StravaService.isAuthenticated();
+              const handleQuickCheckIn = (completed: boolean) => {
+                if (!activeGoal) return;
+                const today = new Date();
+                const dayOfWeek = (((today.getDay() + 6) % 7) as 0|1|2|3|4|5|6);
+                const date = today.toISOString().slice(0, 10);
+                const presc = activeGoal.phases?.[0]?.schedule?.find(p => p.dayOfWeek === dayOfWeek);
+                addCheckIn(activeGoal.id, {
+                  date,
+                  dayOfWeek,
+                  source: 'MANUAL',
+                  workoutKind: presc?.kind || 'EASY',
+                  completed,
+                });
+                const fresh = useStore.getState().goals.find(g => g.id === activeGoal.id);
+                if (fresh) updateGoal(computeProgress(fresh, useStore.getState().activities));
+                setToast({
+                  title: completed ? 'Logged ✓' : 'Skipped',
+                  message: completed ? "Today's workout marked complete." : 'No worries — pick it back up tomorrow.',
+                  type: 'success',
+                });
+              };
+              return (
+                <Animated.View
+                  key={widgetId + idx}
+                  entering={FadeInDown.delay(idx * 60).springify()}
+                  layout={Layout.springify()}
+                >
+                  <TodayHero
+                    activeGoal={activeGoal}
+                    currentStreak={userStats.currentStreak}
+                    lastSyncedAt={lastSyncedAt}
+                    stravaConnected={stravaConnected}
+                    onMarkDone={() => handleQuickCheckIn(true)}
+                    onSkip={() => handleQuickCheckIn(false)}
+                    onSync={() => onRefresh()}
+                    onCreateGoal={() => (navigation as any).navigate('Goals')}
+                  />
+                </Animated.View>
+              );
+            }
             case "WeeklyGoalTracker":
               return (
                 <View key={widgetId + idx} style={{ marginBottom: 16 }}>
@@ -2125,7 +2182,11 @@ export default function OverviewScreen() {
                         {milestones.length}/{getAllMilestoneDefs().length} earned
                       </Typography>
                     </View>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={{ gap: 14, paddingHorizontal: 4, paddingVertical: 4 }}
+                    >
                       {[...getAllMilestoneDefs()].sort((a, b) => {
                         const aEarned = milestones.some((m) => m.id === a.id) ? 0 : 1;
                         const bEarned = milestones.some((m) => m.id === b.id) ? 0 : 1;
@@ -2133,13 +2194,17 @@ export default function OverviewScreen() {
                       }).map((def) => {
                         const earned = milestones.find((m) => m.id === def.id);
                         return (
-                          <TouchableOpacity
+                          <BadgeMedal
                             key={def.id}
-                            style={[
-                              styles.badgeCard,
-                              !earned && { opacity: 0.35 },
-                            ]}
-                            activeOpacity={0.75}
+                            milestone={{
+                              title: def.title,
+                              description: def.description,
+                              icon: def.icon,
+                              category: def.category,
+                              earnedAt: earned?.earnedAt || null,
+                            }}
+                            size={72}
+                            unlocked={!!earned}
                             onPress={() =>
                               setInfoSheet({
                                 title: def.title,
@@ -2149,22 +2214,7 @@ export default function OverviewScreen() {
                                   : [{ label: 'Status', desc: 'Not yet earned — keep going!' }],
                               })
                             }
-                          >
-                            <Typography style={{ fontSize: 28 }}>
-                              {earned ? def.icon : '🔒'}
-                            </Typography>
-                            <Typography
-                              style={styles.badgeTitle}
-                              numberOfLines={2}
-                            >
-                              {def.title}
-                            </Typography>
-                            <Typography style={styles.badgeSub}>
-                              {earned
-                                ? format(parseISO(earned.earnedAt), 'd MMM yy')
-                                : 'Locked'}
-                            </Typography>
-                          </TouchableOpacity>
+                          />
                         );
                       })}
                     </ScrollView>
@@ -2348,241 +2398,19 @@ export default function OverviewScreen() {
         {/* ── Edit Layout Modal ── */}
       </ScrollView>
 
-      <Modal
+      <WidgetCatalog
         visible={layoutModalVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setLayoutModalVisible(false)}
-      >
-        <SafeAreaView
-          style={{ flex: 1, backgroundColor: theme.colors.background }}
-        >
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: 20,
-              borderBottomWidth: 1,
-              borderBottomColor: theme.colors.border,
-            }}
-          >
-            <Typography style={{ fontSize: 18, fontWeight: "800" }}>
-              Customise Overview
-            </Typography>
-            <TouchableOpacity onPress={() => setLayoutModalVisible(false)}>
-              <Typography
-                style={{ color: theme.colors.primary, fontWeight: "700" }}
-              >
-                Done
-              </Typography>
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={{ padding: 16 }}>
-            <Typography
-              style={{
-                fontSize: 13,
-                color: theme.colors.textSecondary,
-                marginBottom: 16,
-              }}
-            >
-              Turn widgets on/off and use the arrows to reorder them on your
-              dashboard.
-            </Typography>
-
-            <Typography
-              style={{
-                fontSize: 11,
-                fontWeight: "700",
-                color: theme.colors.primary,
-                textTransform: "uppercase",
-                marginBottom: 8,
-              }}
-            >
-              Active Widgets
-            </Typography>
-            {(settings.widgetLayout || defaultLayout).map((id, idx) => {
-              const WIDGET_NAMES: Record<string, string> = {
-                HeroBanner: "Streaks & Totals",
-                CurrentFocus: "Current Focus",
-                WeeklyDigest: "AI Weekly Digest",
-                RecoveryAdvisor: "Recovery Advisor",
-                InjuryAlert: "Injury Alert",
-                WeeklyGoalTracker: "Weekly Goal Tracker",
-                ThisWeek: "This Week Stats",
-                IntensityDistribution: "Intensity Distribution (80/20)",
-                ShoeTracker: "Shoe Health",
-                ActivityMap: "Activity Heatmap",
-                RecentActivities: "Recent Activities",
-                MonthlyVolume: "Monthly Volume",
-                HeartRate: "Heart Rate Stats",
-                PersonalBests: "Personal Bests",
-                RacePredictor: "Race Predictor",
-                ActivityMix: "Activity Mix",
-                YearToDate: "Year to Date",
-                AllTimeStats: "All Time Stats",
-                ActiveGoals: "Active Goals List",
-                TrainingLoad: "Training Load (ATL/CTL)",
-                BestEfforts: "Estimated Best Efforts",
-                Badges: "Milestones & Badges",
-                CoachInsight: "Coach Insight",
-                PaceTrend: "Pace Trend (8 Weeks)",
-                Cadence: "Cadence Tracker",
-                WellnessScore: "Wellness Score",
-                UpcomingWorkout: "Upcoming Workout",
-              };
-              const title = WIDGET_NAMES[id] || id;
-              return (
-                <View
-                  key={id}
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    backgroundColor: theme.colors.surface,
-                    padding: 12,
-                    borderRadius: 8,
-                    marginBottom: 8,
-                    borderWidth: 1,
-                    borderColor: theme.colors.border,
-                  }}
-                >
-                  <TouchableOpacity
-                    onPress={() => handleToggleWidget(id)}
-                    style={{
-                      width: 24,
-                      height: 24,
-                      borderRadius: 12,
-                      backgroundColor: theme.colors.primary,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      marginRight: 12,
-                    }}
-                  >
-                    <Typography style={{ color: "#fff", fontSize: 12 }}>
-                      ✓
-                    </Typography>
-                  </TouchableOpacity>
-                  <Typography style={{ flex: 1, fontSize: 14 }}>
-                    {title}
-                  </Typography>
-                  <View style={{ flexDirection: "row", gap: 4 }}>
-                    <TouchableOpacity
-                      onPress={() => handleMoveWidget(idx, "up")}
-                      disabled={idx === 0}
-                      style={{ padding: 4, opacity: idx === 0 ? 0.3 : 1 }}
-                    >
-                      <ChevronUp color={theme.colors.text} size={20} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => handleMoveWidget(idx, "down")}
-                      disabled={
-                        idx === (settings.widgetLayout || []).length - 1
-                      }
-                      style={{
-                        padding: 4,
-                        opacity:
-                          idx === (settings.widgetLayout || []).length - 1
-                            ? 0.3
-                            : 1,
-                      }}
-                    >
-                      <ChevronDown color={theme.colors.text} size={20} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            })}
-
-            <Typography
-              style={{
-                fontSize: 11,
-                fontWeight: "700",
-                color: theme.colors.textSecondary,
-                textTransform: "uppercase",
-                marginTop: 16,
-                marginBottom: 8,
-              }}
-            >
-              Hidden Widgets
-            </Typography>
-            {defaultLayout
-              .filter(
-                (id) => !(settings.widgetLayout || defaultLayout).includes(id),
-              )
-              .map((id) => {
-                const WIDGET_NAMES: Record<string, string> = {
-                  HeroBanner: "Streaks & Totals",
-                  CurrentFocus: "Current Focus",
-                  WeeklyDigest: "AI Weekly Digest",
-                  RecoveryAdvisor: "Recovery Advisor",
-                  InjuryAlert: "Injury Alert",
-                  WeeklyGoalTracker: "Weekly Goal Tracker",
-                  ThisWeek: "This Week Stats",
-                  IntensityDistribution: "Intensity Distribution (80/20)",
-                  ShoeTracker: "Shoe Health",
-                  ActivityMap: "Activity Heatmap",
-                  RecentActivities: "Recent Activities",
-                  MonthlyVolume: "Monthly Volume",
-                  HeartRate: "Heart Rate Stats",
-                  PersonalBests: "Personal Bests",
-                  RacePredictor: "Race Predictor",
-                  ActivityMix: "Activity Mix",
-                  YearToDate: "Year to Date",
-                  AllTimeStats: "All Time Stats",
-                  ActiveGoals: "Active Goals List",
-                  TrainingLoad: "Training Load (ATL/CTL)",
-                  BestEfforts: "Estimated Best Efforts",
-                  Badges: "Milestones & Badges",
-                  CoachInsight: "Coach Insight",
-                  PaceTrend: "Pace Trend (8 Weeks)",
-                  Cadence: "Cadence Tracker",
-                  WellnessScore: "Wellness Score",
-                  UpcomingWorkout: "Upcoming Workout",
-                };
-                const title = WIDGET_NAMES[id] || id;
-                return (
-                  <View
-                    key={id}
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      backgroundColor: theme.colors.background,
-                      padding: 12,
-                      borderRadius: 8,
-                      marginBottom: 8,
-                      borderWidth: 1,
-                      borderColor: theme.colors.border,
-                      opacity: 0.7,
-                    }}
-                  >
-                    <TouchableOpacity
-                      onPress={() => handleToggleWidget(id)}
-                      style={{
-                        width: 24,
-                        height: 24,
-                        borderRadius: 12,
-                        borderWidth: 2,
-                        borderColor: theme.colors.textSecondary,
-                        marginRight: 12,
-                      }}
-                    />
-                    <Typography
-                      style={{
-                        flex: 1,
-                        fontSize: 14,
-                        color: theme.colors.textSecondary,
-                      }}
-                    >
-                      {title}
-                    </Typography>
-                  </View>
-                );
-              })}
-
-            <View style={{ height: 40 }} />
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+        onClose={() => setLayoutModalVisible(false)}
+        catalog={defaultLayout.map<WidgetCatalogEntry>(id => ({ id, title: WIDGET_TITLES[id] || id }))}
+        activeIds={settings.widgetLayout || defaultLayout}
+        onToggle={handleToggleWidget}
+        onMove={(id, dir) => {
+          const list = [...(settings.widgetLayout || defaultLayout)];
+          const idx = list.indexOf(id);
+          if (idx < 0) return;
+          handleMoveWidget(idx, dir);
+        }}
+      />
 
       {/* ── Info Bottom Sheet ── */}
       <Modal

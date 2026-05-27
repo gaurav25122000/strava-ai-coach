@@ -1,7 +1,10 @@
 import { Goal, Activity, UserProfile } from '../store/useStore';
 import axios from 'axios';
 
-// Gemini response_schema for structured output
+// Gemini response_schema for structured output.
+// Every phase now carries a 7-entry day-by-day schedule with explicit workout
+// kind + optional rest prescription so the UI can render a weekly strip and
+// match Strava activities back to the prescribed workout.
 const PLAN_SCHEMA = {
   type: 'object',
   properties: {
@@ -15,8 +18,34 @@ const PLAN_SCHEMA = {
           weeklyVolumeTarget:  { type: 'number' },
           longRunTarget:       { type: 'number' },
           keyWorkout:          { type: 'string' },
+          weekStart:           { type: 'string' },   // ISO date, Monday of phase start
+          weekEnd:             { type: 'string' },   // ISO date, Sunday of phase end
+          schedule: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                dayOfWeek:  { type: 'integer' },     // 0 = Monday, 6 = Sunday
+                kind:       { type: 'string', enum: ['EASY','TEMPO','INTERVALS','LONG','RECOVERY','CROSS','STRENGTH','REST'] },
+                title:      { type: 'string' },      // ≤ 6 words, e.g. "Tempo 5k @ threshold"
+                description:{ type: 'string' },      // 1-2 sentences max; what + why
+                distanceKm: { type: 'number' },
+                durationMin:{ type: 'number' },
+                intensity:  { type: 'string', enum: ['Z1','Z2','Z3','Z4','Z5'] },
+                rest: {
+                  type: 'object',
+                  properties: {
+                    kind: { type: 'string', enum: ['COMPLETE','ACTIVE_WALK','MOBILITY','CROSS_LOW'] },
+                    note: { type: 'string' },        // ≤ 1 sentence on how to rest
+                  },
+                  required: ['kind', 'note'],
+                },
+              },
+              required: ['dayOfWeek', 'kind', 'title', 'description'],
+            },
+          },
         },
-        required: ['name', 'description', 'weeklyVolumeTarget', 'longRunTarget', 'keyWorkout'],
+        required: ['name', 'description', 'weeklyVolumeTarget', 'longRunTarget', 'keyWorkout', 'schedule'],
       },
     },
   },
@@ -30,7 +59,17 @@ Core Coaching Rules you MUST follow:
 1. The 10% Rule: Never increase weekly volume by more than 10-15% from the previous week's baseline.
 2. 80/20 Rule: Ensure roughly 80% of the prescribed volume is easy/aerobic, and 20% is high intensity.
 3. Safety First: If the target date is too close for the target distance given the athlete's current volume, prioritize getting them to the finish line uninjured rather than hitting an arbitrary time goal.
-4. Precision: When prescribing key workouts, provide exact warmups, intervals, recoveries (time or distance), and cooldowns. Use Perceived Exertion (RPE 1-10) alongside pace targets.`;
+4. Precision: When prescribing key workouts, provide exact warmups, intervals, recoveries (time or distance), and cooldowns. Use Perceived Exertion (RPE 1-10) alongside pace targets.
+
+Per-day Schedule Rules (MANDATORY for the schedule array on every phase):
+- Output EXACTLY 7 entries, dayOfWeek 0..6 (0 = Monday, 6 = Sunday). No gaps. No duplicates.
+- Distribute the weeklyVolumeTarget across the 7 days. The LONG run is one day; at least 2 rest/cross days; the rest are easy + 1-2 quality (TEMPO / INTERVALS).
+- Each prescription's "title" is ≤ 6 words. Each "description" is 1-2 sentences max — be specific (distance, pace target or zone, RPE) without being verbose. The reader should know exactly what to do in <10 seconds.
+- For REST days, ALWAYS include the "rest" object with kind (COMPLETE / ACTIVE_WALK / MOBILITY / CROSS_LOW) and a one-sentence "note" telling the athlete how to rest well (e.g. "20-min easy walk + 10-min hip mobility").
+- intensity must use Z1-Z5 zones (Z1-Z2 = easy aerobic, Z3 = tempo, Z4 = threshold, Z5 = VO2max).
+- Include weekStart and weekEnd ISO dates (YYYY-MM-DD) for each phase based on the day this plan is generated.
+
+Tone for descriptions: short, declarative, second-person. Avoid filler like "you should consider" — say "do" or "skip". Do not repeat the athlete's stats back at them. Do not output any text outside the JSON.`;
 }
 
 function buildUserPrompt(
@@ -104,22 +143,55 @@ Target Event: "${goalTitle}"
 Days to Event: ${daysToGoal} days (${Math.floor(daysToGoal / 7)} weeks)
 
 ## INSTRUCTIONS
-Based on the athlete's history and goal, generate a multi-phase training plan structured specifically for the ${daysToGoal} days remaining.
+Today's date is ${new Date().toISOString().slice(0, 10)}. Based on the athlete's history and goal, generate a multi-phase training plan structured specifically for the ${daysToGoal} days remaining.
 
 For each phase:
-- Specify the exact weeks covered (e.g., "Weeks 1-4").
-- Provide a detailed 3-5 sentence physiological focus, explaining the types of runs and pacing guidance relative to their current fitness.
-- Define a highly precise keyWorkout for the phase, including exact distances, times, and RPE/Pace guidance.`;
+- Set weekStart to the Monday on or after the phase begins, and weekEnd to the Sunday it ends (ISO YYYY-MM-DD).
+- Specify the exact weeks covered in the description (e.g., "Weeks 1-4").
+- description = 3-5 sentence physiological focus, explaining the types of runs and pacing guidance relative to the athlete's current fitness.
+- keyWorkout = the single most important session of the phase, with exact distances/times/RPE/zone.
+- schedule = EXACTLY 7 per-day prescriptions (dayOfWeek 0..6). Tailor to the athlete's preferred training days/week (${userProfile.trainingDaysPerWeek || 4}); make excess days REST with a real rest prescription. Keep each title ≤ 6 words and description ≤ 2 sentences.
+- The first phase's schedule represents what the athlete should do THIS WEEK starting on its weekStart.`;
+}
+
+// Normalises an LLM phase payload into the in-store Phase shape. Tolerates
+// the older shape (no schedule, no weekStart/End) so historic goals still load.
+function normalisePhase(raw: any): any {
+  const schedule = Array.isArray(raw?.schedule)
+    ? raw.schedule
+        .filter((d: any) => typeof d?.dayOfWeek === 'number' && d?.kind && d?.title && d?.description)
+        .map((d: any) => ({
+          dayOfWeek: Math.max(0, Math.min(6, Math.round(d.dayOfWeek))),
+          kind: d.kind,
+          title: String(d.title).slice(0, 60),
+          description: String(d.description).slice(0, 280),
+          distanceKm:  typeof d.distanceKm  === 'number' ? d.distanceKm  : undefined,
+          durationMin: typeof d.durationMin === 'number' ? d.durationMin : undefined,
+          intensity:   d.intensity || undefined,
+          rest: d.rest ? { kind: d.rest.kind, note: String(d.rest.note || '').slice(0, 200) } : undefined,
+        }))
+    : undefined;
+  return {
+    name: raw?.name || '',
+    description: raw?.description || '',
+    weeklyVolumeTarget: Number(raw?.weeklyVolumeTarget) || 0,
+    longRunTarget: Number(raw?.longRunTarget) || 0,
+    keyWorkout: raw?.keyWorkout || '',
+    weekStart: raw?.weekStart || undefined,
+    weekEnd: raw?.weekEnd || undefined,
+    schedule,
+  };
 }
 
 function parsePhases(result: any): Partial<Goal> {
-  const firstPhase = result.phases?.[0] || result;
+  const phases = Array.isArray(result?.phases) ? result.phases.map(normalisePhase) : [];
+  const firstPhase = phases[0] || result || {};
   return {
-    phase: firstPhase.name ? `${firstPhase.name}\n${firstPhase.description}` : result.phase || '',
+    phase: firstPhase.name ? `${firstPhase.name}\n${firstPhase.description}` : result?.phase || '',
     weeklyVolume: { current: 0, target: firstPhase.weeklyVolumeTarget || 0 },
     longRun: { current: 0, target: firstPhase.longRunTarget || 0 },
     keyWorkout: firstPhase.keyWorkout || '',
-    phases: result.phases || [],
+    phases,
   };
 }
 
