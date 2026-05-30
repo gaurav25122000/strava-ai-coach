@@ -22,9 +22,11 @@ export const ProgressBar = ({
   const width = useSharedValue(0);
 
   useEffect(() => {
+    // Clamp + guard NaN so an invalid width never reaches the native layer.
+    const safe = Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0;
     width.value = withDelay(
       delay,
-      withSpring(progress, { damping: 18, stiffness: 110, mass: 0.9 }),
+      withSpring(safe, { damping: 18, stiffness: 110, mass: 0.9 }),
     );
   }, [progress, delay]);
 

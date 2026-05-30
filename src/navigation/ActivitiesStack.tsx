@@ -32,7 +32,14 @@ export default function ActivitiesStack() {
       }}
     >
       <Stack.Screen name="ActivitiesList" component={ActivitiesScreen} />
-      <Stack.Screen name="ActivityDetail" component={ActivityDetailWrapper} />
+      <Stack.Screen
+        name="ActivityDetail"
+        component={ActivityDetailWrapper}
+        options={{
+          presentation: 'modal',
+          animation: 'slide_from_bottom',
+        }}
+      />
     </Stack.Navigator>
   );
 }

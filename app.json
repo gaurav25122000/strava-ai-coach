@@ -7,12 +7,12 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#1A1A24"
     },
     "runtimeVersion": {
       "policy": "sdkVersion"
@@ -50,7 +50,6 @@
       "expo-web-browser",
       "@react-native-community/datetimepicker",
       "expo-task-manager",
-      "expo-background-fetch",
       [
         "expo-notifications",
         {
@@ -58,7 +57,9 @@
           "color": "#FC4C02",
           "sounds": []
         }
-      ]
+      ],
+      "expo-font",
+      "expo-background-task"
     ],
     "extra": {
       "eas": {

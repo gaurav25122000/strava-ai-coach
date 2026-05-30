@@ -30,8 +30,8 @@ export const styles = StyleSheet.create({
   },
   syncBtnLabel: { fontSize: 12, fontWeight: '700', color: theme.colors.text },
   row: { flexDirection: 'row', gap: 6 },
+  chipCell: { flex: 1 },
   chip: {
-    flex: 1,
     minHeight: 72,
     alignItems: 'center',
     justifyContent: 'space-between',

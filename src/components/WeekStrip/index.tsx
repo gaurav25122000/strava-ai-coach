@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { TouchableOpacity, View } from 'react-native';
 import { Check, RefreshCw } from 'lucide-react-native';
+import { Icon } from '../Icon';
+import { PressableScale } from '../PressableScale';
 import { addDays, format, parseISO, startOfWeek } from 'date-fns';
 import { Typography } from '../Typography';
 import { theme } from '../../theme';
@@ -52,7 +54,7 @@ export function WeekStrip({ goal, onPressDay, onSync }: Props) {
           </Typography>
         </View>
         <TouchableOpacity style={styles.syncBtn} onPress={() => onSync(goal)} activeOpacity={0.75}>
-          <RefreshCw size={12} color={theme.colors.text} />
+          <Icon icon={RefreshCw} variant="plain" size="xs" color={theme.colors.text} />
           <Typography style={styles.syncBtnLabel}>Sync</Typography>
         </TouchableOpacity>
       </View>
@@ -67,24 +69,28 @@ export function WeekStrip({ goal, onPressDay, onSync }: Props) {
           const color = WORKOUT_COLORS[kind];
           const done = !!ci && ci.completed;
           return (
-            <TouchableOpacity
+            <PressableScale
               key={di}
               onPress={() => onPressDay(goal, di)}
-              activeOpacity={0.7}
               style={[
+                styles.chipCell,
                 styles.chip,
                 { borderColor: isToday ? color : 'rgba(255,255,255,0.06)' },
                 done && { backgroundColor: color + '33' },
               ]}
+              accessibilityRole="button"
+              accessibilityLabel={`${WORKOUT_LABELS[kind]} on ${DAY_LABELS[di]}`}
             >
               <Typography style={[styles.chipLabel, isToday && { color: '#fff' }]}>
                 {DAY_LABELS[di]}
               </Typography>
               <View style={[styles.chipDot, { backgroundColor: color }]}>
-                {done ? <Check size={10} color="#fff" /> : workoutIcon(kind, 10, '#fff')}
+                {done ? <Icon icon={Check} variant="plain" size="xs" color="#fff" /> : workoutIcon(kind, 10, '#fff')}
               </View>
-              <Typography style={styles.chipKind}>{WORKOUT_LABELS[kind].slice(0, 5)}</Typography>
-            </TouchableOpacity>
+              <Typography style={styles.chipKind} numberOfLines={1} adjustsFontSizeToFit>
+                {WORKOUT_LABELS[kind].slice(0, 5)}
+              </Typography>
+            </PressableScale>
           );
         })}
       </View>

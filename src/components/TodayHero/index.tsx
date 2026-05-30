@@ -1,7 +1,10 @@
-import React, { useMemo } from 'react';
-import { TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useMemo } from 'react';
+import { Platform, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Check, Clock, Flame, Heart, MapPin, RefreshCw, SkipForward } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
+import { Icon } from '../Icon';
+import { PressableScale } from '../PressableScale';
 import { addDays, differenceInMinutes, format, parseISO, startOfWeek } from 'date-fns';
 import { Typography } from '../Typography';
 import { theme } from '../../theme';
@@ -93,6 +96,21 @@ export function TodayHero({
   const kind: WorkoutKind = presc?.kind || (activeGoal ? 'EASY' : 'REST');
   const accent = WORKOUT_COLORS[kind];
 
+  // Completing a workout is the app's hero moment — celebrate it with a success
+  // notification haptic. Skip is a lighter, neutral action.
+  const handleMarkDone = useCallback(() => {
+    if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    onMarkDone();
+  }, [onMarkDone]);
+  const handleSkip = useCallback(() => {
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onSkip();
+  }, [onSkip]);
+  const handleCreateGoal = useCallback(() => {
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onCreateGoal();
+  }, [onCreateGoal]);
+
   // Hero gradient blends the workout-kind accent into the always-on plan
   // family colour. Rest days darken to a calm slate so the screen breathes.
   const heroGradient: [string, string] = kind === 'REST'
@@ -114,7 +132,7 @@ export function TodayHero({
           </View>
           {currentStreak > 0 && (
             <View style={styles.streakBadge}>
-              <Flame size={14} color="#FCD34D" />
+              <Icon icon={Flame} variant="plain" size="sm" color="#FCD34D" />
               <Typography style={styles.streakValue}>{currentStreak}</Typography>
               <Typography style={styles.streakLabel}>day streak</Typography>
             </View>
@@ -132,45 +150,49 @@ export function TodayHero({
               <View style={styles.metaRow}>
                 {typeof presc.distanceKm === 'number' && (
                   <View style={styles.metaPill}>
-                    <MapPin size={11} color="#fff" />
+                    <Icon icon={MapPin} variant="plain" size="xs" color="#fff" />
                     <Typography style={styles.metaText}>{presc.distanceKm} km</Typography>
                   </View>
                 )}
                 {typeof presc.durationMin === 'number' && (
                   <View style={styles.metaPill}>
-                    <Clock size={11} color="#fff" />
+                    <Icon icon={Clock} variant="plain" size="xs" color="#fff" />
                     <Typography style={styles.metaText}>{presc.durationMin} min</Typography>
                   </View>
                 )}
                 {presc.intensity && (
                   <View style={styles.metaPill}>
-                    <Heart size={11} color="#fff" />
+                    <Icon icon={Heart} variant="plain" size="xs" color="#fff" />
                     <Typography style={styles.metaText}>{presc.intensity}</Typography>
                   </View>
                 )}
               </View>
             )}
             <View style={styles.ctaRow}>
-              <TouchableOpacity
+              <PressableScale
                 style={[styles.cta, styles.ctaSecondary]}
-                onPress={onSkip}
+                onPress={handleSkip}
                 disabled={alreadyLogged}
-                activeOpacity={0.8}
+                haptic="none"
+                accessibilityRole="button"
+                accessibilityLabel="Skip today's workout"
               >
-                <SkipForward size={14} color="#fff" />
+                <Icon icon={SkipForward} variant="plain" size="sm" color="#fff" />
                 <Typography style={styles.ctaSecondaryText}>Skip</Typography>
-              </TouchableOpacity>
-              <TouchableOpacity
+              </PressableScale>
+              <PressableScale
                 style={[styles.cta, styles.ctaPrimary]}
-                onPress={onMarkDone}
+                onPress={handleMarkDone}
                 disabled={alreadyLogged}
-                activeOpacity={0.8}
+                haptic="none"
+                accessibilityRole="button"
+                accessibilityLabel="Mark today's workout done"
               >
-                <Check size={14} color={accent} />
+                <Icon icon={Check} variant="plain" size="sm" color={accent} />
                 <Typography style={[styles.ctaPrimaryText, { color: accent }]}>
                   {alreadyLogged ? 'Done today ✓' : 'Mark Done'}
                 </Typography>
-              </TouchableOpacity>
+              </PressableScale>
             </View>
           </View>
         ) : activeGoal && (presc?.kind === 'REST' || !presc) ? (
@@ -189,31 +211,36 @@ export function TodayHero({
             <Typography style={styles.noPlanText}>
               Add an AI goal to see today's workout, rest prescription, and progress here.
             </Typography>
-            <TouchableOpacity
+            <PressableScale
               style={[styles.cta, styles.ctaPrimary, { alignSelf: 'flex-start', paddingHorizontal: 14 }]}
-              onPress={onCreateGoal}
-              activeOpacity={0.85}
+              onPress={handleCreateGoal}
+              haptic="none"
+              accessibilityRole="button"
+              accessibilityLabel="Create AI Goal"
             >
               <Typography style={[styles.ctaPrimaryText, { color: accent }]}>Create AI Goal</Typography>
-            </TouchableOpacity>
+            </PressableScale>
           </View>
         )}
 
         <View style={styles.syncRow}>
-          <TouchableOpacity
+          <PressableScale
             style={styles.syncPill}
             onPress={stravaConnected ? onSync : undefined}
-            activeOpacity={stravaConnected ? 0.7 : 1}
+            disabled={!stravaConnected}
+            haptic={stravaConnected ? 'light' : 'none'}
+            accessibilityRole="button"
+            accessibilityLabel={stravaConnected ? 'Sync Strava' : 'Strava not connected'}
           >
             <View style={[styles.syncDot, { backgroundColor: stravaConnected ? theme.colors.success : theme.colors.warning }]} />
             <Typography style={styles.syncText}>
               {stravaConnected ? syncLabel(lastSyncedAt) : 'Strava not connected'}
             </Typography>
-          </TouchableOpacity>
+          </PressableScale>
           {stravaConnected && (
-            <TouchableOpacity onPress={onSync} activeOpacity={0.7} hitSlop={10}>
-              <RefreshCw size={14} color="rgba(255,255,255,0.7)" />
-            </TouchableOpacity>
+            <PressableScale onPress={onSync} haptic="light" hitSlop={10} accessibilityRole="button" accessibilityLabel="Sync Strava">
+              <Icon icon={RefreshCw} variant="plain" size="sm" color="rgba(255,255,255,0.7)" />
+            </PressableScale>
           )}
         </View>
       </LinearGradient>

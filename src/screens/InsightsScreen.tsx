@@ -1,24 +1,55 @@
-import React, { useMemo, useState, useDeferredValue, useCallback } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity, Dimensions, Modal, Switch } from 'react-native';
+import React, { useMemo, useState, useDeferredValue, useCallback, useEffect, useRef } from 'react';
+import { View, StyleSheet, FlatList, TouchableOpacity, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
 import { theme } from '../theme';
-import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
 import { LineChart, BarChart, PieChart } from 'react-native-gifted-charts';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  useSharedValue,
+  useAnimatedStyle,
+  useDerivedValue,
+  interpolate,
+  withSpring,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { useStore } from '../store/useStore';
 import { format, parseISO, startOfWeek, endOfWeek, eachWeekOfInterval, subWeeks } from 'date-fns';
-import { Heart, BarChart3, Zap, X, Activity, Settings2 } from 'lucide-react-native';
+import {
+  Heart,
+  BarChart3,
+  Zap,
+  Activity,
+  Settings2,
+  Footprints,
+  Clock,
+  TrendingUp,
+  TrendingDown,
+  Mountain,
+  Flame,
+} from 'lucide-react-native';
+import { Icon } from '../components/Icon';
 import { LinearGradient } from 'expo-linear-gradient';
+import { chartBase, barProps, lineProps, pieProps, pointerConfig } from '../utils/chartTheme';
+import { INSIGHT_FAMILY, familyStyle } from '../utils/widgetFamilies';
+import { WidgetCard } from '../components/WidgetCard';
+import { BottomSheet } from '../components/BottomSheet';
+import { SectionLabel } from '../components/SheetUI';
+import { SkeletonChart } from '../components/SkeletonPresets';
+import { PressableScale } from '../components/PressableScale';
+import { AnimatedNumber } from '../components/AnimatedNumber';
+import { ProgressBar } from '../components/ProgressBar';
+import { Toggle } from '../components/Toggle';
 
 type Range = '30d' | '3m' | '6m' | '1y' | 'all';
 const RANGE_LABELS: Record<Range, string> = { '30d': '30D', '3m': '3M', '6m': '6M', '1y': '1Y', all: 'All' };
+const RANGE_KEYS: Range[] = ['30d', '3m', '6m', '1y', 'all'];
 const RANGE_DAYS: Record<Range, number> = { '30d': 30, '3m': 90, '6m': 180, '1y': 365, all: Infinity };
 const RANGE_WEEKS: Record<Range, number> = { '30d': 4, '3m': 12, '6m': 26, '1y': 52, all: 104 };
 
 const { width: SCREEN_W } = Dimensions.get('window');
-// scroll padding 16*2 + card padding 16*2 + gifted-charts yAxis ~44 = 108
+// scroll padding 16*2 + widget-card body padding 14*2 + gifted-charts yAxis ~44 = ~104
 const CHART_W = SCREEN_W - 108;
 
 type Tab = 'pace' | 'volume' | 'heart' | 'elevation' | 'steps' | 'time' | 'calories' | 'power' | 'cadence' | 'mix';
@@ -35,18 +66,49 @@ const ALL_TABS: { key: Tab; label: string }[] = [
   { key: 'power',     label: 'Power'     },
 ];
 
-const CARD_COLORS: Record<Tab, [string, string]> = {
-  steps:     ['#10b981', '#059669'],
-  time:      ['#8b5cf6', '#7c3aed'],
-  volume:    ['#0ea5e9', '#0284c7'],
-  pace:      ['#6366f1', '#8b5cf6'],
-  heart:     ['#ef4444', '#dc2626'],
-  cadence:   ['#ec4899', '#db2777'],
-  mix:       ['#6366f1', '#8b5cf6'],
-  elevation: ['#f59e0b', '#d97706'],
-  calories:  ['#ef4444', '#dc2626'],
-  power:     ['#f97316', '#ea580c'],
+// Each tab maps to a lucide icon that surfaces inside the widget card header.
+const TAB_ICON: Record<Tab, React.ComponentType<{ size?: number; color?: string }>> = {
+  steps:     Footprints,
+  time:      Clock,
+  volume:    TrendingUp,
+  pace:      Zap,
+  heart:     Heart,
+  cadence:   Activity,
+  mix:       BarChart3,
+  elevation: Mountain,
+  calories:  Flame,
+  power:     Zap,
 };
+
+// Short caption shown under each row label in the Manage Graphs sheet —
+// describes what the graph plots so the toggle is self-explanatory.
+const TAB_DESCRIPTION: Record<Tab, string> = {
+  steps:     'Weekly step counts and trend',
+  time:      'Active hours per week',
+  volume:    'Weekly distance and trend',
+  pace:      'Average run pace over time',
+  heart:     'Heart-rate zone distribution',
+  cadence:   'Steps-per-minute trend',
+  mix:       'Activity-type breakdown',
+  elevation: 'Elevation gained per week',
+  calories:  'Estimated calories burned',
+  power:     'Power output per ride',
+};
+
+// % change between the latest half of a numeric series and the earlier half.
+// Returns null when there's too little data to be meaningful.
+function computeTrend(values: number[]): number | null {
+  const filtered = values.filter((v) => Number.isFinite(v));
+  if (filtered.length < 4) return null;
+  const mid = Math.floor(filtered.length / 2);
+  const earlier = filtered.slice(0, mid);
+  const later = filtered.slice(mid);
+  const avg = (xs: number[]) => xs.reduce((s, v) => s + v, 0) / xs.length;
+  const a = avg(earlier);
+  const b = avg(later);
+  if (!a) return null;
+  return Math.round(((b - a) / a) * 100);
+}
 
 export default function InsightsScreen() {
   const { activities, settings, updateSettings, hrZones } = useStore();
@@ -274,7 +336,6 @@ export default function InsightsScreen() {
       };
     });
   }, [windowedActivities]);
-  const maxPower = powerData.length ? Math.max(...powerData.map(d => d.value), 1) : 1;
   const avgPower = powerData.length ? Math.round(powerData.reduce((s,d) => s + d.value, 0) / powerData.length) : 0;
 
   // ── Cadence ───────────────────────────────────────────────────────
@@ -316,57 +377,6 @@ export default function InsightsScreen() {
     };
   }, [activities]);
 
-  // ── Chart base config — animations disabled to prevent jank on range change
-  const chartBase = {
-    yAxisColor: 'transparent' as const,
-    xAxisColor: theme.colors.border,
-    yAxisTextStyle: { color: theme.colors.textSecondary, fontSize: 10, fontWeight: '600' as const },
-    xAxisLabelTextStyle: { color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700' as const },
-    noOfSections: 4,
-    rulesColor: theme.colors.border + '66',
-    rulesType: 'dashed' as const,
-    dashWidth: 4,
-    dashGap: 4,
-    isAnimated: false,
-  };
-
-  const getPointerConfig = (unit: string, color: string) => ({
-    pointerStripHeight: 160,
-    pointerStripColor: color,
-    pointerStripWidth: 2,
-    pointerColor: color,
-    radius: 6,
-    pointerLabelWidth: 80,
-    pointerLabelHeight: 30,
-    activatePointersOnLongPress: false,
-    activatePointersDelay: 0,
-    autoAdjustPointerLabelPosition: true,
-    pointerLabelComponent: (items: any) => {
-      if (!items || !items[0]) return null;
-      const val = items[0].value;
-      let formatted = val + unit;
-      if (unit === '/km') {
-        const n = parseFloat(val);
-        const m = Math.floor(n);
-        const s = Math.round((n - m) * 60);
-        formatted = `${m}:${s.toString().padStart(2, '0')} /km`;
-      }
-      return (
-        <View style={{
-          height: 30, width: 80, backgroundColor: theme.colors.surface,
-          borderRadius: 8, justifyContent: 'center', alignItems: 'center',
-          shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 5,
-          borderWidth: 1, borderColor: theme.colors.border,
-          marginTop: -30, marginLeft: -40,
-        }}>
-          <Typography style={{ color: theme.colors.text, fontSize: 12, fontWeight: '800' }}>
-            {formatted}
-          </Typography>
-        </View>
-      );
-    },
-  });
-
   const paceYLabel = (v: string) => {
     const n = parseFloat(v);
     if (isNaN(n)) return v;
@@ -374,35 +384,105 @@ export default function InsightsScreen() {
     return `${m}:${s.toString().padStart(2,'0')}`;
   };
 
-  // ── Empty placeholder for charts with no data — compact, no fake skeleton bars
-  const EmptyRow = ({ icon, msg, color }: { icon: React.ReactNode; msg: string; color: string }) => (
-    <View style={[st.emptyRow, { borderLeftColor: color, backgroundColor: color + '0E' }]}>
-      {icon}
-      <Typography style={[st.emptyRowText, { color: theme.colors.textSecondary }]}>{msg}</Typography>
-    </View>
+  // ── Premium empty placeholder for charts with no data — dashed border at
+  // the chart height so the layout stays the same regardless of data state.
+  const EmptyRow = ({
+    icon,
+    msg,
+    color,
+    headline,
+    cta,
+  }: {
+    icon: React.ReactNode;
+    msg: string;
+    color: string;
+    headline?: string;
+    cta?: { label: string; onPress: () => void };
+  }) => (
+    <Animated.View
+      entering={FadeIn.duration(theme.motion.base)}
+      style={[st.emptyBox, { borderColor: color + '55' }]}
+    >
+      <View style={[st.emptyIconWrap, { backgroundColor: color + '18', borderColor: color + '55' }]}>
+        {icon}
+      </View>
+      <Typography style={[st.emptyHeadline, { color: theme.colors.text }]}>
+        {headline ?? 'No data yet'}
+      </Typography>
+      <Typography style={[st.emptyCaption, { color: theme.colors.textSecondary }]}>{msg}</Typography>
+      {cta && (
+        <PressableScale
+          scaleTo={0.94}
+          haptic="light"
+          onPress={cta.onPress}
+          style={[st.emptyCta, { backgroundColor: color + '18', borderColor: color + '88' }]}
+          accessibilityRole="button"
+          accessibilityLabel={cta.label}
+        >
+          <Typography style={[st.emptyCtaText, { color }]}>{cta.label}</Typography>
+        </PressableScale>
+      )}
+    </Animated.View>
   );
 
   const Insight = ({ text, color }: { text: string; color: string }) => (
-    <View style={[st.insightBar, { borderLeftColor: color, backgroundColor: color + '18' }]}>
-      <Zap size={12} color={color} />
+    <View style={[st.insightBar, { borderLeftColor: color, backgroundColor: color + '14' }]}>
+      <Icon icon={Zap} variant="plain" size="xs" color={color} />
       <Typography style={[st.insightText, { color }]}>{text}</Typography>
     </View>
   );
 
-  // Card header with gradient accent + stat chip
-  const CardHeader = ({ title, sub, colors, stat, statUnit }: {
-    title: string; sub: string; colors: [string, string]; stat?: string | number; statUnit?: string;
+  // Big stat row above each chart — primary metric + signed trend chip.
+  // When `statValue` (a number) is supplied the hero figure counts up via
+  // AnimatedNumber so it tweens on range change; the '—' / formatted-pace
+  // (m:ss) cases keep the plain Typography render since they aren't a single
+  // number to interpolate.
+  const BigStat = ({
+    stat,
+    statValue,
+    statSuffix,
+    statDecimals,
+    statUnit,
+    trend,
+  }: {
+    stat: string | number;
+    statValue?: number;
+    statSuffix?: string;
+    statDecimals?: number;
+    statUnit: string;
+    trend: number | null;
   }) => (
-    <View style={st.cardHeader}>
-      <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={st.cardAccent} />
-      <View style={{ flex: 1, marginLeft: 12 }}>
-        <Typography style={st.cardTitle}>{title}</Typography>
-        <Typography style={st.cardSub}>{sub}</Typography>
+    <View style={st.bigStatRow}>
+      <View>
+        {statValue !== undefined ? (
+          <AnimatedNumber
+            value={statValue}
+            decimals={statDecimals ?? 0}
+            suffix={statSuffix ?? ''}
+            duration={theme.motion.slow}
+            style={st.bigStat}
+          />
+        ) : (
+          <Typography style={st.bigStat}>{stat}</Typography>
+        )}
+        <Typography style={st.bigStatUnit}>{statUnit}</Typography>
       </View>
-      {stat !== undefined && (
-        <View style={[st.statChip, { borderColor: colors[0] + '55', backgroundColor: colors[0] + '18' }]}>
-          <Typography style={[st.statChipVal, { color: colors[0] }]}>{stat}</Typography>
-          {statUnit && <Typography style={[st.statChipUnit, { color: colors[0] }]}>{statUnit}</Typography>}
+      {trend !== null && (
+        <View
+          style={[
+            st.trendChip,
+            {
+              backgroundColor: trend >= 0 ? '#22c55e22' : '#ef444422',
+              borderColor: trend >= 0 ? '#22c55e' : '#ef4444',
+            },
+          ]}
+        >
+          {trend >= 0
+            ? <Icon icon={TrendingUp} variant="plain" size="xs" color="#22c55e" />
+            : <Icon icon={TrendingDown} variant="plain" size="xs" color="#ef4444" />}
+          <Typography style={{ fontSize: 11, fontWeight: '800', color: trend >= 0 ? '#22c55e' : '#ef4444' }}>
+            {Math.abs(trend)}%
+          </Typography>
         </View>
       )}
     </View>
@@ -424,121 +504,240 @@ export default function InsightsScreen() {
     : () => null;
 
   const renderCard = useCallback(({ item: t, index }: { item: { key: Tab; label: string }; index: number }) => {
-    const C = CARD_COLORS[t.key] ?? ['#6366f1', '#8b5cf6'];
+    const family = INSIGHT_FAMILY[t.key] || 'activity';
+    const fam = familyStyle(family);
+    const accent = fam.accent;
+    const TabIcon = TAB_ICON[t.key];
+
+    // Per-tab "primary metric" + trend series. Pie tabs get a null trend.
+    const primary = (() => {
+      switch (t.key) {
+        case 'steps':
+          return {
+            title: 'Weekly Steps',
+            caption: 'Estimated from run & walk distance',
+            stat: avgSteps > 0 ? `${Math.round(avgSteps / 1000)}k` : '—',
+            statValue: avgSteps > 0 ? Math.round(avgSteps / 1000) : undefined,
+            statSuffix: 'k',
+            statUnit: 'avg / week',
+            trend: computeTrend(stepsData.map(d => d.value)),
+          };
+        case 'time':
+          return {
+            title: 'Active Time',
+            caption: 'Hours of movement per week',
+            stat: Number(avgTime) > 0 ? avgTime : '—',
+            statValue: Number(avgTime) > 0 ? Number(avgTime) : undefined,
+            statDecimals: 1,
+            statUnit: 'hrs / week',
+            trend: computeTrend(timeData.map(d => d.value)),
+          };
+        case 'volume':
+          return {
+            title: 'Weekly Volume',
+            caption: 'Kilometres across all activities',
+            stat: maxWeekVol > 0 ? maxWeekVol.toFixed(0) : '—',
+            statValue: maxWeekVol > 0 ? maxWeekVol : undefined,
+            statUnit: 'km peak week',
+            trend: computeTrend(volumeData.map(d => d.value)),
+          };
+        case 'pace':
+          return {
+            title: 'Running Pace',
+            caption: `Min/km trend · ${paceData.length} runs in window`,
+            stat: bestPace ? fmtPace(bestPace) : '—',
+            statUnit: 'min/km best',
+            // Pace is inverted — lower is better. Negate so the chip's colour
+            // reflects "improvement" instead of raw delta.
+            trend: paceData.length ? (() => {
+              const t = computeTrend(paceData.map(d => d.value));
+              return t === null ? null : -t;
+            })() : null,
+          };
+        case 'heart':
+          return {
+            title: 'HR Zone Distribution',
+            caption: 'Where you spend your effort',
+            stat: zoneStats.length ? `${zoneStats.reduce((s, z) => s + z.value, 0)}` : '—',
+            statValue: zoneStats.length ? zoneStats.reduce((s, z) => s + z.value, 0) : undefined,
+            statUnit: 'sessions',
+            trend: null,
+          };
+        case 'cadence':
+          return {
+            title: 'Running Cadence',
+            caption: 'Steps per minute',
+            stat: avgCadence || '—',
+            statValue: avgCadence || undefined,
+            statUnit: 'spm average',
+            trend: computeTrend(cadenceData.map(d => d.value)),
+          };
+        case 'mix':
+          return {
+            title: 'Activity Mix',
+            caption: 'All-time breakdown by sport',
+            stat: mixStats.length ? mixStats.reduce((s, e) => s + e.count, 0) : '—',
+            statValue: mixStats.length ? mixStats.reduce((s, e) => s + e.count, 0) : undefined,
+            statUnit: 'activities',
+            trend: null,
+          };
+        case 'elevation':
+          return {
+            title: 'Elevation Gain',
+            caption: 'Metres climbed per activity',
+            stat: totalElev > 0 ? totalElev.toLocaleString() : '—',
+            statUnit: 'm total',
+            trend: computeTrend(elevData.map(d => d.value)),
+          };
+        case 'calories':
+          return {
+            title: 'Calories Burned',
+            caption: 'Weekly kcal from Strava',
+            stat: avgCalories || '—',
+            statValue: avgCalories || undefined,
+            statUnit: 'kcal / wk avg',
+            trend: computeTrend(caloriesData.map(d => d.value)),
+          };
+        case 'power':
+          return {
+            title: 'Average Power',
+            caption: 'Watts from power meter',
+            stat: avgPower || '—',
+            statValue: avgPower || undefined,
+            statUnit: 'W average',
+            trend: computeTrend(powerData.map(d => d.value)),
+          };
+      }
+    })();
+
+    // While the deferred range hasn't caught up to the active range, the heavy
+    // memos are still recomputing in the background. Surface a skeleton in the
+    // chart slot so the card doesn't flicker the prior range's data.
+    const rangePending = range !== deferredRange;
 
     return (
-      <Animated.View
-        entering={FadeInDown.delay(Math.min(index * 60, 240)).duration(360)}
-      >
-        <Card style={st.card}>
+      <Animated.View entering={FadeInDown.delay(Math.min(index * 40, 280)).springify()}>
+        <WidgetCard
+          family={family}
+          title={primary.title}
+          caption={primary.caption}
+          icon={TabIcon as any}
+          style={st.widgetCard}
+        >
+          <BigStat
+            stat={primary.stat}
+            statValue={(primary as any).statValue}
+            statSuffix={(primary as any).statSuffix}
+            statDecimals={(primary as any).statDecimals}
+            statUnit={primary.statUnit}
+            trend={primary.trend}
+          />
 
-          {t.key === 'steps' && (
+          {rangePending && <SkeletonChart height={180} />}
+
+          {!rangePending && t.key === 'steps' && (
             <>
-              <CardHeader title="Weekly Steps" sub="Estimated from run & walk distance" colors={C}
-                stat={avgSteps > 0 ? `${Math.round(avgSteps / 1000)}k` : '—'} statUnit="avg/wk" />
               {stepsData.some(d => d.value > 0) ? (
-                <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                  <BarChart data={stepsData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
+                <View style={{ overflow: 'hidden', marginTop: 4 }}>
+                  <BarChart data={stepsData} height={180} width={CHART_W} barWidth={BAR_W}
                     maxValue={Math.ceil(maxSteps * 1.25)}
                     initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
                     yAxisLabelTexts={Array.from({length:5},(_,i)=>Math.round(maxSteps*1.25*i/4/1000)+'k')}
-                    {...chartBase} />
+                    {...barProps(family)}
+                    pointerConfig={pointerConfig(' steps', family)}
+                    {...chartBase({ family })} />
                 </View>
               ) : (
-                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No steps in this range" color={C[0]} />
+                <EmptyRow icon={<Icon icon={Footprints} variant="plain" size="md" color={accent} />} msg="No steps in this range" color={accent} headline="No steps tracked" />
               )}
-              {avgSteps > 0 && <Insight color={C[0]} text={`${Math.round(avgSteps).toLocaleString()} avg steps/week — 10,000/day target = 70,000/week`} />}
+              {avgSteps > 0 && <Insight color={accent} text={`${Math.round(avgSteps).toLocaleString()} avg steps/week — 10,000/day target = 70,000/week`} />}
             </>
           )}
 
-          {t.key === 'time' && (
+          {!rangePending && t.key === 'time' && (
             <>
-              <CardHeader title="Active Time" sub="Hours of movement per week" colors={C}
-                stat={Number(avgTime) > 0 ? avgTime : '—'} statUnit="hrs/wk" />
               {timeData.some(d => d.value > 0) ? (
-                <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                  <BarChart data={timeData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
+                <View style={{ overflow: 'hidden', marginTop: 4 }}>
+                  <BarChart data={timeData} height={180} width={CHART_W} barWidth={BAR_W}
                     maxValue={Math.ceil(Math.max(...timeData.map(d=>d.value),1) * 1.3)}
                     initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                    {...chartBase} />
+                    {...barProps(family)}
+                    pointerConfig={pointerConfig(' hrs', family)}
+                    {...chartBase({ family })} />
                   <InactiveCaption />
                 </View>
               ) : (
-                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No time logged in this range" color={C[0]} />
+                <EmptyRow icon={<Icon icon={Clock} variant="plain" size="md" color={accent} />} msg="No time logged in this range" color={accent} headline="No active time" />
               )}
-              {Number(avgTime) > 0 && <Insight color={C[0]} text={`${avgTime} hrs/wk avg — WHO recommends 2.5 hrs moderate activity weekly`} />}
+              {Number(avgTime) > 0 && <Insight color={accent} text={`${avgTime} hrs/wk avg — WHO recommends 2.5 hrs moderate activity weekly`} />}
             </>
           )}
 
-          {t.key === 'volume' && (
+          {!rangePending && t.key === 'volume' && (
             <>
-              <CardHeader title="Weekly Volume" sub="Kilometres across all activities" colors={C}
-                stat={maxWeekVol > 0 ? maxWeekVol.toFixed(0) : '—'} statUnit="km peak" />
               {volumeData.some(d=>d.value>0) ? (
-                <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                  <BarChart data={volumeData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
+                <View style={{ overflow: 'hidden', marginTop: 4 }}>
+                  <BarChart data={volumeData} height={180} width={CHART_W} barWidth={BAR_W}
                     maxValue={Math.ceil(maxWeekVol * 1.35)}
                     initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                    showGradient gradientColor={C[0]} frontColor={C[0] + '55'}
-                    pointerConfig={getPointerConfig(' km', C[0])}
-                    {...chartBase} />
+                    {...barProps(family)}
+                    pointerConfig={pointerConfig(' km', family)}
+                    {...chartBase({ family })} />
                   <InactiveCaption />
                 </View>
               ) : (
-                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No volume in this range" color={C[0]} />
+                <EmptyRow icon={<Icon icon={TrendingUp} variant="plain" size="md" color={accent} />} msg="No volume in this range" color={accent} headline="No kilometres" />
               )}
-              {Number(totalVol) > 0 && <Insight color={C[0]} text={`${totalVol} km total · increase no more than 10%/week to avoid injury`} />}
+              {Number(totalVol) > 0 && <Insight color={accent} text={`${totalVol} km total · increase no more than 10%/week to avoid injury`} />}
             </>
           )}
 
-          {t.key === 'pace' && (
+          {!rangePending && t.key === 'pace' && (
             <>
-              <CardHeader title="Running Pace" sub={`Min/km trend · ${paceData.length} runs in window`} colors={C}
-                stat={bestPace ? fmtPace(bestPace) : '—'} statUnit="/km best" />
               {paceHRData.length > 0 && (
-                <TouchableOpacity
-                  onPress={() => { Haptics.selectionAsync(); setCompareHR(v => !v); }}
+                <PressableScale
+                  scaleTo={0.94}
+                  haptic="selection"
+                  onPress={() => setCompareHR(v => !v)}
                   style={[st.compareChip, compareHR && { backgroundColor: '#EF444422', borderColor: '#EF4444' }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Compare heart rate"
+                  accessibilityState={{ selected: compareHR }}
                 >
-                  <Heart size={11} color={compareHR ? '#EF4444' : theme.colors.textSecondary} />
+                  <Icon icon={Heart} variant="plain" size="xs" color={compareHR ? '#EF4444' : theme.colors.textSecondary} />
                   <Typography style={{ fontSize: 11, fontWeight: '700', color: compareHR ? '#EF4444' : theme.colors.textSecondary }}>
                     {compareHR ? 'Comparing HR' : 'Compare HR'}
                   </Typography>
-                </TouchableOpacity>
+                </PressableScale>
               )}
               {paceData.length > 1 ? (
-                <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                  <LineChart data={paceData}
+                <View style={{ overflow: 'hidden', marginTop: 4 }}>
+                  <LineChart {...lineProps(family)} data={paceData}
                     {...(compareHR && paceHRData.length === paceData.length ? { data2: paceHRData, color2: '#EF4444', secondaryYAxis: { yAxisColor: 'transparent', yAxisTextStyle: { color: '#EF4444', fontSize: 10, fontWeight: '700' } } } : {})}
-                    height={180} width={CHART_W} thickness={3} color={C[0]}
-                    hideDataPoints curved areaChart
+                    height={180} width={CHART_W}
                     maxValue={Math.ceil(Math.max(...paceData.map(d=>d.value)) * 1.15)}
                     initialSpacing={12}
                     spacing={Math.max((CHART_W-12)/Math.max(paceData.length-1,1),18)}
-                    startFillColor={C[0]} endFillColor={theme.colors.background}
-                    startOpacity={0.5} endOpacity={0}
                     yAxisLabelTexts={Array.from({length:5},(_,i)=>{const mx=Math.ceil(Math.max(...paceData.map(d=>d.value))*1.15);const mn=Math.floor(Math.min(...paceData.map(d=>d.value))*0.9);return paceYLabel((mn+(mx-mn)*i/4).toFixed(2));})}
-                    pointerConfig={getPointerConfig('/km', C[0])}
-                    {...chartBase} />
+                    pointerConfig={pointerConfig('/km', family)}
+                    {...chartBase({ family })} />
                 </View>
               ) : (
-                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="Need 2+ runs in this range to plot pace" color={C[0]} />
+                <EmptyRow icon={<Icon icon={Zap} variant="plain" size="md" color={accent} />} msg="Need 2+ runs in this range to plot pace" color={accent} headline="Not enough runs" />
               )}
-              {avgPace > 0 && <Insight color={C[0]} text={`Avg ${fmtPace(avgPace)}/km · Best ${bestPace ? fmtPace(bestPace) : '--'}/km · ${paceData.length} runs`} />}
+              {avgPace > 0 && <Insight color={accent} text={`Avg ${fmtPace(avgPace)}/km · Best ${bestPace ? fmtPace(bestPace) : '--'}/km · ${paceData.length} runs`} />}
             </>
           )}
 
-          {t.key === 'heart' && (
+          {!rangePending && t.key === 'heart' && (
             <>
-              <CardHeader title="HR Zone Distribution" sub="Where you spend your effort" colors={C} />
               {zoneStats.length > 0 ? (
                 <>
                   <View style={{ alignItems: 'center', marginVertical: 16 }}>
-                    <PieChart data={pieData} donut showText textColor="#fff"
-                      radius={100} innerRadius={60} textSize={11}
+                    <PieChart data={pieData} {...pieProps()}
                       centerLabelComponent={() => (
                         <View style={{ alignItems: 'center' }}>
-                          <Heart color="#EF4444" size={18} />
+                          <Icon icon={Heart} variant="plain" size="md" color="#EF4444" />
                           <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginTop: 2 }}>zones</Typography>
                         </View>
                       )} />
@@ -563,9 +762,7 @@ export default function InsightsScreen() {
                               <Typography style={{ fontSize: 11, color: theme.colors.text, fontWeight: '600' }}>{z.label}</Typography>
                               <Typography style={{ fontSize: 10, color: theme.colors.textSecondary }}>({bpmRange})</Typography>
                             </View>
-                            <View style={{ height: 5, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
-                              <View style={{ height: '100%', width: `${z.pct}%`, backgroundColor: z.color, borderRadius: 3 }} />
-                            </View>
+                            <ProgressBar progress={z.pct} color={z.color} height={5} />
                           </View>
                           <Typography style={{ fontSize: 12, fontWeight: '700', color: z.color, width: 36, textAlign: 'right' }}>{z.pct}%</Typography>
                         </View>
@@ -575,46 +772,39 @@ export default function InsightsScreen() {
                   {(() => { const ez=(zoneStats.find(z=>z.label.includes('Z1'))?.pct||0)+(zoneStats.find(z=>z.label.includes('Z2'))?.pct||0); return <Insight color="#ef4444" text={`${ez}% easy effort. Elite runners target 80% in Z1–Z2 for aerobic base building.`} />; })()}
                 </>
               ) : (
-                <EmptyRow icon={<Heart size={12} color="#ef4444" />} msg="No HR data — enable heart rate recording on Strava" color="#ef4444" />
+                <EmptyRow icon={<Icon icon={Heart} variant="plain" size="md" color="#ef4444" />} msg="No HR data — enable heart rate recording on Strava" color="#ef4444" headline="No heart-rate data" />
               )}
             </>
           )}
 
-          {t.key === 'cadence' && (
+          {!rangePending && t.key === 'cadence' && (
             <>
-              <CardHeader title="Running Cadence" sub="Steps per minute" colors={C}
-                stat={avgCadence || '—'} statUnit="spm avg" />
               {cadenceData.length > 1 ? (
-                <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                  <LineChart data={cadenceData} height={180} width={CHART_W} thickness={3} color={C[0]}
-                    hideDataPoints curved areaChart
+                <View style={{ overflow: 'hidden', marginTop: 4 }}>
+                  <LineChart {...lineProps(family)} data={cadenceData} height={180} width={CHART_W}
                     maxValue={Math.max(maxCadence + 10, 200)}
                     initialSpacing={12}
                     spacing={Math.max((CHART_W-12)/Math.max(cadenceData.length-1,1),18)}
-                    startFillColor={C[0]} endFillColor={theme.colors.background}
-                    startOpacity={0.5} endOpacity={0}
                     yAxisLabelSuffix=" spm"
-                    pointerConfig={getPointerConfig(' spm', C[0])}
-                    {...chartBase} />
+                    pointerConfig={pointerConfig(' spm', family)}
+                    {...chartBase({ family })} />
                 </View>
               ) : (
-                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No cadence data in this range" color={C[0]} />
+                <EmptyRow icon={<Icon icon={Activity} variant="plain" size="md" color={accent} />} msg="No cadence data in this range" color={accent} headline="No cadence yet" />
               )}
-              {avgCadence > 0 && <Insight color={C[0]} text={`Target 170–180 spm. Your avg ${avgCadence} spm — ${avgCadence < 165 ? 'try shortening your stride' : avgCadence >= 170 ? 'great cadence!' : 'close to optimal'}`} />}
+              {avgCadence > 0 && <Insight color={accent} text={`Target 170–180 spm. Your avg ${avgCadence} spm — ${avgCadence < 165 ? 'try shortening your stride' : avgCadence >= 170 ? 'great cadence!' : 'close to optimal'}`} />}
             </>
           )}
 
-          {t.key === 'mix' && (
+          {!rangePending && t.key === 'mix' && (
             <>
-              <CardHeader title="Activity Mix" sub="All-time breakdown by sport" colors={C} />
               {mixStats.length > 0 ? (
                 <>
                   <View style={{ alignItems: 'center', marginVertical: 16 }}>
-                    <PieChart data={mixPieData} donut showText textColor="#fff"
-                      radius={100} innerRadius={60} textSize={11}
+                    <PieChart data={mixPieData} {...pieProps()}
                       centerLabelComponent={() => (
                         <View style={{ alignItems: 'center' }}>
-                          <Activity color={theme.colors.primary} size={18} />
+                          <Icon icon={Activity} variant="plain" size="md" color={theme.colors.primary} />
                           <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginTop: 2 }}>mix</Typography>
                         </View>
                       )} />
@@ -625,9 +815,7 @@ export default function InsightsScreen() {
                         <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: e.color }} />
                         <View style={{ flex: 1 }}>
                           <Typography style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 3 }}>{e.type} — {e.count} activities</Typography>
-                          <View style={{ height: 5, backgroundColor: theme.colors.background, borderRadius: 3, overflow: 'hidden' }}>
-                            <View style={{ height: '100%', width: `${e.pct}%`, backgroundColor: e.color, borderRadius: 3 }} />
-                          </View>
+                          <ProgressBar progress={e.pct} color={e.color} height={5} />
                         </View>
                         <Typography style={{ fontSize: 12, fontWeight: '700', color: e.color, width: 36, textAlign: 'right' }}>{e.pct}%</Typography>
                       </View>
@@ -635,83 +823,73 @@ export default function InsightsScreen() {
                   </View>
                 </>
               ) : (
-                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No activities synced yet" color={C[0]} />
+                <EmptyRow icon={<Icon icon={BarChart3} variant="plain" size="md" color={accent} />} msg="No activities synced yet" color={accent} headline="No activity mix" cta={{ label: 'Manage graphs', onPress: () => setShowManageModal(true) }} />
               )}
             </>
           )}
 
-          {t.key === 'elevation' && (
+          {!rangePending && t.key === 'elevation' && (
             <>
-              <CardHeader title="Elevation Gain" sub="Metres climbed per activity" colors={C}
-                stat={totalElev > 0 ? totalElev.toLocaleString() : '—'} statUnit="m total" />
               {elevData.length > 1 ? (
-                <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                  <LineChart data={elevData} height={180} width={CHART_W} thickness={3} color={C[0]}
-                    hideDataPoints curved areaChart
+                <View style={{ overflow: 'hidden', marginTop: 4 }}>
+                  <LineChart {...lineProps(family)} data={elevData} height={180} width={CHART_W}
                     initialSpacing={0}
                     spacing={Math.max(CHART_W/Math.max(elevData.length-1,1),4)}
-                    startFillColor={C[0]} endFillColor={theme.colors.background}
-                    startOpacity={0.5} endOpacity={0}
                     yAxisLabelSuffix=" m"
-                    pointerConfig={getPointerConfig('m', C[0])}
-                    {...chartBase} />
+                    pointerConfig={pointerConfig('m', family)}
+                    {...chartBase({ family })} />
                 </View>
               ) : (
-                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No elevation data in this range" color={C[0]} />
+                <EmptyRow icon={<Icon icon={Mountain} variant="plain" size="md" color={accent} />} msg="No elevation data in this range" color={accent} headline="No climbs yet" />
               )}
-              {totalElev > 0 && <Insight color={C[0]} text={`${totalElev.toLocaleString()}m total climbed · Peak single activity: ${Math.round(maxElev)}m`} />}
+              {totalElev > 0 && <Insight color={accent} text={`${totalElev.toLocaleString()}m total climbed · Peak single activity: ${Math.round(maxElev)}m`} />}
             </>
           )}
 
-          {t.key === 'calories' && (
+          {!rangePending && t.key === 'calories' && (
             <>
-              <CardHeader title="Calories Burned" sub="Weekly kcal from Strava" colors={C}
-                stat={avgCalories || '—'} statUnit="kcal/wk avg" />
               {caloriesData.some(d=>d.value>0) ? (
-                <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                  <BarChart data={caloriesData} height={180} width={CHART_W} barWidth={BAR_W} roundedTop
+                <View style={{ overflow: 'hidden', marginTop: 4 }}>
+                  <BarChart data={caloriesData} height={180} width={CHART_W} barWidth={BAR_W}
                     maxValue={Math.ceil(Math.max(...caloriesData.map(d=>d.value),1) * 1.25)}
                     initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                    {...chartBase} />
+                    {...barProps(family)}
+                    pointerConfig={pointerConfig(' kcal', family)}
+                    {...chartBase({ family })} />
                   <InactiveCaption />
                 </View>
               ) : (
-                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No calorie data in this range" color={C[0]} />
+                <EmptyRow icon={<Icon icon={Flame} variant="plain" size="md" color={accent} />} msg="No calorie data in this range" color={accent} headline="No calories burned" />
               )}
-              {avgCalories > 0 && <Insight color={C[0]} text={`${avgCalories.toLocaleString()} kcal/wk avg — roughly ${Math.round(avgCalories / 7)} kcal/day from exercise`} />}
+              {avgCalories > 0 && <Insight color={accent} text={`${avgCalories.toLocaleString()} kcal/wk avg — roughly ${Math.round(avgCalories / 7)} kcal/day from exercise`} />}
             </>
           )}
 
-          {t.key === 'power' && (
+          {!rangePending && t.key === 'power' && (
             <>
-              <CardHeader title="Average Power" sub="Watts from power meter" colors={C}
-                stat={avgPower || '—'} statUnit="W avg" />
               {powerData.length > 1 ? (
-                <View style={{ overflow: 'hidden', marginTop: 12 }}>
-                  <LineChart data={powerData} height={180} width={CHART_W} thickness={3} color={C[0]}
-                    hideDataPoints curved areaChart
+                <View style={{ overflow: 'hidden', marginTop: 4 }}>
+                  <LineChart {...lineProps(family)} data={powerData} height={180} width={CHART_W}
                     initialSpacing={12}
                     spacing={Math.max((CHART_W-12)/Math.max(powerData.length-1,1),18)}
-                    startFillColor={C[0]} endFillColor={theme.colors.background}
-                    startOpacity={0.5} endOpacity={0}
                     yAxisLabelSuffix=" W"
-                    pointerConfig={getPointerConfig('W', C[0])}
-                    {...chartBase} />
+                    pointerConfig={pointerConfig('W', family)}
+                    {...chartBase({ family })} />
                 </View>
               ) : (
-                <EmptyRow icon={<Activity size={12} color={C[0]} />} msg="No power data — requires a power meter" color={C[0]} />
+                <EmptyRow icon={<Icon icon={Zap} variant="plain" size="md" color={accent} />} msg="No power data — requires a power meter" color={accent} headline="No power data" />
               )}
-              {avgPower > 0 && <Insight color={C[0]} text={`${avgPower}W avg power across ${powerData.length} sessions`} />}
+              {avgPower > 0 && <Insight color={accent} text={`${avgPower}W avg power across ${powerData.length} sessions`} />}
             </>
           )}
 
-        </Card>
+        </WidgetCard>
       </Animated.View>
     );
     // ESLint exhaustive-deps would over-list; rely on closure semantics. Range is the dominant trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    deferredRange, compareHR,
+    range, deferredRange, compareHR,
     paceData, paceHRData, volumeData, timeData, stepsData, caloriesData,
     elevData, powerData, cadenceData,
     zoneStats, pieData, mixPieData, mixStats,
@@ -723,45 +901,34 @@ export default function InsightsScreen() {
     <SafeAreaView style={st.container}>
       {/* Header */}
       <View style={st.header}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Typography style={st.pageTitle}>Insights</Typography>
-          <Typography style={st.pageSub}>{activities.length} activities analysed</Typography>
+          <View style={st.pageSubRow}>
+            <Icon icon={Activity} variant="plain" size="xs" color={theme.colors.textSecondary} />
+            <Typography style={st.pageSub}>{activities.length} activities analysed</Typography>
+          </View>
         </View>
-        <TouchableOpacity style={st.manageBtn} onPress={() => setShowManageModal(true)}>
-          <Settings2 size={13} color={theme.colors.primary} />
-          <Typography style={st.manageBtnText}>Manage</Typography>
-        </TouchableOpacity>
+        <PressableScale
+          onPress={() => setShowManageModal(true)}
+          style={st.manageBtnWrap}
+          accessibilityRole="button"
+          accessibilityLabel="Manage graphs"
+        >
+          <LinearGradient
+            colors={theme.colors.gradients.primary}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={st.manageBtn}
+          >
+            <Icon icon={Settings2} variant="plain" size="xs" color="#FFFFFF" />
+            <Typography style={st.manageBtnText}>Manage</Typography>
+          </LinearGradient>
+        </PressableScale>
       </View>
 
-      {/* Range selector */}
-      <View style={st.rangeBar}>
-        {(Object.keys(RANGE_LABELS) as Range[]).map((r) => {
-          const selected = r === range;
-          return (
-            <TouchableOpacity
-              key={r}
-              onPress={() => {
-                Haptics.selectionAsync();
-                setRange(r);
-              }}
-              style={[
-                st.rangePill,
-                selected && { backgroundColor: theme.colors.primary + '22', borderColor: theme.colors.primary },
-              ]}
-            >
-              <Typography
-                style={{
-                  fontSize: 12,
-                  fontWeight: '700',
-                  color: selected ? theme.colors.primary : theme.colors.textSecondary,
-                }}
-              >
-                {RANGE_LABELS[r]}
-              </Typography>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      {/* Range selector — sliding pill (PressableScale segments fire the
+          selection haptic on press-in, so no extra haptic here) */}
+      <RangeSelector range={range} onChange={setRange} />
 
       <FlatList
         data={visibleTabs}
@@ -775,7 +942,7 @@ export default function InsightsScreen() {
         windowSize={3}
         ListEmptyComponent={
           <View style={{ alignItems: 'center', paddingTop: 60 }}>
-            <BarChart3 size={48} color={theme.colors.textSecondary} />
+            <Icon icon={BarChart3} variant="plain" size="hero" color={theme.colors.textSecondary} />
             <Typography style={{ color: theme.colors.textSecondary, marginTop: 16, fontSize: 15 }}>No graphs enabled</Typography>
             <TouchableOpacity style={{ marginTop: 12 }} onPress={() => setShowManageModal(true)}>
               <Typography style={{ color: theme.colors.primary, fontWeight: '700' }}>Tap Manage to add some →</Typography>
@@ -784,26 +951,153 @@ export default function InsightsScreen() {
         }
       />
 
-      {/* Manage modal */}
-      <Modal animationType="slide" transparent visible={showManageModal} onRequestClose={() => setShowManageModal(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: theme.colors.surface, padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
-              <Typography variant="h2">Manage Graphs</Typography>
-              <TouchableOpacity onPress={() => setShowManageModal(false)}><X color={theme.colors.textSecondary} /></TouchableOpacity>
-            </View>
-            {ALL_TABS.map(t => (
-              <View key={t.key} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
-                <Typography>{t.label}</Typography>
-                <Switch value={activeKeys.includes(t.key)} onValueChange={() => toggleGraph(t.key)}
-                  trackColor={{ true: theme.colors.primary, false: theme.colors.border }} />
+      {/* Manage modal — premium bottom sheet */}
+      <BottomSheet
+        visible={showManageModal}
+        onClose={() => setShowManageModal(false)}
+        title="Manage Graphs"
+        subtitle="Choose which insights appear on this screen"
+        icon={Settings2}
+        family="activity"
+      >
+        <SectionLabel family="activity">On the dashboard</SectionLabel>
+        {ALL_TABS.map(t => {
+          const fam = INSIGHT_FAMILY[t.key] || 'activity';
+          const famStyle = familyStyle(fam);
+          const TabIcon = TAB_ICON[t.key];
+          const active = activeKeys.includes(t.key);
+          return (
+            <View key={t.key} style={st.manageRowBlock}>
+              <Icon icon={TabIcon as any} family={fam} variant="gradient" size="md" />
+              <View style={{ flex: 1 }}>
+                <Typography style={st.manageRowLabel}>{t.label}</Typography>
+                <Typography style={st.manageRowCaption}>{TAB_DESCRIPTION[t.key]}</Typography>
               </View>
-            ))}
-          </View>
-        </View>
-      </Modal>
+              <Toggle
+                value={active}
+                onValueChange={() => toggleGraph(t.key)}
+                accent={famStyle.accent}
+                accessibilityLabel={`${active ? 'Hide' : 'Show'} ${t.label} graph`}
+              />
+            </View>
+          );
+        })}
+      </BottomSheet>
 
     </SafeAreaView>
+  );
+}
+
+// ── Sliding-pill range selector ────────────────────────────────────────
+// One rounded container, 5 equal segments, an animated background that
+// springs between segments as the user taps. Width is measured via onLayout
+// so the indicator stays accurate across orientations and screen sizes.
+function RangeSelector({ range, onChange }: { range: Range; onChange: (r: Range) => void }) {
+  const [containerW, setContainerW] = useState(0);
+  const idx = RANGE_KEYS.indexOf(range);
+  const translateX = useSharedValue(0);
+  const segW = containerW > 0 ? containerW / RANGE_KEYS.length : 0;
+  // Skip the spring on the very first measured layout so the indicator appears
+  // already under the default range instead of twitching in from segment 0.
+  const hasLaidOut = useRef(false);
+
+  useEffect(() => {
+    if (segW > 0) {
+      const target = idx * segW;
+      if (!hasLaidOut.current) {
+        translateX.value = target;
+        hasLaidOut.current = true;
+      } else {
+        translateX.value = withSpring(target, theme.motion.spring);
+      }
+    }
+  }, [idx, segW, translateX]);
+
+  const indicatorStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  return (
+    <View style={st.rangeOuter}>
+      <View
+        style={st.rangeBar}
+        accessibilityRole="tablist"
+        onLayout={(e) => setContainerW(e.nativeEvent.layout.width)}
+      >
+        {containerW > 0 && (
+          <Animated.View
+            style={[st.rangeIndicator, { width: segW }, indicatorStyle]}
+          />
+        )}
+        {RANGE_KEYS.map((r, i) => {
+          const selected = r === range;
+          return (
+            <RangeSegment
+              key={r}
+              label={RANGE_LABELS[r]}
+              index={i}
+              selected={selected}
+              segW={segW}
+              translateX={translateX}
+              onPress={() => onChange(r)}
+            />
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+// One range segment. The active label colour/opacity is derived from the shared
+// indicator position so the text brightens as the pill arrives under it, rather
+// than snapping the instant `selected` flips.
+function RangeSegment({
+  label,
+  index,
+  selected,
+  segW,
+  translateX,
+  onPress,
+}: {
+  label: string;
+  index: number;
+  selected: boolean;
+  segW: number;
+  translateX: SharedValue<number>;
+  onPress: () => void;
+}) {
+  // Distance (in segment-widths) from the indicator's current centre to this
+  // segment's centre — 0 when the pill is fully under us, 1+ when it's away.
+  const proximity = useDerivedValue(() => {
+    if (segW <= 0) return selected ? 0 : 1;
+    return Math.abs(translateX.value - index * segW) / segW;
+  });
+
+  const labelStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(proximity.value, [0, 1], [1, 0.55], 'clamp'),
+  }));
+
+  return (
+    <PressableScale
+      scaleTo={0.94}
+      haptic="selection"
+      onPress={onPress}
+      style={st.rangeSegment}
+      accessibilityRole="tab"
+      accessibilityState={{ selected }}
+      accessibilityLabel={`${label} range`}
+    >
+      <Animated.View style={labelStyle}>
+        <Typography
+          style={[
+            st.rangeSegmentText,
+            { color: selected ? theme.colors.primary : theme.colors.textSecondary },
+          ]}
+        >
+          {label}
+        </Typography>
+      </Animated.View>
+    </PressableScale>
   );
 }
 
@@ -811,49 +1105,144 @@ const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background },
   scroll:    { padding: 16, paddingBottom: 40 },
 
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
-  pageTitle: { fontSize: 24, fontWeight: '800', color: theme.colors.text },
-  pageSub:   { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
-  manageBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '15' },
-  manageBtnText: { fontSize: 12, fontWeight: '700', color: theme.colors.primary },
-
-  card: { padding: 16, marginBottom: 14 },
-  cardHeader: { flexDirection: 'row', alignItems: 'center' },
-  cardAccent: { width: 4, height: 44, borderRadius: 2 },
-  cardTitle:  { fontSize: 15, fontWeight: '700', color: theme.colors.text },
-  cardSub:    { fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 },
-  statChip:   { borderRadius: 10, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 6, alignItems: 'center' },
-  statChipVal:  { fontSize: 16, fontWeight: '800' },
-  statChipUnit: { fontSize: 10, fontWeight: '600', marginTop: 1 },
-
-  insightBar:  { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 14, padding: 10, borderRadius: 8, borderLeftWidth: 3 },
-  insightText: { fontSize: 12, flex: 1, lineHeight: 18, fontWeight: '600' },
-
-  emptyRow: {
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 10,
+  },
+  pageTitle: { fontSize: 28, fontWeight: '900', color: theme.colors.text, letterSpacing: -0.5 },
+  pageSubRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
+  pageSub:   { fontSize: 11, color: theme.colors.textSecondary, fontWeight: '600', letterSpacing: 0.2 },
+  manageBtnWrap: { borderRadius: 20, overflow: 'hidden', ...theme.shadows.glow(theme.colors.primary) },
+  manageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  manageBtnText: { fontSize: 12, fontWeight: '800', color: '#FFFFFF', letterSpacing: 0.2 },
+
+  // WidgetCard override — the FlatList already provides horizontal padding,
+  // so we kill the WidgetCard's own marginHorizontal to avoid double-margins.
+  widgetCard: { marginHorizontal: 0, marginBottom: 14 },
+
+  bigStatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  bigStat: {
+    fontSize: 30,
+    fontWeight: '900',
+    fontFamily: theme.fonts.display,
+    color: theme.colors.text,
+    letterSpacing: -0.8,
+    lineHeight: 34,
+    fontVariant: ['tabular-nums'],
+  },
+  bigStatUnit: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: theme.colors.textSecondary,
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+    marginTop: 2,
+  },
+  trendChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: theme.borderRadius.full,
+    borderWidth: 1,
+  },
+
+  insightBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     gap: 8,
-    marginTop: 12,
+    marginTop: 14,
+    paddingVertical: 10,
     paddingHorizontal: 12,
-    paddingVertical: 14,
     borderRadius: 10,
     borderLeftWidth: 3,
   },
-  emptyRowText: { fontSize: 12, fontWeight: '600', flex: 1 },
+  insightText: { fontSize: 12, flex: 1, lineHeight: 18, fontWeight: '700' },
 
-  rangeBar: {
-    flexDirection: 'row',
-    gap: 6,
+  emptyBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 180,
+    marginTop: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: 'dashed',
     paddingHorizontal: 16,
-    paddingBottom: 10,
+    gap: 8,
   },
-  rangePill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+  emptyIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 2,
+  },
+  emptyHeadline: { fontSize: 13, fontWeight: '800', letterSpacing: -0.1 },
+  emptyCaption: { fontSize: 11, fontWeight: '600', textAlign: 'center', lineHeight: 16 },
+  emptyCta: {
+    marginTop: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
-    borderColor: theme.colors.border,
   },
+  emptyCtaText: { fontSize: 12, fontWeight: '800', letterSpacing: 0.2 },
+
+  rangeOuter: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  rangeBar: {
+    flexDirection: 'row',
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 3,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  rangeIndicator: {
+    position: 'absolute',
+    top: 3,
+    bottom: 3,
+    left: 3,
+    backgroundColor: theme.colors.primary + '22',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.primary + '88',
+  },
+  rangeSegment: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rangeSegmentText: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+
   inactiveCaption: {
     fontSize: 10,
     fontWeight: '700',
@@ -872,6 +1261,20 @@ const st = StyleSheet.create({
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    marginTop: 8,
+    marginTop: 4,
   },
+
+  manageRowBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: theme.colors.surfaceMuted,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginBottom: 8,
+  },
+  manageRowLabel: { fontSize: 15, fontWeight: '700', color: theme.colors.text },
+  manageRowCaption: { fontSize: 12, fontWeight: '500', color: theme.colors.textSecondary, marginTop: 2 },
 });

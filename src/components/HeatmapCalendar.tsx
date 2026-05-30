@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { Footprints, Bike, Waves, Flame, Zap, Circle, X, LucideIcon } from 'lucide-react-native';
+import { Typography } from './Typography';
+import { AnimatedNumber } from './AnimatedNumber';
 import { theme } from '../theme';
 
 interface HeatmapEntry {
@@ -25,13 +28,17 @@ const GAP = 3;
 const CELL_STEP = CELL + GAP;
 const NUM_WEEKS = 26;
 
-function getTypeEmoji(type?: string): string {
-  if (!type) return '●';
-  if (type === 'Run' || type === 'TrailRun') return '🏃';
-  if (type === 'Walk' || type === 'Hike') return '🚶';
-  if (type === 'Ride' || type === 'VirtualRide') return '🚴';
-  if (type === 'Swim') return '🏊';
-  return '⚡';
+// Lucide glyph + family-accent tint per activity type, replacing the old emoji
+// map so the tooltip icon matches the rest of the icon system.
+function getTypeIcon(type?: string): { Glyph: LucideIcon; color: string } {
+  if (!type) return { Glyph: Circle, color: theme.colors.textSecondary };
+  if (type === 'Run' || type === 'TrailRun' || type === 'Walk' || type === 'Hike')
+    return { Glyph: Footprints, color: theme.colors.families.activity.accent };
+  if (type === 'Ride' || type === 'VirtualRide')
+    return { Glyph: Bike, color: theme.colors.families.progress.accent };
+  if (type === 'Swim')
+    return { Glyph: Waves, color: theme.colors.families.recovery.accent };
+  return { Glyph: Zap, color: theme.colors.families.records.accent };
 }
 
 function getTypeColor(type?: string, level?: number): string {
@@ -112,20 +119,24 @@ export const HeatmapCalendar = ({ data }: HeatmapCalendarProps) => {
       {/* Stats row */}
       <View style={styles.statsRow}>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>{totalActiveDays}</Text>
-          <Text style={styles.statLabel}>Total Days</Text>
+          <AnimatedNumber value={totalActiveDays} style={styles.statValue} />
+          <Typography style={styles.statLabel}>Total Days</Typography>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>{activeLast30}</Text>
-          <Text style={styles.statLabel}>Last 30d</Text>
+          <AnimatedNumber value={activeLast30} style={styles.statValue} />
+          <Typography style={styles.statLabel}>Last 30d</Typography>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: streak > 0 ? '#f97316' : theme.colors.textSecondary }]}>
-            {streak}🔥
-          </Text>
-          <Text style={styles.statLabel}>Day Streak</Text>
+          <View style={styles.streakValue}>
+            <AnimatedNumber
+              value={streak}
+              style={[styles.statValue, { color: streak > 0 ? '#f97316' : theme.colors.textSecondary }]}
+            />
+            <Flame size={14} color={streak > 0 ? '#f97316' : theme.colors.textSecondary} strokeWidth={2.5} fill={streak > 0 ? '#f97316' : 'transparent'} />
+          </View>
+          <Typography style={styles.statLabel}>Day Streak</Typography>
         </View>
       </View>
 
@@ -139,9 +150,9 @@ export const HeatmapCalendar = ({ data }: HeatmapCalendarProps) => {
           {/* Month labels */}
           <View style={[styles.monthRow, { width: NUM_WEEKS * CELL_STEP }]}>
             {monthLabelPositions.map((mp, i) => (
-              <Text key={i} style={[styles.monthLabel, { left: mp.col * CELL_STEP }]}>
+              <Typography key={i} style={[styles.monthLabel, { left: mp.col * CELL_STEP }]}>
                 {mp.label}
-              </Text>
+              </Typography>
             ))}
           </View>
 
@@ -149,7 +160,7 @@ export const HeatmapCalendar = ({ data }: HeatmapCalendarProps) => {
           <View style={styles.gridRow}>
             <View style={styles.dowCol}>
               {DAY_LABELS.map((label, i) => (
-                <Text key={i} style={styles.dowLabel}>{label}</Text>
+                <Typography key={i} style={styles.dowLabel}>{label}</Typography>
               ))}
             </View>
             <View style={styles.grid}>
@@ -194,31 +205,39 @@ export const HeatmapCalendar = ({ data }: HeatmapCalendarProps) => {
       </ScrollView>
 
       {/* Tooltip */}
-      {tooltip && (
-        <View style={styles.tooltip}>
-          <View style={[styles.tooltipDot, { backgroundColor: COLORS[tooltip.level as keyof typeof COLORS] }]} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.tooltipDate}>{tooltip.dateStr}</Text>
-            <Text style={styles.tooltipDetail}>
-              {tooltip.hasActivity
-                ? `${getTypeEmoji(tooltip.type)} ${tooltip.type ?? 'Activity'}  ·  ${tooltip.km?.toFixed(1) ?? '?'} km  ·  ${levelLabel(tooltip.level)}`
-                : 'Rest day'}
-            </Text>
+      {tooltip && (() => {
+        const { Glyph: TypeGlyph, color: typeColor } = getTypeIcon(tooltip.type);
+        return (
+          <View style={styles.tooltip}>
+            <View style={[styles.tooltipDot, { backgroundColor: COLORS[tooltip.level as keyof typeof COLORS] }]} />
+            <View style={{ flex: 1 }}>
+              <Typography style={styles.tooltipDate}>{tooltip.dateStr}</Typography>
+              <View style={styles.tooltipDetailRow}>
+                {tooltip.hasActivity && (
+                  <TypeGlyph size={13} color={typeColor} strokeWidth={2.5} />
+                )}
+                <Typography style={styles.tooltipDetail}>
+                  {tooltip.hasActivity
+                    ? `${tooltip.type ?? 'Activity'}  ·  ${tooltip.km?.toFixed(1) ?? '?'} km  ·  ${levelLabel(tooltip.level)}`
+                    : 'Rest day'}
+                </Typography>
+              </View>
+            </View>
+            <TouchableOpacity onPress={() => setTooltip(null)} accessibilityLabel="Close" accessibilityRole="button">
+              <X size={16} color={theme.colors.textSecondary} strokeWidth={2.5} />
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity onPress={() => setTooltip(null)}>
-            <Text style={styles.tooltipClose}>✕</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+        );
+      })()}
 
       {/* Legend */}
       <View style={styles.legend}>
-        <Text style={styles.legendLabel}>Less</Text>
+        <Typography style={styles.legendLabel}>Less</Typography>
         {([0, 1, 2, 3, 4] as const).map(level => (
           <View key={level} style={[styles.cell, { backgroundColor: COLORS[level] }]} />
         ))}
-        <Text style={styles.legendLabel}>More</Text>
-        <Text style={styles.legendSub}>  intensity = distance</Text>
+        <Typography style={styles.legendLabel}>More</Typography>
+        <Typography style={styles.legendSub}>  intensity = distance</Typography>
       </View>
     </View>
   );
@@ -239,7 +258,8 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
   },
   statItem: { alignItems: 'center', flex: 1 },
-  statValue: { fontSize: 18, fontWeight: '800', color: theme.colors.text },
+  statValue: { fontSize: 18, fontFamily: theme.fonts.display, color: theme.colors.text, padding: 0, textAlign: 'center' },
+  streakValue: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   statLabel: { fontSize: 10, color: theme.colors.textSecondary, marginTop: 2, fontWeight: '600' },
   statDivider: { width: 1, height: 30, backgroundColor: theme.colors.border },
 
@@ -274,8 +294,8 @@ const styles = StyleSheet.create({
   },
   tooltipDot: { width: 10, height: 10, borderRadius: 5 },
   tooltipDate: { fontSize: 11, color: theme.colors.textSecondary, fontWeight: '600' },
-  tooltipDetail: { fontSize: 12, color: theme.colors.text, fontWeight: '700', marginTop: 2 },
-  tooltipClose: { fontSize: 14, color: theme.colors.textSecondary, paddingHorizontal: 4 },
+  tooltipDetailRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
+  tooltipDetail: { fontSize: 12, color: theme.colors.text, fontWeight: '700' },
 
   legend: {
     flexDirection: 'row', alignItems: 'center',

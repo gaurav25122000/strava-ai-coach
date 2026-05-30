@@ -46,6 +46,7 @@ export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   WellnessScore:     'recovery',
   InjuryAlert:       'recovery',
   TrainingLoad:      'recovery',
+  SufferTrend:       'recovery',
   // Volume / activity
   WeeklyGoalTracker: 'activity',
   ThisWeek:          'activity',
@@ -56,16 +57,25 @@ export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   YearToDate:        'activity',
   AllTimeStats:      'activity',
   ShoeTracker:       'activity',
+  StravaTotals:      'activity',
+  SportSplit:        'activity',
+  TrainerRatio:      'activity',
   // Health / physiology
   HeartRate:         'health',
   IntensityDistribution: 'health',
   Cadence:           'health',
+  PowerZones:        'health',
+  EnergyExpenditure: 'health',
   // Records / PBs
   PaceTrend:         'records',
   PersonalBests:     'records',
   RacePredictor:     'records',
   BestEfforts:       'records',
   Badges:            'records',
+  StarredSegments:   'records',
+  // Social
+  KudosLeaderboard:  'social',
+  PhotoStream:       'social',
 };
 
 // Friendly category labels (used in the widget catalog modal headers).
@@ -120,4 +130,13 @@ export const WIDGET_TITLES: Record<string, string> = {
   TrainingLoad:          'Training Load (ATL/CTL)',
   BestEfforts:           'Estimated Best Efforts',
   Badges:                'Milestones & Badges',
+  SufferTrend:           'Suffer Trend (8 weeks)',
+  KudosLeaderboard:      'Top Kudos',
+  StarredSegments:       'Starred Segments',
+  StravaTotals:          'Strava Lifetime Totals',
+  SportSplit:            'Sport Split (this year)',
+  TrainerRatio:          'Trainer vs Outdoor',
+  PhotoStream:           'Recent Photos',
+  PowerZones:            'Power Zones',
+  EnergyExpenditure:     'Energy Expenditure (7d)',
 };

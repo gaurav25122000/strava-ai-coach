@@ -38,9 +38,11 @@ export const Typography = ({
 };
 
 const styles = StyleSheet.create({
-  h1: { fontSize: 48, fontWeight: 'bold' },
-  h2: { fontSize: 24, fontWeight: 'bold' },
-  h3: { fontSize: 18, fontWeight: '600' },
+  // Legacy heading aliases now resolve to the Sora-backed display tokens so
+  // they pick up the family, tracking, and line-height instead of plain bold.
+  h1: theme.typography.display,
+  h2: theme.typography.title,
+  h3: theme.typography.subtitle,
   body: { fontSize: 16 },
   caption: { fontSize: 14, color: theme.colors.textSecondary },
   label: {

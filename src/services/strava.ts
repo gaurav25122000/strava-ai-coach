@@ -147,6 +147,8 @@ export const StravaService = {
             })()),
             averageWatts: item.average_watts,
             sufferScore: item.suffer_score,
+            kudosCount: item.kudos_count,
+            trainer: item.trainer,
           };
         });
 
@@ -215,7 +217,7 @@ export const StravaService = {
     }
   },
 
-  fetchActivityStreams: async (activityId: string, types = 'heartrate,cadence,watts,velocity_smooth,altitude,distance'): Promise<any> => {
+  fetchActivityStreams: async (activityId: string, types = 'heartrate,cadence,watts,velocity_smooth,altitude,distance,temp,grade_smooth,time'): Promise<any> => {
     try {
       await StravaService.checkAndRefreshToken();
       if (!accessToken) return null;
@@ -224,6 +226,58 @@ export const StravaService = {
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
       return res.data;
+    } catch {
+      return null;
+    }
+  },
+
+  // Per-activity time-in-zone distribution from Strava's own bucketing —
+  // more accurate than re-computing locally from splits because it respects
+  // the athlete's zones at the time of the recording. Returns null if Strava
+  // has no zone data for the activity (e.g. no HR sensor was paired).
+  fetchActivityZones: async (
+    activityId: string,
+  ): Promise<Array<{ type: 'heartrate' | 'power'; distribution_buckets: Array<{ min: number; max: number; time: number }> }> | null> => {
+    try {
+      await StravaService.checkAndRefreshToken();
+      if (!accessToken) return null;
+      const res = await axios.get(
+        `https://www.strava.com/api/v3/activities/${activityId}/zones`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      return Array.isArray(res.data) ? res.data : null;
+    } catch {
+      return null;
+    }
+  },
+
+  // Photos attached to an activity (Strava + Instagram). `size=600` returns
+  // the largest available thumbnail.
+  fetchActivityPhotos: async (activityId: string): Promise<Array<{ urls: Record<string, string>; caption?: string; created_at?: string }> | null> => {
+    try {
+      await StravaService.checkAndRefreshToken();
+      if (!accessToken) return null;
+      const res = await axios.get(
+        `https://www.strava.com/api/v3/activities/${activityId}/photos?size=600`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      return Array.isArray(res.data) ? res.data : null;
+    } catch {
+      return null;
+    }
+  },
+
+  // Starred segments the athlete has bookmarked on Strava. Useful for the
+  // dashboard "Starred Segments" widget.
+  fetchStarredSegments: async (perPage = 30): Promise<any[] | null> => {
+    try {
+      await StravaService.checkAndRefreshToken();
+      if (!accessToken) return null;
+      const res = await axios.get(
+        `https://www.strava.com/api/v3/segments/starred?per_page=${perPage}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      return Array.isArray(res.data) ? res.data : null;
     } catch {
       return null;
     }

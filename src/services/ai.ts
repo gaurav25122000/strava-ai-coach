@@ -145,6 +145,19 @@ Days to Event: ${daysToGoal} days (${Math.floor(daysToGoal / 7)} weeks)
 ## INSTRUCTIONS
 Today's date is ${new Date().toISOString().slice(0, 10)}. Based on the athlete's history and goal, generate a multi-phase training plan structured specifically for the ${daysToGoal} days remaining.
 
+Phase count guidance — pick the number of phases that fits the timeline. NEVER ship a single phase for a multi-month plan. Recommended targets:
+- ≤ 6 weeks remaining:   2 phases (Build → Race-prep/Taper).
+- 7-12 weeks remaining:  3 phases (Base → Build → Peak/Taper).
+- 13-24 weeks remaining: 4 phases (Base → Build → Peak → Taper).
+- > 24 weeks remaining:  5-6 phases (Foundation → Base → Build → Peak → Race-prep → Taper). Add an Aerobic-Base or Strength block if the athlete has time.
+For ${daysToGoal} days (${Math.floor(daysToGoal / 7)} weeks), aim for ${
+    daysToGoal <= 42 ? 2
+    : daysToGoal <= 84 ? 3
+    : daysToGoal <= 168 ? 4
+    : daysToGoal <= 280 ? 5
+    : 6
+  } phases minimum.
+
 For each phase:
 - Set weekStart to the Monday on or after the phase begins, and weekEnd to the Sunday it ends (ISO YYYY-MM-DD).
 - Specify the exact weeks covered in the description (e.g., "Weeks 1-4").

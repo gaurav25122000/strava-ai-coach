@@ -1,35 +1,132 @@
-import React from 'react';
-import { View, StyleSheet, ScrollView, TextInput, TouchableOpacity, Switch } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, StyleSheet, ScrollView, TextInput, Linking as RNLinking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withTiming,
+  Easing,
+  cancelAnimation,
+} from 'react-native-reanimated';
 import { theme } from '../theme';
 import { Typography } from '../components/Typography';
-import { Card } from '../components/Card';
+import { WidgetCard } from '../components/WidgetCard';
+import { PressableScale } from '../components/PressableScale';
+import { Toggle } from '../components/Toggle';
+import { StaggerItem } from '../components/Stagger';
+import { SegmentedControl } from '../components/SheetUI';
 import { useStore } from '../store/useStore';
+import { familyStyle, WidgetFamily } from '../utils/widgetFamilies';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import { StravaService } from '../services/strava';
 import { computeAllProgress } from '../services/goalProgress';
 import axios from 'axios';
-import { useEffect, useState } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { Activity as ActivityIcon, Bot, Sliders, Database, Link2, Unplug, Download, Shield } from 'lucide-react-native';
+import {
+  LucideIcon,
+  Activity as ActivityIcon,
+  Bot,
+  Link2,
+  Unplug,
+  Download,
+  Shield,
+  Ruler,
+  Clock,
+  Code2,
+  ExternalLink,
+  Info,
+  KeyRound,
+  RefreshCw,
+  Sparkles,
+  ChevronRight,
+} from 'lucide-react-native';
+import { Icon } from '../components/Icon';
 
-function SectionHeader({ icon, title, accentColor }: { icon: React.ReactNode; title: string; accentColor: string }) {
-  return (
-    <View style={styles.sectionHeader}>
-      <View style={[styles.sectionAccent, { backgroundColor: accentColor }]} />
-      {icon}
-      <Typography style={styles.sectionHeaderTitle}>{title}</Typography>
+// App version surfaced in the About row.
+const APP_VERSION = '1.0.0';
+const REPO_URL = 'https://github.com/';
+
+// ----- Row primitive ---------------------------------------------------------
+// One settings row. The right slot is anything — switch, value text, chevron,
+// even a small button. Keeping it dumb means every section can compose rows
+// without bespoke styling per case.
+interface SettingsRowProps {
+  icon: LucideIcon;
+  family: WidgetFamily;
+  label: string;
+  caption?: string;
+  right?: React.ReactNode;
+  onPress?: () => void;
+  disabled?: boolean;
+  isLast?: boolean;
+}
+
+function SettingsRow({ icon, family, label, caption, right, onPress, disabled, isLast }: SettingsRowProps) {
+  const inner = (
+    <View style={[rowStyles.row, !isLast && rowStyles.rowDivider, disabled && { opacity: 0.5 }]}>
+      <Icon icon={icon} family={family} variant="pill" size="md" />
+      <View style={rowStyles.labelWrap}>
+        <Typography style={rowStyles.label}>{label}</Typography>
+        {caption && <Typography style={rowStyles.caption}>{caption}</Typography>}
+      </View>
+      {right !== undefined ? (
+        <View style={rowStyles.rightWrap}>{right}</View>
+      ) : onPress ? (
+        <Icon icon={ChevronRight} variant="plain" size="md" color={theme.colors.textSecondary} />
+      ) : null}
     </View>
+  );
+
+  if (onPress && !disabled) {
+    return (
+      <PressableScale haptic="selection" onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>
+        {inner}
+      </PressableScale>
+    );
+  }
+  return inner;
+}
+
+const rowStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+  },
+  rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.divider },
+  labelWrap: { flex: 1 },
+  label: { fontSize: 14, fontWeight: '600', color: theme.colors.text },
+  caption: { fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 },
+  rightWrap: { marginLeft: 8 },
+});
+
+// ----- Spinning sync icon ----------------------------------------------------
+// On-brand loading state for the Strava CTA — keeps the RefreshCw glyph and
+// rotates it continuously instead of swapping in the OS ActivityIndicator.
+function SpinningRefresh() {
+  const rotation = useSharedValue(0);
+  useEffect(() => {
+    rotation.value = withRepeat(withTiming(360, { duration: 900, easing: Easing.linear }), -1, false);
+    return () => cancelAnimation(rotation);
+  }, [rotation]);
+  const style = useAnimatedStyle(() => ({ transform: [{ rotate: `${rotation.value}deg` }] }));
+  return (
+    <Animated.View style={style}>
+      <Icon icon={RefreshCw} variant="plain" size="sm" color="#fff" />
+    </Animated.View>
   );
 }
 
+// ----- Screen ----------------------------------------------------------------
 export default function SettingsScreen() {
   const { settings, updateSettings, setActivities, setLifetimeStats, setToast, setLastSyncedAt } = useStore();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     StravaService.initialize().then(() => {
@@ -75,13 +172,15 @@ export default function SettingsScreen() {
       setIsAuthenticated(true);
 
       syncStrava();
-    } catch (error) {
+    } catch (error: any) {
+      console.log( settings.stravaClientSecret)
       console.error('Error exchanging token:', error);
       setToast({ title: 'Error', message: 'Failed to authenticate with Strava', type: 'error' });
     }
   };
 
   const syncStrava = async () => {
+    setSyncing(true);
     try {
       const activities = await StravaService.syncActivities();
       setActivities(activities);
@@ -105,16 +204,46 @@ export default function SettingsScreen() {
       } else {
         setToast({ title: 'Error', message: 'Failed to sync activities', type: 'error' });
       }
+    } finally {
+      setSyncing(false);
     }
   };
 
-  let stagger = 0;
-  const next = () => stagger++;
+  const handleDisconnect = async () => {
+    await StravaService.disconnect();
+    setIsAuthenticated(false);
+    setActivities([]);
+    setLifetimeStats(null);
+    setToast({ title: 'Disconnected', message: 'Strava account disconnected', type: 'error' });
+  };
+
+  const handleExport = async () => {
+    try {
+      const activities = useStore.getState().activities;
+      const documentDirectory = FileSystem.documentDirectory;
+      if (!documentDirectory) throw new Error('No document directory');
+      const fileUri = documentDirectory + 'activities.json';
+      await FileSystem.writeAsStringAsync(fileUri, JSON.stringify(activities, null, 2));
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri);
+      } else {
+        setToast({ title: 'Error', message: 'Sharing is not available on this device', type: 'error' });
+      }
+    } catch (e) {
+      setToast({ title: 'Error', message: 'Failed to export data', type: 'error' });
+    }
+  };
+
+  const healthFam = familyStyle('health');
+  const recordsFam = familyStyle('records');
+  const socialFam = familyStyle('social');
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
 
+        {/* Hero header */}
         <LinearGradient
           colors={theme.colors.gradients.hero}
           start={{ x: 0, y: 0 }}
@@ -125,14 +254,9 @@ export default function SettingsScreen() {
           <Typography style={styles.heroSub}>Connect, customise, manage your data</Typography>
         </LinearGradient>
 
-        {/* Strava */}
-        <Animated.View entering={FadeInDown.delay(next() * 60).duration(360)}>
-          <SectionHeader
-            icon={<ActivityIcon size={15} color="#FC4C02" />}
-            title="Strava Integration"
-            accentColor="#FC4C02"
-          />
-          <Card variant="elevated" style={styles.section}>
+        {/* ---------- Account ---------- */}
+        <StaggerItem index={0}>
+          <WidgetCard family="plan" title="Account" icon={Link2} caption="Strava connection">
             <View style={styles.infoBox}>
               <Typography style={styles.infoText}>
                 1. Go to Strava Settings {'>'} API{'\n'}
@@ -141,6 +265,7 @@ export default function SettingsScreen() {
                 4. Copy Client ID & Secret below
               </Typography>
             </View>
+
             <View style={styles.inputGroup}>
               <Typography style={styles.label}>Client ID</Typography>
               <TextInput
@@ -165,10 +290,9 @@ export default function SettingsScreen() {
               />
             </View>
 
-            <TouchableOpacity
+            <PressableScale
               onPress={() => isAuthenticated ? syncStrava() : handleStravaConnect()}
-              disabled={!settings.stravaClientId || !settings.stravaClientSecret}
-              activeOpacity={0.85}
+              disabled={!settings.stravaClientId || !settings.stravaClientSecret || syncing}
               style={{ marginTop: 8 }}
             >
               <LinearGradient
@@ -177,40 +301,66 @@ export default function SettingsScreen() {
                 end={{ x: 1, y: 0 }}
                 style={[styles.cta, theme.shadows.glow(isAuthenticated ? '#10b981' : '#FC4C02')]}
               >
-                <Link2 size={16} color="#fff" />
+                {syncing ? (
+                  <SpinningRefresh />
+                ) : isAuthenticated ? (
+                  <Icon icon={RefreshCw} variant="plain" size="sm" color="#fff" />
+                ) : (
+                  <Icon icon={Link2} variant="plain" size="sm" color="#fff" />
+                )}
                 <Typography style={styles.ctaText}>
-                  {isAuthenticated ? 'Sync Activities' : 'Connect Strava'}
+                  {syncing ? 'Syncing…' : isAuthenticated ? 'Sync Activities' : 'Connect Strava'}
                 </Typography>
               </LinearGradient>
-            </TouchableOpacity>
+            </PressableScale>
 
             {isAuthenticated && (
-              <TouchableOpacity
+              <PressableScale
                 style={styles.disconnectBtn}
-                onPress={async () => {
-                  await StravaService.disconnect();
-                  setIsAuthenticated(false);
-                  setActivities([]);
-                  setLifetimeStats(null);
-                  setToast({ title: 'Disconnected', message: 'Strava account disconnected', type: 'error' });
-                }}
-                activeOpacity={0.7}
+                onPress={handleDisconnect}
               >
-                <Unplug size={14} color={theme.colors.error} />
+                <Icon icon={Unplug} variant="plain" size="sm" color={theme.colors.error} />
                 <Typography style={styles.disconnectText}>Disconnect Strava</Typography>
-              </TouchableOpacity>
+              </PressableScale>
             )}
-          </Card>
-        </Animated.View>
+          </WidgetCard>
+        </StaggerItem>
 
-        {/* AI Assistant */}
-        <Animated.View entering={FadeInDown.delay(next() * 60).duration(360)}>
-          <SectionHeader
-            icon={<Bot size={15} color={theme.colors.primary} />}
-            title="AI Assistant"
-            accentColor={theme.colors.primary}
-          />
-          <Card variant="elevated" style={styles.section}>
+        {/* ---------- Coaching ---------- */}
+        <StaggerItem index={1}>
+          <WidgetCard family="health" title="Coaching" icon={Sparkles} caption="Coach style">
+            <Typography style={styles.label}>Coach Personality</Typography>
+            <View style={{ flexDirection: 'column', gap: 8, marginTop: 6 }}>
+              {(['Strict Drill Sergeant', 'Encouraging Supporter', 'Data-Driven Analyst'] as const).map((personality) => {
+                const active = settings.coachPersonality === personality;
+                return (
+                  <PressableScale
+                    key={personality}
+                    haptic="selection"
+                    style={[
+                      styles.optionCard,
+                      active && {
+                        backgroundColor: healthFam.tint,
+                        borderColor: healthFam.accent,
+                      },
+                    ]}
+                    onPress={() => updateSettings({ coachPersonality: personality })}
+                    accessibilityRole="button"
+                    accessibilityLabel={personality}
+                  >
+                    <Typography style={[styles.optionCardText, active && { color: healthFam.accent, fontWeight: '800' }]}>
+                      {personality}
+                    </Typography>
+                  </PressableScale>
+                );
+              })}
+            </View>
+          </WidgetCard>
+        </StaggerItem>
+
+        {/* ---------- AI ---------- */}
+        <StaggerItem index={2}>
+          <WidgetCard family="plan" title="AI" icon={Bot} caption="LLM provider & key">
             <View style={styles.infoBox}>
               <Typography style={styles.infoText}>
                 Get an API key from OpenAI, Anthropic, or Google AI Studio. Your key is stored securely on this device.
@@ -218,152 +368,131 @@ export default function SettingsScreen() {
             </View>
             <View style={styles.inputGroup}>
               <Typography style={styles.label}>LLM Provider</Typography>
-              <View style={styles.providerOptions}>
-                {(['openai', 'anthropic', 'gemini'] as const).map((provider) => (
-                  <TouchableOpacity
-                    key={provider}
-                    style={[
-                      styles.providerButton,
-                      settings.llmProvider === provider && styles.providerButtonActive,
-                    ]}
-                    onPress={() => updateSettings({ llmProvider: provider })}
-                  >
-                    <Typography
-                      style={[
-                        styles.providerText,
-                        settings.llmProvider === provider && styles.providerTextActive,
-                      ]}
-                    >
-                      {provider}
-                    </Typography>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              <SegmentedControl<'openai' | 'anthropic' | 'gemini'>
+                family="plan"
+                segments={[
+                  { value: 'openai', label: 'OpenAI' },
+                  { value: 'anthropic', label: 'Anthropic' },
+                  { value: 'gemini', label: 'Gemini' },
+                ]}
+                value={settings.llmProvider}
+                onChange={(provider) => updateSettings({ llmProvider: provider })}
+              />
             </View>
-            <View style={styles.inputGroup}>
+            <View style={[styles.inputGroup, { marginBottom: 0 }]}>
               <Typography style={styles.label}>API Key</Typography>
-              <TextInput
-                style={styles.input}
-                value={settings.llmApiKey}
-                onChangeText={(text) => updateSettings({ llmApiKey: text })}
-                placeholder={`Enter ${settings.llmProvider} API Key`}
-                placeholderTextColor={theme.colors.textSecondary}
-                secureTextEntry
-                autoCapitalize="none"
-              />
-            </View>
-          </Card>
-        </Animated.View>
-
-        {/* Preferences */}
-        <Animated.View entering={FadeInDown.delay(next() * 60).duration(360)}>
-          <SectionHeader
-            icon={<Sliders size={15} color={theme.colors.accent} />}
-            title="Preferences"
-            accentColor={theme.colors.accent}
-          />
-          <Card variant="elevated" style={styles.section}>
-            <View style={styles.inputGroup}>
-              <Typography style={styles.label}>Units</Typography>
-              <View style={styles.providerOptions}>
-                {(['metric', 'imperial'] as const).map((u) => (
-                  <TouchableOpacity
-                    key={u}
-                    style={[styles.providerButton, settings.unit === u && styles.providerButtonActive]}
-                    onPress={() => updateSettings({ unit: u })}
-                  >
-                    <Typography
-                      style={[
-                        styles.providerText,
-                        settings.unit === u && styles.providerTextActive,
-                      ]}
-                    >
-                      {u}
-                    </Typography>
-                  </TouchableOpacity>
-                ))}
+              <View style={styles.apiKeyWrap}>
+                <Icon icon={KeyRound} variant="plain" size="sm" color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
+                <TextInput
+                  style={styles.apiKeyInput}
+                  value={settings.llmApiKey}
+                  onChangeText={(text) => updateSettings({ llmApiKey: text })}
+                  placeholder={`Enter ${settings.llmProvider} API Key`}
+                  placeholderTextColor={theme.colors.textSecondary}
+                  secureTextEntry
+                  autoCapitalize="none"
+                />
               </View>
             </View>
+          </WidgetCard>
+        </StaggerItem>
 
-            <View style={styles.inputGroup}>
-              <Typography style={styles.label}>Coach Personality</Typography>
-              <View style={{ flexDirection: 'column', gap: 8 }}>
-                {(['Strict Drill Sergeant', 'Encouraging Supporter', 'Data-Driven Analyst'] as const).map((personality) => {
-                  const active = settings.coachPersonality === personality;
-                  return (
-                    <TouchableOpacity
-                      key={personality}
-                      style={[styles.personalityBtn, active && styles.personalityBtnActive]}
-                      onPress={() => updateSettings({ coachPersonality: personality })}
-                    >
-                      <Typography style={[styles.personalityText, active && styles.personalityTextActive]}>
-                        {personality}
-                      </Typography>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={styles.toggleRow}>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Shield size={13} color={theme.colors.textSecondary} />
-                  <Typography style={styles.label}>Privacy Zones</Typography>
+        {/* ---------- Display ---------- */}
+        <StaggerItem index={3}>
+          <WidgetCard family="activity" title="Display" icon={Ruler} caption="Units & format">
+            <SettingsRow
+              icon={Ruler}
+              family="activity"
+              label="Units"
+              caption="Distance & pace"
+              right={
+                <View style={styles.segmentWrap}>
+                  <SegmentedControl<'metric' | 'imperial'>
+                    family="activity"
+                    segments={[
+                      { value: 'metric', label: 'Metric' },
+                      { value: 'imperial', label: 'Imperial' },
+                    ]}
+                    value={settings.unit}
+                    onChange={(u) => updateSettings({ unit: u })}
+                  />
                 </View>
-                <Typography style={styles.toggleSub}>Hide start/end locations on export</Typography>
-              </View>
-              <Switch
-                value={settings.privacyZones}
-                onValueChange={(val) => updateSettings({ privacyZones: val })}
-                trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
-                thumbColor="#fff"
-              />
-            </View>
-          </Card>
-        </Animated.View>
+              }
+            />
+            <SettingsRow
+              icon={Clock}
+              family="activity"
+              label="Time Format"
+              caption="12-hour or 24-hour clock"
+              isLast
+              right={
+                <View style={styles.segmentWrap}>
+                  <SegmentedControl<'12h' | '24h'>
+                    family="activity"
+                    segments={[
+                      { value: '12h', label: '12h' },
+                      { value: '24h', label: '24h' },
+                    ]}
+                    value={settings.timeFormat}
+                    onChange={(t) => updateSettings({ timeFormat: t })}
+                  />
+                </View>
+              }
+            />
+          </WidgetCard>
+        </StaggerItem>
 
-        {/* Data Management */}
-        <Animated.View entering={FadeInDown.delay(next() * 60).duration(360)}>
-          <SectionHeader
-            icon={<Database size={15} color="#10b981" />}
-            title="Data Management"
-            accentColor="#10b981"
-          />
-          <Card variant="elevated" style={styles.section}>
-            <Typography style={styles.dataNote}>Export your activity data to a JSON file.</Typography>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={async () => {
-                try {
-                  const activities = useStore.getState().activities;
-                  const documentDirectory = FileSystem.documentDirectory;
-                  if (!documentDirectory) throw new Error('No document directory');
-                  const fileUri = documentDirectory + 'activities.json';
-                  await FileSystem.writeAsStringAsync(fileUri, JSON.stringify(activities, null, 2));
+        {/* ---------- Privacy ---------- */}
+        <StaggerItem index={4}>
+          <WidgetCard family="records" title="Privacy" icon={Shield} caption="Your data, your control">
+            <SettingsRow
+              icon={Shield}
+              family="records"
+              label="Privacy Zones"
+              caption="Hide start/end locations on export"
+              right={
+                <Toggle
+                  value={settings.privacyZones}
+                  onValueChange={(val) => updateSettings({ privacyZones: val })}
+                  accent={recordsFam.accent}
+                  accessibilityLabel="Privacy Zones"
+                />
+              }
+            />
+            <SettingsRow
+              icon={Download}
+              family="records"
+              label="Export Data"
+              caption="Save activities to a JSON file"
+              onPress={handleExport}
+              isLast
+            />
+          </WidgetCard>
+        </StaggerItem>
 
-                  if (await Sharing.isAvailableAsync()) {
-                    await Sharing.shareAsync(fileUri);
-                  } else {
-                    setToast({ title: 'Error', message: 'Sharing is not available on this device', type: 'error' });
-                  }
-                } catch (e) {
-                  setToast({ title: 'Error', message: 'Failed to export data', type: 'error' });
-                }
-              }}
-            >
-              <LinearGradient
-                colors={['#10b981', '#059669']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={[styles.cta, theme.shadows.glow('#10b981')]}
-              >
-                <Download size={16} color="#fff" />
-                <Typography style={styles.ctaText}>Export Data</Typography>
-              </LinearGradient>
-            </TouchableOpacity>
-          </Card>
-        </Animated.View>
+        {/* ---------- About ---------- */}
+        <StaggerItem index={5}>
+          <WidgetCard family="social" title="About" icon={Info} caption="App info">
+            <SettingsRow
+              icon={ActivityIcon}
+              family="social"
+              label="Strava AI Coach"
+              caption={`Version ${APP_VERSION}`}
+              right={<Typography style={styles.versionPill}>v{APP_VERSION}</Typography>}
+            />
+            <SettingsRow
+              icon={Code2}
+              family="social"
+              label="View on GitHub"
+              caption="Source & credits"
+              onPress={() => RNLinking.openURL(REPO_URL).catch(() => {})}
+              right={<Icon icon={ExternalLink} variant="plain" size="sm" color={theme.colors.textSecondary} />}
+              isLast
+            />
+          </WidgetCard>
+        </StaggerItem>
+
+        <Typography style={styles.footer}>Strava AI Coach · v{APP_VERSION}</Typography>
 
       </ScrollView>
     </SafeAreaView>
@@ -381,17 +510,9 @@ const styles = StyleSheet.create({
   heroHeader: {
     paddingHorizontal: 20, paddingTop: 14, paddingBottom: 22, marginBottom: 16,
   },
-  heroTitle: { fontSize: 24, fontWeight: '900', color: '#fff' },
+  heroTitle: { fontSize: 24, fontFamily: theme.fonts.display, color: '#fff' },
   heroSub: { fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 4 },
 
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 16, marginTop: 4, marginBottom: 8 },
-  sectionAccent: { width: 3, height: 14, borderRadius: 2 },
-  sectionHeaderTitle: { fontSize: 11, fontWeight: '800', color: theme.colors.text, letterSpacing: 1.2, textTransform: 'uppercase' },
-
-  section: {
-    marginHorizontal: 16, marginBottom: 16,
-    padding: theme.spacing.md,
-  },
   infoBox: {
     backgroundColor: theme.colors.surfaceMuted,
     padding: theme.spacing.md,
@@ -407,54 +528,45 @@ const styles = StyleSheet.create({
   input: {
     backgroundColor: theme.colors.background,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: theme.colors.border + '88',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     color: theme.colors.text,
     fontSize: 14,
   },
-
-  providerOptions: { flexDirection: 'row', gap: 8 },
-  providerButton: {
+  apiKeyWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.background,
+    borderWidth: 1,
+    borderColor: theme.colors.border + '88',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+  },
+  apiKeyInput: {
     flex: 1,
     paddingVertical: 10,
-    alignItems: 'center',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    color: theme.colors.text,
+    fontSize: 14,
   },
-  providerButtonActive: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
-    ...theme.shadows.glow(theme.colors.primary),
-  },
-  providerText: { fontSize: 12, fontWeight: '600', color: theme.colors.text, textTransform: 'capitalize' },
-  providerTextActive: { color: '#fff', fontWeight: '800' },
 
-  personalityBtn: {
+  // Right-slot segmented controls sit in a fixed-width box so the sliding pill
+  // doesn't stretch the whole row to the screen edge.
+  segmentWrap: { width: 150 },
+
+  // Single option-card style for the multi-line personality picker.
+  optionCard: {
     paddingVertical: 12, paddingHorizontal: 14,
     borderRadius: 10,
     borderWidth: 1, borderColor: theme.colors.border,
     backgroundColor: theme.colors.background,
   },
-  personalityBtnActive: {
-    backgroundColor: theme.colors.accent + '22',
-    borderColor: theme.colors.accent,
-  },
-  personalityText: { fontSize: 13, color: theme.colors.text, fontWeight: '600' },
-  personalityTextActive: { color: theme.colors.accent, fontWeight: '800' },
-
-  toggleRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 6,
-  },
-  toggleSub: { fontSize: 11, color: theme.colors.textSecondary, marginTop: 2 },
+  optionCardText: { fontSize: 13, color: theme.colors.text, fontWeight: '600' },
 
   cta: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 12, borderRadius: 12, gap: 6,
+    paddingVertical: 12, borderRadius: 12, gap: 8,
   },
   ctaText: { color: '#fff', fontWeight: '800', fontSize: 14 },
 
@@ -467,5 +579,23 @@ const styles = StyleSheet.create({
   },
   disconnectText: { color: theme.colors.error, fontWeight: '700', fontSize: 13 },
 
-  dataNote: { fontSize: 13, color: theme.colors.textSecondary, marginBottom: 14 },
+  versionPill: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: theme.colors.textSecondary,
+    backgroundColor: theme.colors.surfaceMuted,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+
+  footer: {
+    textAlign: 'center',
+    fontSize: 11,
+    color: theme.colors.textSecondary,
+    marginTop: 8,
+    marginBottom: 24,
+    letterSpacing: 0.3,
+  },
 });

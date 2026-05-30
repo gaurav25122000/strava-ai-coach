@@ -2,39 +2,13 @@ import { StyleSheet } from 'react-native';
 import { theme } from '../../theme';
 
 export const styles = StyleSheet.create({
-  overlay: {
+  // Body wrapper inside the shared BottomSheet (edge-to-edge, so it owns its own
+  // padding). flex:1 lets the inner ScrollView grow while the CTA row stays
+  // pinned to the bottom.
+  body: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: theme.colors.surface,
-    borderTopLeftRadius: theme.borderRadius.xl,
-    borderTopRightRadius: theme.borderRadius.xl,
     padding: theme.spacing.lg,
-    maxHeight: '90%',
-    minHeight: 360,
-  },
-  dragHandle: {
-    width: 40,
-    height: 4,
-    backgroundColor: theme.colors.border,
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginBottom: 12,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: theme.spacing.md,
-  },
-  kindBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingTop: theme.spacing.sm,
   },
   prescBox: {
     backgroundColor: 'rgba(255,255,255,0.03)',

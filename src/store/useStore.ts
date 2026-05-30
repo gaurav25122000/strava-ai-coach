@@ -31,6 +31,18 @@ export const secureSettingsStorage = {
   }
 };
 
+export interface ZoneBucket {
+  min: number;
+  max: number;
+  time: number; // seconds in this zone
+}
+
+export interface ActivityZoneDistribution {
+  type: 'heartrate' | 'power';
+  buckets: ZoneBucket[];
+  fetchedAt: string; // ISO — when this cache was populated
+}
+
 export interface Activity {
   id: string;
   type: 'Run' | 'Ride' | 'Workout' | 'Walk';
@@ -50,6 +62,15 @@ export interface Activity {
   averageWatts?: number;
   sufferScore?: number;
   name?: string;
+  // Social engagement from Strava — preserved when present so widgets like
+  // KudosLeaderboard can rank activities without a per-activity detail fetch.
+  kudosCount?: number;
+  // Indoor / trainer flag from Strava (rides). Used by TrainerRatio.
+  trainer?: boolean;
+  // Per-activity time-in-zone distributions from Strava's own bucketing.
+  // Cached so we don't refetch every render. Fetched lazily when the
+  // activity is opened (and we don't already have a fresh cache).
+  zones?: ActivityZoneDistribution[];
 }
 
 export type WorkoutKind =
@@ -97,8 +118,13 @@ export interface CheckIn {
   workoutKind: WorkoutKind;
   completed: boolean;
   activityId?: string;                     // present if source === 'STRAVA'
-  notes?: string;                          // present if source === 'MANUAL'
+  notes?: string;                          // manual note, or the auto-match reason for STRAVA check-ins
   perceivedEffort?: number;                // 1-10 RPE, manual only
+  // How well an auto-matched Strava activity satisfied the day's prescription.
+  // 'matched' → counts as done; 'partial' → logged but short/wrong-intensity;
+  // 'mismatch' → wrong discipline (e.g. a ride on a run day). Undefined for
+  // manual check-ins and unscheduled days.
+  matchVerdict?: 'matched' | 'partial' | 'mismatch';
 }
 
 export interface Goal {
@@ -217,6 +243,14 @@ export interface WeeklyDigest {
 export interface HRZone {
   min: number;
   max: number; // -1 means ∞
+}
+
+// Lifetime / recent rollups + athlete profile, as returned by Strava's
+// `/athletes/{id}/stats` + `/athlete` endpoints. Cached so widgets like
+// StravaTotals can render instantly without a refetch.
+export interface AthleteStats {
+  stats: any;   // raw Strava stats payload (recent_/ytd_/all_ run/ride/swim totals)
+  athlete: any; // raw Strava athlete payload
 }
 
 export interface ToastOptions {
@@ -350,6 +384,9 @@ interface AppState {
   weeklyDigest: WeeklyDigest | null;
   lastSyncedAt: string | null;             // ISO timestamp of most recent Strava sync
   setActivities: (activities: Activity[]) => void;
+  // Attach per-activity zone distribution (cached). No-op if the activity
+  // isn't in the store (e.g. it was pruned).
+  setActivityZones: (activityId: string, zones: ActivityZoneDistribution[]) => void;
   setLifetimeStats: (stats: any) => void;
   setGoals: (goals: Goal[]) => void;
   setUserStats: (stats: UserStats) => void;
@@ -368,6 +405,10 @@ interface AppState {
   setWeeklyDigest: (digest: WeeklyDigest) => void;
   hrZones: HRZone[];
   setHRZones: (zones: HRZone[]) => void;
+  starredSegments: any[];
+  setStarredSegments: (segs: any[]) => void;
+  athleteStats: AthleteStats | null;
+  setAthleteStats: (stats: AthleteStats | null) => void;
   toast: ToastOptions | null;
   setToast: (toast: ToastOptions | null) => void;
 }
@@ -383,6 +424,10 @@ export const useStore = create<AppState>()(
       lastSyncedAt: null,
       hrZones: [],
       setHRZones: (hrZones) => set({ hrZones }),
+      starredSegments: [],
+      setStarredSegments: (starredSegments) => set({ starredSegments }),
+      athleteStats: null,
+      setAthleteStats: (athleteStats) => set({ athleteStats }),
       toast: null,
       setToast: (toast) => set({ toast }),
       userStats: {
@@ -503,9 +548,9 @@ export const useStore = create<AppState>()(
         widgetLayout: [
           'HeroBanner', 'CurrentFocus', 'CoachInsight', 'WeeklyDigest', 'InjuryAlert', 'RecoveryAdvisor',
           'WeeklyGoalTracker', 'ThisWeek', 'ShoeTracker', 'ActivityMap', 'RecentActivities', 'MonthlyVolume', 'HeartRate',
-          'IntensityDistribution', 'PersonalBests', 'RacePredictor',
+          'IntensityDistribution', 'SufferTrend', 'PersonalBests', 'RacePredictor',
           'ActivityMix', 'YearToDate', 'AllTimeStats', 'ActiveGoals',
-          'TrainingLoad', 'BestEfforts', 'Badges'
+          'TrainingLoad', 'BestEfforts', 'Badges', 'KudosLeaderboard', 'StarredSegments'
         ],
       },
       updateSettings: (newSettings) => set((state) => ({
@@ -517,10 +562,63 @@ export const useStore = create<AppState>()(
       addShoe: (shoe) => set((state) => ({ shoes: [...state.shoes, shoe] })),
       setShoes: (shoes) => set({ shoes }),
       addInjury: (injury) => set((state) => ({ injuries: [...state.injuries, injury] })),
+      setActivityZones: (activityId, zones) => set((state) => ({
+        activities: state.activities.map((a) =>
+          a.id === activityId ? { ...a, zones } : a,
+        ),
+      })),
     }),
     {
       name: 'ai-coach-app-storage',
       storage: createJSONStorage(() => asyncStorage),
+      // Bump when defaults change in a way that needs to reach existing installs.
+      // v2 (2026-05): introduces TodayHero at top of dashboard + drops widget ids
+      // that no longer exist. Without this migration, persisted widgetLayout from
+      // v1 would mask the revamp on every existing device.
+      // v3 (2026-05): adds three Strava-powered default-on widgets so existing
+      // users see them without having to opt in via the customise modal.
+      version: 3,
+      migrate: (persistedState: any, fromVersion: number) => {
+        if (!persistedState) return persistedState;
+        const next = { ...persistedState };
+
+        if (fromVersion < 2) {
+          const layout: string[] = next.settings?.widgetLayout ?? [];
+          // Splice TodayHero at index 0 if missing.
+          const withHero = layout.includes('TodayHero')
+            ? layout
+            : ['TodayHero', ...layout];
+          next.settings = { ...(next.settings ?? {}), widgetLayout: withHero };
+        }
+
+        if (fromVersion < 3) {
+          const layout: string[] = next.settings?.widgetLayout ?? [];
+          // Append the three new Strava-powered widgets if missing — they're
+          // default-on so previously-installed users see them too.
+          const additions = ['SufferTrend', 'KudosLeaderboard', 'StarredSegments'];
+          const merged = [...layout];
+          for (const id of additions) {
+            if (!merged.includes(id)) merged.push(id);
+          }
+          next.settings = { ...(next.settings ?? {}), widgetLayout: merged };
+        }
+
+        // Final defensive cleanup against the current `known` set.
+        const known = new Set([
+          'TodayHero','HeroBanner','CurrentFocus','UpcomingWorkout','CoachInsight','WeeklyDigest',
+          'RecoveryAdvisor','WellnessScore','InjuryAlert','TrainingLoad','SufferTrend',
+          'WeeklyGoalTracker','ThisWeek','ActivityMap','RecentActivities','MonthlyVolume','ActivityMix','YearToDate','AllTimeStats','ShoeTracker',
+          'StravaTotals','SportSplit','TrainerRatio',
+          'HeartRate','IntensityDistribution','Cadence','PowerZones','EnergyExpenditure',
+          'PaceTrend','PersonalBests','RacePredictor','BestEfforts','Badges','ActiveGoals','TodayBlock','StarredSegments',
+          'KudosLeaderboard','PhotoStream',
+        ]);
+        const layout: string[] = next.settings?.widgetLayout ?? [];
+        const cleaned = layout.filter((id) => known.has(id));
+        next.settings = { ...(next.settings ?? {}), widgetLayout: cleaned };
+
+        return next;
+      },
       partialize: (state) => ({
         activities: state.activities,
         goals: state.goals,
@@ -534,6 +632,8 @@ export const useStore = create<AppState>()(
         weeklyDigest: state.weeklyDigest,
         lastSyncedAt: state.lastSyncedAt,
         hrZones: state.hrZones,
+        starredSegments: state.starredSegments,
+        athleteStats: state.athleteStats,
       }),
     }
   )

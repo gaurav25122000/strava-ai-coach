@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView, FlatList, Animated as RNAnimated } from 'react-native';
+import { View, ScrollView, TouchableOpacity, Modal, Platform, FlatList, Animated as RNAnimated } from 'react-native';
 import { styles, goalMarkdownStyles } from './GoalsScreen.styles';
 import Markdown from 'react-native-markdown-display';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -8,16 +8,26 @@ import { Card } from '../components/Card';
 import { Typography } from '../components/Typography';
 import { ProgressBar } from '../components/ProgressBar';
 import { useStore, Goal, DailyPrescription, CheckIn } from '../store/useStore';
-import { Flame, PersonStanding, Plus, Zap, X, Calendar, Trophy, TrendingUp, Clock, Heart, MapPin, Activity, Pencil, MessageCircle, Send, Bot } from 'lucide-react-native';
+import { Flame, Bike, Footprints, Plus, Zap, X, Calendar, Trophy, TrendingUp, Clock, Heart, MapPin, Activity, Pencil, MessageCircle, Send, Target, Sparkles, PartyPopper, CheckCircle2, XCircle, LucideIcon } from 'lucide-react-native';
+import { Icon } from '../components/Icon';
+import { FieldBlock, SegmentedControl, SectionLabel, SheetCTA } from '../components/SheetUI';
 import { AIService, ChatMessage } from '../services/ai';
 import { computeProgress } from '../services/goalProgress';
+import { familyStyle } from '../utils/widgetFamilies';
+import { workoutIcon, WORKOUT_COLORS, WORKOUT_LABELS } from '../utils/workoutKinds';
 import { differenceInDays, parseISO, format, getWeek, getMonth, getYear, startOfWeek, startOfMonth, endOfWeek, endOfMonth, addDays } from 'date-fns';
 import { WeekStrip } from '../components/WeekStrip';
 import { DayDetailSheet, DayContext, DayCheckInPayload } from '../components/DayDetailSheet';
+import { BottomSheet } from '../components/BottomSheet';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated, { FadeInDown, Layout, useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSequence, Easing } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSequence, Easing } from 'react-native-reanimated';
 import { secureSettingsStorage } from '../store/useStore';
+import { PressableScale } from '../components/PressableScale';
+import { AnimatedNumber } from '../components/AnimatedNumber';
+import { SkeletonWidget } from '../components/SkeletonPresets';
+import { DonutRing } from '../components/DonutRing';
+import { StaggerItem } from '../components/Stagger';
 
 const GENERATING_MESSAGES = [
   'Analyzing your training history...',
@@ -29,6 +39,36 @@ const GENERATING_MESSAGES = [
 ];
 
 const GOAL_DOT_COLORS = ['#f97316', '#ec4899', '#8b5cf6'];
+
+// Map a free-text phase name to its canonical short label. Used to render the
+// family-tinted phase pill above the WeekStrip — keeps the chip terse even
+// when the LLM returned a wordy phase title like "Base Building Phase".
+function phaseShortName(raw: string): 'Base' | 'Build' | 'Peak' | 'Taper' | string {
+  const s = (raw || '').toLowerCase();
+  if (s.includes('taper')) return 'Taper';
+  if (s.includes('peak') || s.includes('race')) return 'Peak';
+  if (s.includes('build') || s.includes('strength')) return 'Build';
+  if (s.includes('base') || s.includes('aerobic') || s.includes('foundation')) return 'Base';
+  return raw.split('\n')[0].split(/\s+/).slice(0, 2).join(' ');
+}
+
+// Format a date string (yyyy-MM-dd) into a friendly "May 12" caption.
+function friendlyDate(iso: string): string {
+  try { return format(parseISO(iso), 'MMM d, yyyy'); } catch { return iso; }
+}
+
+// Pick the goal's title-row glyph from its semantics rather than a hardcoded id.
+// AI race goals lean on title keywords (ride/run); simple goals reflect their
+// tracked activity. The colour always comes from the `plan` family accent so
+// the title matches the phase pill + DonutRing on the same card.
+function goalIcon(goal: Goal): LucideIcon {
+  const t = (goal.title || '').toLowerCase();
+  const act = goal.simpleActivityType;
+  if (act === 'Ride' || t.includes('ride') || t.includes('cycl') || t.includes('bike')) return Bike;
+  if (act === 'Walk' || t.includes('walk')) return Footprints;
+  if (t.includes('hyrox') || t.includes('marathon') || t.includes('race') || t.includes('10k') || t.includes('5k') || t.includes('half')) return Flame;
+  return Footprints;
+}
 
 function GoalThinkingDots() {
   const anims = useRef(GOAL_DOT_COLORS.map(() => new RNAnimated.Value(0))).current;
@@ -468,50 +508,87 @@ export default function GoalsScreen() {
             <Typography style={styles.heroTitle}>Training Goals</Typography>
             <Typography style={styles.heroSub}>Track your race, get phase-by-phase guidance.</Typography>
           </View>
-          <TouchableOpacity
+          <PressableScale
             style={styles.heroAddBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Add goal"
             onPress={() => { setEditingGoal(null); setNewGoalTitle(''); setNewGoalDate(''); setModalVisible(true); }}
-            activeOpacity={0.85}
           >
-            <Plus size={20} color="#fff" />
-          </TouchableOpacity>
+            <Icon icon={Plus} variant="plain" size="md" color="#fff" />
+          </PressableScale>
         </LinearGradient>
 
-        {goals.length === 0 && (
+        {/* Initial-hydrate skeleton — the persisted store can momentarily return
+            undefined while loading from storage. Show a placeholder widget so
+            the screen doesn't flash the empty-state CTA before settling. */}
+        {goals == null && <SkeletonWidget />}
+
+        {goals && goals.length === 0 && (
           <View style={styles.emptyState}>
-            <Trophy size={42} color={theme.colors.textSecondary} />
-            <Typography style={styles.emptyTitle}>No goals yet</Typography>
-            <Typography style={styles.emptySub}>Add your first goal to get a personalised plan.</Typography>
+            <View style={styles.emptyIconWrap}>
+              <Icon icon={Target} variant="plain" size="xl" color={theme.colors.primary} />
+            </View>
+            <Typography style={styles.emptyTitle}>Set your first goal</Typography>
+            <Typography style={styles.emptySub}>
+              Pick a race date or a simple weekly target — your AI coach will build the plan around it.
+            </Typography>
+            <PressableScale
+              onPress={() => { setEditingGoal(null); setNewGoalTitle(''); setNewGoalDate(''); setModalVisible(true); }}
+              style={{ marginTop: 18 }}
+            >
+              <LinearGradient
+                colors={theme.colors.gradients.primary}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                style={styles.emptyCtaBtn}
+              >
+                <Icon icon={Plus} variant="plain" size="sm" color="#fff" />
+                <Typography weight="bold" color="#fff" style={{ fontSize: 14 }}>Create a Goal</Typography>
+              </LinearGradient>
+            </PressableScale>
           </View>
         )}
 
-        {goals.map((goal, idx) => (
-          <Animated.View
-            key={goal.id}
-            entering={FadeInDown.delay(idx * 80).duration(360)}
-            layout={Layout.springify()}
-          >
+        {(goals || []).map((goal, idx) => (
+          <StaggerItem key={goal.id} index={idx}>
             <Card variant="elevated" style={styles.goalCard}>
             <View style={styles.goalHeader}>
               <View style={styles.goalTitleRow}>
-                {goal.id === '1' ? <Flame color={theme.colors.error} size={24}/> : <PersonStanding color={theme.colors.success} size={24}/>}
+                <Icon icon={goalIcon(goal)} variant="plain" size="lg" color={familyStyle('plan').accent} />
                 <View style={{marginLeft: 12}}>
-                  <Typography variant="h3" color={goal.id === '1' ? theme.colors.error : theme.colors.success}>{goal.title}</Typography>
+                  <Typography variant="h3" color={familyStyle('plan').accent}>{goal.title}</Typography>
                   <Typography variant="caption">{goal.targetDate} {goal.targetFinishTime ? `· Target ${goal.targetFinishTime}` : ''}</Typography>
                 </View>
               </View>
               <View style={styles.actionButtons}>
                 {!goal.isSimple && (
-                  <TouchableOpacity style={styles.iconButton} onPress={() => { setGoalChatTarget(goal); setGoalChatMessages([]); setGoalChatInput(''); }}>
-                    <MessageCircle size={14} color={theme.colors.accent} />
-                  </TouchableOpacity>
+                  <PressableScale
+                    style={styles.iconButton}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Chat with coach"
+                    onPress={() => { setGoalChatTarget(goal); setGoalChatMessages([]); setGoalChatInput(''); }}
+                  >
+                    <Icon icon={MessageCircle} variant="plain" size="sm" color={theme.colors.accent} />
+                  </PressableScale>
                 )}
-                <TouchableOpacity style={styles.iconButton} onPress={() => openEdit(goal)}>
-                  <Pencil size={14} color={theme.colors.textSecondary} />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.iconButton} onPress={() => deleteGoal(goal.id)}>
-                  <X size={14} color={theme.colors.error} />
-                </TouchableOpacity>
+                <PressableScale
+                  style={styles.iconButton}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Edit goal"
+                  onPress={() => openEdit(goal)}
+                >
+                  <Icon icon={Pencil} variant="plain" size="sm" color={theme.colors.textSecondary} />
+                </PressableScale>
+                <PressableScale
+                  style={styles.iconButton}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete goal"
+                  onPress={() => deleteGoal(goal.id)}
+                >
+                  <Icon icon={X} variant="plain" size="sm" color={theme.colors.error} />
+                </PressableScale>
               </View>
             </View>
 
@@ -523,51 +600,67 @@ export default function GoalsScreen() {
               const unit = goal.simpleCategory === 'Distance' ? 'km' : goal.simpleCategory === 'Time' ? 'hrs' : goal.simpleCategory === 'HeartRate' ? 'bpm' : 'sessions';
               const actTypeLabel = goal.simpleActivityType && goal.simpleActivityType !== 'All' ? ` · ${goal.simpleActivityType}s only` : '';
               const periodLabel = (goal.simplePeriod || 'Week') === 'Week' ? 'This Week' : 'This Month';
-              const catIcon = goal.simpleCategory === 'Distance' ? <MapPin size={14} color="#fff" /> : goal.simpleCategory === 'Time' ? <Clock size={14} color="#fff" /> : goal.simpleCategory === 'HeartRate' ? <Heart size={14} color="#fff" /> : <Activity size={14} color="#fff" />;
-              const gradColors: [string, string] = isDone ? ['#16a34a', '#15803d'] : pct > 60 ? ['#0ea5e9', '#0284c7'] : ['#7c3aed', '#6d28d9'];
+              const catIcon = goal.simpleCategory === 'Distance'
+                ? <Icon icon={MapPin} variant="plain" size="sm" color="#fff" />
+                : goal.simpleCategory === 'Time'
+                  ? <Icon icon={Clock} variant="plain" size="sm" color="#fff" />
+                  : goal.simpleCategory === 'HeartRate'
+                    ? <Icon icon={Heart} variant="plain" size="sm" color="#fff" />
+                    : <Icon icon={Activity} variant="plain" size="sm" color="#fff" />;
+              // Source the card gradient from the design-system families so the
+              // Simple card speaks the same colour language as the AI card:
+              // success when complete, progress (sky) when nearly there, plan
+              // (purple) otherwise — matching the phase pill / DonutRing accent.
+              const gradColors: [string, string] = isDone
+                ? theme.colors.gradients.success
+                : pct > 60
+                  ? theme.colors.gradients.progress
+                  : theme.colors.gradients.plan;
               return (
                 <>
                   <LinearGradient
                     colors={gradColors}
                     start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-                    style={{ borderRadius: 12, padding: 16, marginTop: 12 }}
+                    style={styles.simpleCard}
                   >
                     {/* Header row */}
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={styles.simpleHeaderRow}>
+                      <View style={styles.simpleHeaderLabel}>
                         {catIcon}
-                        <Typography style={{ color: 'rgba(255,255,255,0.8)', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        <Typography style={styles.simpleHeaderText}>
                           {periodLabel}{actTypeLabel}
                         </Typography>
                       </View>
-                      {isDone && <Typography style={{ fontSize: 18 }}>🎉</Typography>}
+                      {isDone && <Icon icon={PartyPopper} variant="plain" size="md" color="#fff" />}
                     </View>
 
                     {/* Main numbers */}
-                    <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginBottom: 4 }}>
-                      <Typography style={{ fontSize: 44, fontWeight: '900', color: '#fff', lineHeight: 48 }}>
-                        {Number(prog.toFixed(1))}
-                      </Typography>
-                      <Typography style={{ color: 'rgba(255,255,255,0.7)', fontSize: 16, marginBottom: 6, marginLeft: 6 }}>
+                    <View style={styles.simpleNumberRow}>
+                      <AnimatedNumber value={Number(prog.toFixed(1))} decimals={1} style={styles.simpleNumber} />
+                      <Typography style={styles.simpleNumberUnit}>
                         / {goal.simpleTarget} {unit}
                       </Typography>
                     </View>
 
-                    <Typography style={{ color: isDone ? '#bbf7d0' : 'rgba(255,255,255,0.7)', fontSize: 12, marginBottom: 14 }}>
-                      {isDone ? '🏆 Goal crushed! Great work!' : `${Math.round(pct)}% of your ${(goal.simplePeriod || 'week').toLowerCase()}ly target`}
-                    </Typography>
-
-                    {/* Progress bar */}
-                    <View style={{ height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.25)', overflow: 'hidden' }}>
-                      <View style={{ width: `${pct}%`, height: '100%', borderRadius: 4, backgroundColor: isDone ? '#bbf7d0' : '#fff' }} />
+                    <View style={styles.simpleCaptionRow}>
+                      {isDone && <Icon icon={Trophy} variant="plain" size="sm" color="#bbf7d0" />}
+                      <Typography style={[styles.simpleCaption, isDone && styles.simpleCaptionDone]}>
+                        {isDone ? 'Goal crushed! Great work!' : `${Math.round(pct)}% of your ${(goal.simplePeriod || 'week').toLowerCase()}ly target`}
+                      </Typography>
                     </View>
+
+                    <ProgressBar
+                      progress={pct}
+                      height={8}
+                      gradient={isDone ? ['#bbf7d0', '#86efac'] : ['#ffffff', '#ffffff']}
+                    />
                   </LinearGradient>
 
                   {/* History section */}
                   {(goal.history || []).length > 0 && (
                     <View style={{ marginTop: 16 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                        <TrendingUp size={14} color={theme.colors.textSecondary} />
+                        <Icon icon={TrendingUp} variant="plain" size="sm" color={theme.colors.textSecondary} />
                         <Typography variant="label" style={{ color: theme.colors.textSecondary }}>PAST PERIODS</Typography>
                       </View>
                       {(goal.history || []).slice(0, 4).map((h, i) => (
@@ -577,7 +670,9 @@ export default function GoalsScreen() {
                             <Typography variant="caption" style={{ color: h.completed ? theme.colors.success : theme.colors.text }}>
                               {h.achieved} / {h.target} {unit}
                             </Typography>
-                            <Typography>{h.completed ? '✅' : '❌'}</Typography>
+                            {h.completed
+                              ? <Icon icon={CheckCircle2} variant="plain" size="sm" color={theme.colors.success} />
+                              : <Icon icon={XCircle} variant="plain" size="sm" color={theme.colors.textSecondary} />}
                           </View>
                         </View>
                       ))}
@@ -585,23 +680,110 @@ export default function GoalsScreen() {
                   )}
                 </>
               );
-            })() : (
-              <>
-                <View style={styles.daysOutRow}>
-                  <View style={{ flex: 1 }}>
-                    <Typography variant="label">DAYS OUT</Typography>
-                    <Typography variant="h1" color={goal.id === '1' ? theme.colors.error : theme.colors.success}>{goal.daysRemaining}</Typography>
-                    <Typography variant="caption">{Math.floor(goal.daysRemaining / 7)} weeks to go</Typography>
-                  </View>
-                  <View style={styles.progressDial}>
-                    <Typography style={styles.progressDialPct}>{Math.round(goal.progress || 0)}%</Typography>
-                    <Typography variant="caption" style={{ color: theme.colors.textSecondary, marginTop: 2 }}>plan progress</Typography>
-                  </View>
-                </View>
+            })() : (() => {
+              // Family-tinted phase pill — picks the phase whose date window
+              // includes today, falls back to the first phase, and falls back
+              // again to the free-text `goal.phase` for older plans.
+              const phases = goal.phases || [];
+              const currentPhase = phases.find(p => p.weekStart && p.weekEnd
+                && parseISO(p.weekStart).getTime() <= Date.now()
+                && parseISO(p.weekEnd).getTime() >= Date.now()) || phases[0];
+              const currentPhaseIdx = currentPhase ? phases.indexOf(currentPhase) : -1;
+              const phaseLabel = phaseShortName(stripMd((currentPhase?.name) || goal.phase || ''));
+              const planFam = familyStyle('plan');
+              const phaseFraction = phases.length > 0 && currentPhaseIdx >= 0
+                ? `Phase ${currentPhaseIdx + 1} of ${phases.length}`
+                : null;
 
-                <WeekStrip goal={goal} onPressDay={handleOpenDay} onSync={handleSyncGoal} />
-              </>
-            )}
+              // Today's prescribed workout (Mon=0..Sun=6 in this codebase).
+              const todayIdx = ((new Date().getDay() + 6) % 7) as 0|1|2|3|4|5|6;
+              const todayPresc = currentPhase?.schedule?.find(p => p.dayOfWeek === todayIdx);
+              const todayKind = todayPresc?.kind;
+              const todayColor = todayKind ? WORKOUT_COLORS[todayKind] : theme.colors.textSecondary;
+
+              return (
+                <>
+                  {/* Phase pill row */}
+                  <View style={styles.phasePillRow}>
+                    <View style={[styles.phasePill, { backgroundColor: planFam.tint, borderColor: planFam.accent + '55' }]}>
+                      <View style={[styles.phasePillDot, { backgroundColor: planFam.accent }]} />
+                      <Typography style={[styles.phasePillLabel, { color: planFam.accent }]}>
+                        {phaseLabel || 'Plan'}
+                      </Typography>
+                    </View>
+                    {phaseFraction && (
+                      <Typography style={styles.phaseFraction}>{phaseFraction}</Typography>
+                    )}
+                  </View>
+
+                  {/* Days-out hero row */}
+                  <View style={styles.daysOutRow}>
+                    <View style={{ flex: 1 }}>
+                      <AnimatedNumber value={goal.daysRemaining} style={styles.daysOutNumber} />
+                      <Typography style={styles.daysOutCaption}>
+                        days until <Typography style={styles.daysOutDate}>{friendlyDate(goal.targetDate)}</Typography>
+                      </Typography>
+                      <View style={styles.daysOutSubRow}>
+                        <Icon icon={Calendar} variant="plain" size="xs" color={theme.colors.textSecondary} />
+                        <Typography style={styles.daysOutSub}>
+                          {Math.floor(goal.daysRemaining / 7)} weeks to go
+                        </Typography>
+                      </View>
+                    </View>
+                    <View style={styles.progressDialWrap}>
+                      <DonutRing
+                        size={96}
+                        stroke={8}
+                        progress={Math.min(1, Math.max(0, (goal.progress || 0) / 100))}
+                        color={planFam.accent}
+                        gradient={planFam.gradient}
+                        trackColor={'rgba(255,255,255,0.06)'}
+                      >
+                        <Typography style={styles.progressDialPct}>{Math.round(goal.progress || 0)}%</Typography>
+                        <Typography style={styles.progressDialCaption}>PROGRESS</Typography>
+                      </DonutRing>
+                    </View>
+                  </View>
+
+                  <WeekStrip goal={goal} onPressDay={handleOpenDay} onSync={handleSyncGoal} />
+
+                  {/* Today's prescribed workout — inset card */}
+                  {todayPresc && (
+                    <View style={[styles.todayInset, { borderColor: todayColor + '55' }]}>
+                      <View style={[styles.todayIconPill, { backgroundColor: todayColor + '26', borderColor: todayColor + '55' }]}>
+                        {workoutIcon(todayPresc.kind, 14, todayColor)}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Typography style={styles.todayLabel}>TODAY · {WORKOUT_LABELS[todayPresc.kind].toUpperCase()}</Typography>
+                        <Typography style={styles.todayTitle} numberOfLines={2}>
+                          {stripMd(todayPresc.title)}
+                        </Typography>
+                        <View style={styles.todayChipsRow}>
+                          {todayPresc.distanceKm != null && (
+                            <View style={[styles.todayChip, { borderColor: todayColor + '44' }]}>
+                              <Icon icon={MapPin} variant="plain" size="xs" color={todayColor} />
+                              <Typography style={[styles.todayChipText, { color: todayColor }]}>{todayPresc.distanceKm} km</Typography>
+                            </View>
+                          )}
+                          {todayPresc.durationMin != null && (
+                            <View style={[styles.todayChip, { borderColor: todayColor + '44' }]}>
+                              <Icon icon={Clock} variant="plain" size="xs" color={todayColor} />
+                              <Typography style={[styles.todayChipText, { color: todayColor }]}>{todayPresc.durationMin} min</Typography>
+                            </View>
+                          )}
+                          {todayPresc.intensity && (
+                            <View style={[styles.todayChip, { borderColor: todayColor + '44' }]}>
+                              <Icon icon={Zap} variant="plain" size="xs" color={todayColor} />
+                              <Typography style={[styles.todayChipText, { color: todayColor }]}>{todayPresc.intensity}</Typography>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    </View>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Phases Rendering */}
             {!goal.isSimple && goal.phases && goal.phases.length > 0 ? (
@@ -630,7 +812,7 @@ export default function GoalsScreen() {
                   </View>
                   <View style={styles.workoutBox}>
                     <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
-                      <Zap size={16} color="#FBBF24" />
+                      <Icon icon={Zap} variant="plain" size="sm" color="#FBBF24" />
                       <Typography variant="label" style={{marginLeft: 8}}>KEY WORKOUT</Typography>
                     </View>
                     <Typography variant="body" style={{marginBottom: 4, fontWeight: '700'}}>
@@ -672,7 +854,7 @@ export default function GoalsScreen() {
 
                 <View style={styles.workoutBox}>
                   <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
-                    <Zap size={16} color="#FBBF24" />
+                    <Icon icon={Zap} variant="plain" size="sm" color="#FBBF24" />
                     <Typography variant="label" style={{marginLeft: 8}}>KEY WORKOUT THIS PHASE</Typography>
                   </View>
                   <Typography variant="body" style={{marginBottom: 4, fontWeight: '700'}}>
@@ -696,7 +878,7 @@ export default function GoalsScreen() {
             )}
 
           </Card>
-          </Animated.View>
+          </StaggerItem>
         ))}
 
       </ScrollView>
@@ -707,7 +889,7 @@ export default function GoalsScreen() {
           <LinearGradient colors={['#0a0a18', '#1a0a33', '#0a0a18']} style={styles.genGradient}>
             <Animated.View style={[styles.genIconWrap, pulseStyle]}>
               <LinearGradient colors={['#7c3aed', '#4f46e5']} style={styles.genIconBg}>
-                <Zap size={44} color="#fff" />
+                <Icon icon={Zap} variant="plain" size="hero" color="#fff" />
               </LinearGradient>
             </Animated.View>
             <Typography style={styles.genTitle}>Building Your Plan</Typography>
@@ -723,38 +905,29 @@ export default function GoalsScreen() {
         </View>
       </Modal>
 
-      <Modal
-        animationType="slide"
-        transparent={true}
+      <BottomSheet
         visible={modalVisible}
-        onRequestClose={closeModal}
+        onClose={closeModal}
+        title={editingGoal ? 'Edit Goal' : 'New Goal'}
+        subtitle={editingGoal ? 'Refine the plan with your coach' : 'Set a target and let the coach plan it'}
+        icon={Target}
+        family="plan"
       >
-        <KeyboardAvoidingView 
-          style={styles.modalOverlay}
-          behavior="padding"
-        >
-          <View style={styles.modalContent}>
-            {/* Drag handle */}
-            <View style={{ width: 40, height: 4, backgroundColor: theme.colors.border, borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
-            <View style={styles.modalHeader}>
-              <Typography variant="h2">{editingGoal ? 'Edit Goal' : 'New Goal'}</Typography>
-              <TouchableOpacity onPress={closeModal}>
-                <X size={24} color={theme.colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-
-            {/* Tab switcher — hidden when editing AI goal */}
+            {/* Mode segmented control — hidden when editing AI goal */}
             {!(editingGoal && goalMode === 'AI') && (
-            <View style={{ flexDirection: 'row', marginBottom: 16, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 4 }}>
-              <TouchableOpacity style={{ flex: 1, paddingVertical: 8, alignItems: 'center', backgroundColor: goalMode === 'AI' ? theme.colors.primary : 'transparent', borderRadius: 6 }} onPress={() => setGoalMode('AI')}>
-                <Typography weight="600">AI Plan</Typography>
-              </TouchableOpacity>
-              <TouchableOpacity style={{ flex: 1, paddingVertical: 8, alignItems: 'center', backgroundColor: goalMode === 'Simple' ? theme.colors.primary : 'transparent', borderRadius: 6 }} onPress={() => setGoalMode('Simple')}>
-                <Typography weight="600">Simple Target</Typography>
-              </TouchableOpacity>
-            </View>
+              <>
+                <SectionLabel family="plan">Mode</SectionLabel>
+                <SegmentedControl
+                  family="plan"
+                  value={goalMode}
+                  onChange={(v) => setGoalMode(v)}
+                  segments={[
+                    { value: 'AI', label: 'AI Coach' },
+                    { value: 'Simple', label: 'Simple' },
+                  ]}
+                />
+              </>
             )}
 
             {goalMode === 'AI' ? (
@@ -766,10 +939,9 @@ export default function GoalsScreen() {
                     const history = existing?.chatHistory || [];
                     return (
                       <>
-                        <Typography variant="caption" style={{ color: theme.colors.textSecondary, marginBottom: 12 }}>
+                        <Typography style={{ fontSize: 13, color: theme.colors.textSecondary, marginBottom: 12, lineHeight: 18 }}>
                           Ask your coach to refine the plan. Changes are applied on each send.
                         </Typography>
-                        {/* Chat history */}
                         {history.length > 0 && (
                           <View style={{ marginBottom: 12, maxHeight: 200 }}>
                             <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false}>
@@ -781,14 +953,14 @@ export default function GoalsScreen() {
                             </ScrollView>
                           </View>
                         )}
-                        <TextInput
-                          style={[styles.input, { minHeight: 80, textAlignVertical: 'top' }]}
+                        <FieldBlock
+                          label="Your Message"
+                          family="plan"
                           value={chatMessage}
                           onChangeText={setChatMessage}
                           placeholder={history.length === 0
                             ? 'e.g. "Make week 3 harder" or "I have 8 weeks not 12"'
-                            : 'Continue the conversation...'}
-                          placeholderTextColor={theme.colors.textSecondary}
+                            : 'Continue the conversation…'}
                           multiline
                         />
                       </>
@@ -797,184 +969,129 @@ export default function GoalsScreen() {
                 ) : (
                   // ── New AI goal form ──
                   <>
-                    <Typography variant="body" color={theme.colors.textSecondary} style={{ marginBottom: 16 }}>
-                      Enter your goal and our AI will generate a personalized training plan.
+                    <SectionLabel family="plan">Goal</SectionLabel>
+                    <FieldBlock
+                      label="Goal Title"
+                      family="plan"
+                      value={newGoalTitle}
+                      onChangeText={setNewGoalTitle}
+                      placeholder="e.g. Marathon, 10k PB"
+                    />
+                    <FieldBlock
+                      label="Target Date"
+                      family="plan"
+                      value={newGoalDate ? friendlyDate(newGoalDate) : ''}
+                      placeholder="Tap to pick a date"
+                      onPress={() => setShowDatePicker(v => !v)}
+                      right={<Icon icon={Calendar} variant="plain" size="md" color={familyStyle('plan').accent} />}
+                    />
+                    {showDatePicker && Platform.OS === 'ios' && (
+                      <View style={{ marginBottom: 12 }}>
+                        <DateTimePicker
+                          value={goalDate}
+                          mode="date"
+                          display="spinner"
+                          minimumDate={new Date()}
+                          onChange={onDateChange}
+                          textColor={theme.colors.text}
+                        />
+                      </View>
+                    )}
+                    <Typography style={{ fontSize: 13, color: theme.colors.textSecondary, marginTop: 4, marginBottom: 8, lineHeight: 18 }}>
+                      Your AI coach will generate phases + weekly workouts tailored to this target.
                     </Typography>
-                    <View style={styles.inputGroup}>
-                      <Typography variant="label" style={{marginBottom: 8}}>GOAL TITLE</Typography>
-                      <TextInput style={styles.input} value={newGoalTitle} onChangeText={setNewGoalTitle} placeholder="e.g. Marathon, 10k PB" placeholderTextColor={theme.colors.textSecondary} />
-                    </View>
-                    <View style={styles.inputGroup}>
-                      <Typography variant="label" style={{marginBottom: 8}}>TARGET DATE</Typography>
-                      <TouchableOpacity onPress={() => setShowDatePicker(true)} activeOpacity={0.7}>
-                        <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', minHeight: 44 }]}>
-                          <Typography style={{ color: newGoalDate ? theme.colors.text : theme.colors.textSecondary, fontSize: 15, flex: 1 }}>{newGoalDate || 'Tap to pick a date'}</Typography>
-                        </View>
-                      </TouchableOpacity>
-                    </View>
                   </>
                 )}
               </>
             ) : (
               <>
-                {/* Step 1: What to track */}
-                <Typography variant="label" style={{ marginBottom: 8, color: theme.colors.textSecondary }}>WHAT DO YOU WANT TO TRACK?</Typography>
-                {[
-                  { key: 'Frequency', label: '# of Sessions', desc: 'Count how many runs/walks you complete' },
-                  { key: 'Distance', label: 'Total Distance', desc: 'Kilometres covered across activities' },
-                  { key: 'Time', label: 'Active Time', desc: 'Total hours spent being active' },
-                  { key: 'HeartRate', label: 'Avg Heart Rate', desc: 'Average HR across your activities' },
-                ].map(opt => (
-                  <TouchableOpacity
-                    key={opt.key}
-                    onPress={() => setSimpleCategory(opt.key as any)}
-                    style={{
-                      flexDirection: 'row', alignItems: 'center',
-                      padding: 12, borderRadius: 10, marginBottom: 8,
-                      borderWidth: 1.5,
-                      borderColor: simpleCategory === opt.key ? theme.colors.primary : theme.colors.border,
-                      backgroundColor: simpleCategory === opt.key ? theme.colors.primary + '22' : 'transparent',
-                    }}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Typography weight="600">{opt.label}</Typography>
-                      <Typography variant="caption" style={{ marginTop: 2 }}>{opt.desc}</Typography>
-                    </View>
-                    {simpleCategory === opt.key && <Typography style={{ color: theme.colors.primary }}>✓</Typography>}
-                  </TouchableOpacity>
-                ))}
+                <SectionLabel family="plan">What to track</SectionLabel>
+                <SegmentedControl
+                  family="plan"
+                  value={simpleCategory}
+                  onChange={(v) => setSimpleCategory(v)}
+                  segments={[
+                    { value: 'Frequency', label: 'Freq' },
+                    { value: 'Distance', label: 'Dist' },
+                    { value: 'HeartRate', label: 'HR' },
+                    { value: 'Time', label: 'Time' },
+                  ]}
+                />
 
-                {/* Step 2: Activity type */}
-                <Typography variant="label" style={{ marginTop: 16, marginBottom: 8, color: theme.colors.textSecondary }}>WHICH ACTIVITY TYPE?</Typography>
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
-                  {(['All', 'Run', 'Walk', 'Ride'] as const).map(t => (
-                    <TouchableOpacity
-                      key={t}
-                      onPress={() => setSimpleActivityType(t)}
-                      style={{
-                        flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center',
-                        borderWidth: 1.5,
-                        borderColor: simpleActivityType === t ? theme.colors.accent : theme.colors.border,
-                        backgroundColor: simpleActivityType === t ? theme.colors.accent + '22' : 'transparent',
-                      }}
-                    >
-                      <Typography variant="caption" weight="600" style={{ color: simpleActivityType === t ? theme.colors.accent : theme.colors.textSecondary }}>
-                        {t === 'All' ? 'All' : t === 'Run' ? 'Run' : t === 'Walk' ? 'Walk' : 'Ride'}
-                      </Typography>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                <SectionLabel family="plan">Activity</SectionLabel>
+                <SegmentedControl
+                  family="plan"
+                  value={simpleActivityType}
+                  onChange={(v) => setSimpleActivityType(v)}
+                  segments={[
+                    { value: 'All', label: 'All' },
+                    { value: 'Run', label: 'Run' },
+                    { value: 'Walk', label: 'Walk' },
+                    { value: 'Ride', label: 'Ride' },
+                  ]}
+                />
 
-                {/* Step 3: Period */}
-                <Typography variant="label" style={{ marginBottom: 8, color: theme.colors.textSecondary }}>RESET PERIOD</Typography>
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
-                  {(['Week', 'Month'] as const).map(p => (
-                    <TouchableOpacity
-                      key={p}
-                      onPress={() => setSimplePeriod(p)}
-                      style={{
-                        flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center',
-                        borderWidth: 1.5,
-                        borderColor: simplePeriod === p ? theme.colors.primary : theme.colors.border,
-                        backgroundColor: simplePeriod === p ? theme.colors.primary + '22' : 'transparent',
-                      }}
-                    >
-                      <Typography weight="600" style={{ color: simplePeriod === p ? theme.colors.primary : theme.colors.text }}>
-                        {p === 'Week' ? 'Weekly' : 'Monthly'}
-                      </Typography>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                <SectionLabel family="plan">Reset period</SectionLabel>
+                <SegmentedControl
+                  family="plan"
+                  value={simplePeriod}
+                  onChange={(v) => setSimplePeriod(v)}
+                  segments={[
+                    { value: 'Week', label: 'Weekly' },
+                    { value: 'Month', label: 'Monthly' },
+                  ]}
+                />
 
-                {/* Step 4: Target number */}
-                <Typography variant="label" style={{ marginBottom: 8, color: theme.colors.textSecondary }}>
-                  TARGET {simpleCategory === 'Distance' ? '(KM)' : simpleCategory === 'Time' ? '(HOURS)' : simpleCategory === 'HeartRate' ? '(AVG BPM)' : '(# SESSIONS)'}
-                </Typography>
-                <TextInput style={[styles.input, { marginBottom: 16 }]} value={simpleTarget} onChangeText={setSimpleTarget} keyboardType="numeric"
+                <SectionLabel family="plan">Target</SectionLabel>
+                <FieldBlock
+                  label={`Target ${simpleCategory === 'Distance' ? '(km)' : simpleCategory === 'Time' ? '(hours)' : simpleCategory === 'HeartRate' ? '(avg bpm)' : '(# sessions)'}`}
+                  family="plan"
+                  value={simpleTarget}
+                  onChangeText={setSimpleTarget}
+                  keyboardType="numeric"
+                  numeric
                   placeholder={simpleCategory === 'Distance' ? 'e.g. 30' : simpleCategory === 'Time' ? 'e.g. 5' : simpleCategory === 'HeartRate' ? 'e.g. 145' : 'e.g. 4'}
-                  placeholderTextColor={theme.colors.textSecondary} />
-
-                <Typography variant="label" style={{ marginBottom: 8, color: theme.colors.textSecondary }}>CUSTOM TITLE (OPTIONAL)</Typography>
-                <TextInput style={styles.input} value={newGoalTitle} onChangeText={setNewGoalTitle} placeholder="Leave blank for auto-generated title" placeholderTextColor={theme.colors.textSecondary} />
+                />
+                <FieldBlock
+                  label="Custom title (optional)"
+                  family="plan"
+                  value={newGoalTitle}
+                  onChangeText={setNewGoalTitle}
+                  placeholder="Leave blank for auto-generated"
+                />
               </>
             )}
 
-            {/* iOS modal */}
-              {showDatePicker && Platform.OS === 'ios' && (
-                <Modal transparent animationType="slide" visible={showDatePicker}>
-                  <View style={styles.pickerOverlay}>
-                    <View style={styles.pickerSheet}>
-                      <View style={styles.pickerHeader}>
-                        <TouchableOpacity onPress={() => setShowDatePicker(false)}>
-                          <Typography style={{ color: theme.colors.primary, fontWeight: '700' }}>Done</Typography>
-                        </TouchableOpacity>
-                      </View>
-                      <DateTimePicker
-                        value={goalDate}
-                        mode="date"
-                        display="spinner"
-                        minimumDate={new Date()}
-                        onChange={onDateChange}
-                        textColor={theme.colors.text}
-                      />
-                    </View>
-                  </View>
-                </Modal>
-              )}
-              {/* Android */}
-              {showDatePicker && Platform.OS === 'android' && (
-                <DateTimePicker
-                  value={goalDate}
-                  mode="date"
-                  display="default"
-                  minimumDate={new Date()}
-                  onChange={onDateChange}
-                />
-              )}
-            </ScrollView>
+            {/* Android inline picker */}
+            {showDatePicker && Platform.OS === 'android' && (
+              <DateTimePicker
+                value={goalDate}
+                mode="date"
+                display="default"
+                minimumDate={new Date()}
+                onChange={onDateChange}
+              />
+            )}
 
-            <TouchableOpacity
-              style={[styles.addButton, { width: '100%', justifyContent: 'center', marginTop: 16 }]}
+            <SheetCTA
+              family="plan"
+              icon={goalMode === 'AI' ? Sparkles : Target}
+              label={editingGoal ? 'Save Changes' : goalMode === 'AI' ? 'Generate Plan' : 'Save Goal'}
+              loading={isGenerating}
               onPress={handleAddGoal}
-              disabled={isGenerating}
-            >
-              {isGenerating ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Typography weight="bold" color="#fff">
-                  {editingGoal ? 'Save Changes' : goalMode === 'AI' ? 'Generate Plan' : 'Save Goal'}
-                </Typography>
-              )}
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+            />
+      </BottomSheet>
 
       {/* ── Per-Goal Coach Chat Modal ── */}
-      <Modal
+      <BottomSheet
         visible={!!goalChatTarget}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setGoalChatTarget(null)}
+        onClose={() => setGoalChatTarget(null)}
+        title="Coach Chat"
+        subtitle="Refine this goal with the AI coach"
+        icon={MessageCircle}
+        family="social"
+        maxHeightPct={92}
       >
-        <KeyboardAvoidingView style={styles.modalOverlay} behavior="padding">
-          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
-            <View style={{ width: 40, height: 4, backgroundColor: theme.colors.border, borderRadius: 2, alignSelf: 'center', marginBottom: 12 }} />
-            <View style={styles.modalHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Bot size={16} color={theme.colors.accent} />
-                <View>
-                  <Typography variant="h3">Ask Coach</Typography>
-                  <Typography variant="caption" style={{ color: theme.colors.textSecondary, marginTop: 1 }}>
-                    {goalChatTarget?.title}
-                  </Typography>
-                </View>
-              </View>
-              <TouchableOpacity onPress={() => setGoalChatTarget(null)}>
-                <X size={22} color={theme.colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
             {goalChatMessages.length === 0 ? (
               <View style={{ paddingVertical: 24, alignItems: 'center', gap: 8 }}>
                 <Typography style={{ fontSize: 13, color: theme.colors.textSecondary, textAlign: 'center', lineHeight: 20 }}>
@@ -1004,19 +1121,21 @@ export default function GoalsScreen() {
               />
             )}
 
-            <View style={[styles.inputBar, { marginTop: 8 }]}>
-              <TextInput
-                style={styles.chatInput}
-                value={goalChatInput}
-                onChangeText={setGoalChatInput}
-                placeholder="Ask your coach…"
-                placeholderTextColor={theme.colors.textSecondary}
-                multiline
-                maxLength={400}
-              />
+            <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 10, marginTop: 12 }}>
+              <View style={{ flex: 1 }}>
+                <FieldBlock
+                  label="Your Message"
+                  family="social"
+                  value={goalChatInput}
+                  onChangeText={setGoalChatInput}
+                  placeholder="Ask your coach…"
+                  multiline
+                  maxLength={400}
+                />
+              </View>
               <TouchableOpacity
-                style={[styles.sendBtn, (!goalChatInput.trim() || goalChatLoading) && styles.sendBtnDisabled]}
                 disabled={!goalChatInput.trim() || goalChatLoading}
+                activeOpacity={0.85}
                 onPress={async () => {
                   if (!goalChatInput.trim() || !goalChatTarget) return;
                   const apiKey = settings.llmApiKey || await secureSettingsStorage.getSecret('llmApiKey') || '';
@@ -1039,13 +1158,32 @@ export default function GoalsScreen() {
                     setTimeout(() => goalChatListRef.current?.scrollToEnd({ animated: true }), 100);
                   }
                 }}
+                style={[
+                  {
+                    width: 44, height: 44, borderRadius: 22,
+                    alignItems: 'center', justifyContent: 'center',
+                    overflow: 'hidden', marginBottom: 12,
+                  },
+                  (!goalChatInput.trim() || goalChatLoading)
+                    ? { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border }
+                    : theme.shadows.glow(familyStyle('social').accent),
+                ]}
               >
-                <Send size={16} color={!goalChatInput.trim() || goalChatLoading ? theme.colors.textSecondary : '#fff'} />
+                {(!goalChatInput.trim() || goalChatLoading) ? (
+                  <Icon icon={Send} variant="plain" size="lg" color={theme.colors.textSecondary} />
+                ) : (
+                  <LinearGradient
+                    colors={familyStyle('social').gradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <Icon icon={Send} variant="plain" size="lg" color="#fff" />
+                  </LinearGradient>
+                )}
               </TouchableOpacity>
             </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+      </BottomSheet>
 
       <DayDetailSheet
         day={dayDetail}

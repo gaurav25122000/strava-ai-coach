@@ -1,7 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { Modal, ScrollView, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Check, ChevronDown, ChevronUp, Search } from 'lucide-react-native';
+import { Check, ChevronDown, ChevronUp, Plus, Search } from 'lucide-react-native';
+import { Icon } from '../Icon';
+import { StaggerItem } from '../Stagger';
 import { Typography } from '../Typography';
 import { theme } from '../../theme';
 import { WIDGET_FAMILY, WIDGET_GROUP_ORDER, WidgetFamily, familyStyle } from '../../utils/widgetFamilies';
@@ -94,7 +96,7 @@ export function WidgetCatalog({ visible, onClose, catalog, activeIds, onToggle, 
           </Typography>
 
           <View style={styles.searchWrap}>
-            <Search size={14} color={theme.colors.textSecondary} />
+            <Icon icon={Search} variant="plain" size="sm" color={theme.colors.textSecondary} />
             <TextInput
               style={styles.searchInput}
               value={query}
@@ -122,7 +124,7 @@ export function WidgetCatalog({ visible, onClose, catalog, activeIds, onToggle, 
                 const isFirst = idx === 0;
                 const isLast = idx === active.length - 1;
                 return (
-                  <View key={entry.id} style={[styles.row, styles.rowActive]}>
+                  <StaggerItem key={entry.id} index={idx} step={14} maxIndex={6} style={[styles.row, styles.rowActive]}>
                     <View style={[styles.rowAccentBar, { backgroundColor: style.accent }]} />
                     <View style={styles.rowBody}>
                       <Typography style={styles.rowTitle}>{entry.title}</Typography>
@@ -133,24 +135,30 @@ export function WidgetCatalog({ visible, onClose, catalog, activeIds, onToggle, 
                         onPress={() => onMove(entry.id, 'up')}
                         disabled={isFirst}
                         style={[styles.iconBtn, isFirst && { opacity: 0.3 }]}
+                        accessibilityLabel={`Move ${entry.title} up`}
+                        accessibilityRole="button"
                       >
-                        <ChevronUp size={20} color={theme.colors.text} />
+                        <Icon icon={ChevronUp} variant="plain" size="md" color={theme.colors.text} />
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={() => onMove(entry.id, 'down')}
                         disabled={isLast}
                         style={[styles.iconBtn, isLast && { opacity: 0.3 }]}
+                        accessibilityLabel={`Move ${entry.title} down`}
+                        accessibilityRole="button"
                       >
-                        <ChevronDown size={20} color={theme.colors.text} />
+                        <Icon icon={ChevronDown} variant="plain" size="md" color={theme.colors.text} />
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={() => onToggle(entry.id)}
                         style={[styles.toggle, styles.toggleOn]}
+                        accessibilityLabel={`Remove ${entry.title} from dashboard`}
+                        accessibilityRole="button"
                       >
-                        <Check size={16} color="#fff" />
+                        <Icon icon={Check} variant="plain" size="sm" color="#fff" />
                       </TouchableOpacity>
                     </View>
-                  </View>
+                  </StaggerItem>
                 );
               })}
             </>
@@ -170,8 +178,8 @@ export function WidgetCatalog({ visible, onClose, catalog, activeIds, onToggle, 
                   </Typography>
                   <Typography style={styles.groupCount}>{bucket.length}</Typography>
                 </View>
-                {bucket.map(entry => (
-                  <View key={entry.id} style={[styles.row, styles.rowHidden]}>
+                {bucket.map((entry, idx) => (
+                  <StaggerItem key={entry.id} index={idx} step={14} maxIndex={6} style={[styles.row, styles.rowHidden]}>
                     <View style={[styles.rowAccentBar, { backgroundColor: style.accent }]} />
                     <View style={styles.rowBody}>
                       <Typography style={[styles.rowTitle, styles.rowTitleHidden]}>{entry.title}</Typography>
@@ -180,8 +188,12 @@ export function WidgetCatalog({ visible, onClose, catalog, activeIds, onToggle, 
                     <TouchableOpacity
                       onPress={() => onToggle(entry.id)}
                       style={[styles.toggle, styles.toggleOff]}
-                    />
-                  </View>
+                      accessibilityLabel={`Add ${entry.title} to dashboard`}
+                      accessibilityRole="button"
+                    >
+                      <Icon icon={Plus} variant="plain" size="sm" color={theme.colors.textSecondary} />
+                    </TouchableOpacity>
+                  </StaggerItem>
                 ))}
               </React.Fragment>
             );

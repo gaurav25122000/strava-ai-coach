@@ -31,14 +31,15 @@ export const AnimatedNumber = ({
   style,
   ...rest
 }: Props) => {
-  const progress = useSharedValue(value);
+  const safeValue = Number.isFinite(value) ? value : 0;
+  const progress = useSharedValue(safeValue);
 
   useEffect(() => {
-    progress.value = withTiming(value, {
+    progress.value = withTiming(safeValue, {
       duration,
       easing: Easing.out(Easing.cubic),
     });
-  }, [value, duration]);
+  }, [safeValue, duration]);
 
   const animatedProps = useAnimatedProps(() => {
     const v = progress.value;

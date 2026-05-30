@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { theme } from '../theme';
 import { Typography } from './Typography';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react-native';
+import { Icon } from './Icon';
 
 interface StatTileProps {
   icon?: React.ReactNode;
@@ -38,7 +39,7 @@ export const StatTile = ({ icon, label, value, unit, delta, accent = theme.color
       </View>
       {delta != null && DeltaIcon ? (
         <View style={styles.deltaRow}>
-          <DeltaIcon size={12} color={deltaColor} />
+          <Icon icon={DeltaIcon} variant="plain" size="xs" color={deltaColor} />
           <Typography variant="caption" color={deltaColor}>
             {Math.abs(delta).toFixed(1)}% vs last period
           </Typography>

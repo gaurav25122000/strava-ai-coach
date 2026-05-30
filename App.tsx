@@ -13,6 +13,14 @@ import { AppState, StyleSheet } from 'react-native';
 import { Typography } from './src/components/Typography';
 import { Flame } from 'lucide-react-native';
 import { GlobalToast } from './src/components/GlobalToast';
+import {
+  useFonts,
+  Sora_400Regular,
+  Sora_500Medium,
+  Sora_600SemiBold,
+  Sora_700Bold,
+  Sora_800ExtraBold,
+} from '@expo-google-fonts/sora';
 
 function SplashScreen() {
   return (
@@ -21,7 +29,7 @@ function SplashScreen() {
         <Flame color={theme.colors.primary} size={64} />
       </Animated.View>
       <Animated.View entering={FadeIn.delay(300).duration(800)}>
-        <Typography style={styles.splashTitle}>Strava AI Coach</Typography>
+        <Typography variant="display" style={styles.splashTitle}>Strava AI Coach</Typography>
       </Animated.View>
     </Animated.View>
   );
@@ -36,16 +44,20 @@ const styles = StyleSheet.create({
     zIndex: 9999,
   },
   splashTitle: {
-    fontSize: 28,
-    fontWeight: '800',
     color: theme.colors.text,
-    marginTop: 16,
-    letterSpacing: 1,
+    marginTop: theme.spacing.md,
   }
 });
 
 export default function App() {
   const [isReady, setIsReady] = useState(false);
+  const [fontsLoaded] = useFonts({
+    Sora_400Regular,
+    Sora_500Medium,
+    Sora_600SemiBold,
+    Sora_700Bold,
+    Sora_800ExtraBold,
+  });
 
   useEffect(() => {
     const init = async () => {
@@ -125,7 +137,7 @@ export default function App() {
       <NavigationContainer theme={customDarkTheme}>
         <StatusBar style="light" />
         <TabNavigator />
-        {!isReady && <SplashScreen />}
+        {(!isReady || !fontsLoaded) && <SplashScreen />}
         <GlobalToast />
       </NavigationContainer>
     </SafeAreaProvider>

@@ -68,13 +68,24 @@ export const theme = {
     xl: 24,
     full: 9999,
   },
+  // Sora (loaded in App.tsx) carries the headline + numeric identity. RN does
+  // not synthesise weights for custom fonts, so each weight is its own family
+  // and we name it explicitly per token. Body/caption stay on the system font
+  // for crisp small-size legibility and zero extra load cost.
+  fonts: {
+    display: 'Sora_800ExtraBold',
+    bold: 'Sora_700Bold',
+    semibold: 'Sora_600SemiBold',
+    medium: 'Sora_500Medium',
+    regular: 'Sora_400Regular',
+  },
   typography: {
-    display: { fontSize: 34, fontWeight: '800' as const, lineHeight: 40, letterSpacing: -0.5 },
-    title: { fontSize: 22, fontWeight: '700' as const, lineHeight: 28 },
-    subtitle: { fontSize: 17, fontWeight: '600' as const, lineHeight: 22 },
+    display: { fontSize: 34, fontWeight: '800' as const, lineHeight: 40, letterSpacing: -0.8, fontFamily: 'Sora_800ExtraBold' },
+    title: { fontSize: 22, fontWeight: '700' as const, lineHeight: 28, letterSpacing: -0.4, fontFamily: 'Sora_700Bold' },
+    subtitle: { fontSize: 17, fontWeight: '600' as const, lineHeight: 22, letterSpacing: -0.2, fontFamily: 'Sora_600SemiBold' },
     body: { fontSize: 15, fontWeight: '500' as const, lineHeight: 20 },
     caption: { fontSize: 12, fontWeight: '600' as const, lineHeight: 16, letterSpacing: 0.3 },
-    numeric: { fontSize: 28, fontWeight: '800' as const, lineHeight: 32, fontVariant: ['tabular-nums' as const] },
+    numeric: { fontSize: 28, fontWeight: '800' as const, lineHeight: 34, letterSpacing: -0.5, fontVariant: ['tabular-nums' as const], fontFamily: 'Sora_700Bold' },
   },
   shadows: {
     sm: { shadowColor: '#000', shadowOpacity: 0.25, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 2 },
