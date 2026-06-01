@@ -24,9 +24,12 @@ export function chartBase({ family, hideYAxis, animated = true }: ChartBaseOpts 
   return {
     yAxisColor: 'transparent' as const,
     xAxisColor: theme.colors.border,
-    yAxisTextStyle: hideYAxis
-      ? { color: 'transparent', fontSize: 0 }
-      : { color: theme.colors.textSecondary, fontSize: 10, fontWeight: '600' as const },
+    // Hide the y-axis tick labels via gifted-charts' own prop. This previously
+    // used `fontSize: 0` on a transparent label, which is fatal on the new
+    // architecture: Fabric's text measurement throws "FontSize should be a
+    // positive value. Current value: 0" the moment such a label is measured.
+    hideYAxisText: hideYAxis,
+    yAxisTextStyle: { color: theme.colors.textSecondary, fontSize: 10, fontWeight: '600' as const },
     xAxisLabelTextStyle: { color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700' as const },
     noOfSections: 4,
     rulesColor: accent + '22',
