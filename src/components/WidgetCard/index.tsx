@@ -1,8 +1,10 @@
-import React from 'react';
-import { View, TouchableOpacity, ViewStyle, StyleProp } from 'react-native';
+import React, { memo } from 'react';
+import { View, ViewStyle, StyleProp } from 'react-native';
 import { LucideIcon } from 'lucide-react-native';
 import { Typography } from '../Typography';
+import { PressableScale } from '../PressableScale';
 import { familyStyle, WidgetFamily } from '../../utils/widgetFamilies';
+import { withAlpha } from '../../theme';
 import { styles } from './styles';
 
 interface WidgetCardProps {
@@ -18,8 +20,6 @@ interface WidgetCardProps {
   action?: React.ReactNode;
   /** Tap handler for the whole card (skip the action region). */
   onPress?: () => void;
-  /** Card-level extras: 'hero' uses a gradient backdrop; 'elevated' bumps shadow. */
-  variant?: 'flat' | 'hero' | 'elevated';
   /** Optional extra style to merge into the outer card. */
   style?: StyleProp<ViewStyle>;
   children?: React.ReactNode;
@@ -30,15 +30,17 @@ interface WidgetCardProps {
  * around this — pick a family, a title, an icon, drop a body in. The component
  * owns the accent stroke, header rhythm, padding, and shadow so the dashboard
  * stays visually coherent without each widget repeating itself.
+ *
+ * Memoised: with ~20 mounted instances, header chrome must not re-render
+ * when unrelated store slices change.
  */
-export function WidgetCard({
+export const WidgetCard = memo(function WidgetCard({
   family,
   title,
   caption,
   icon: Icon,
   action,
   onPress,
-  variant = 'flat',
   style,
   children,
 }: WidgetCardProps) {
@@ -53,7 +55,7 @@ export function WidgetCard({
       <View style={[styles.accentBar, { backgroundColor: fam.accent }]} />
       <View style={styles.header}>
         {Icon && (
-          <View style={[styles.iconPill, { backgroundColor: fam.accent + '22', borderColor: fam.accent + '55' }]}>
+          <View style={[styles.iconPill, { backgroundColor: withAlpha(fam.accent, 'tint'), borderColor: withAlpha(fam.accent, 'strong') }]}>
             <Icon size={15} color={fam.accent} />
           </View>
         )}
@@ -75,10 +77,10 @@ export function WidgetCard({
 
   if (onPress) {
     return (
-      <TouchableOpacity activeOpacity={0.85} onPress={onPress} style={cardStyle}>
+      <PressableScale onPress={onPress} haptic="light" scaleTo={0.985} style={cardStyle}>
         {body}
-      </TouchableOpacity>
+      </PressableScale>
     );
   }
   return <View style={cardStyle}>{body}</View>;
-}
+});

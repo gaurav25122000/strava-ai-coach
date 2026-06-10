@@ -44,7 +44,7 @@ export const styles = StyleSheet.create({
   titleWrap: { flex: 1, flexDirection: 'column', gap: 1 },
   title: {
     fontSize: 17,
-    fontWeight: '900',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
     letterSpacing: -0.3,
   },

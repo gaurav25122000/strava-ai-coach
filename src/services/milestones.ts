@@ -1,4 +1,5 @@
 import { Activity, Milestone, BestEffort } from '../store/useStore';
+import { activityDayKey } from '../utils/dates';
 
 // ── Milestone definitions ─────────────────────────────────────────────────────
 //
@@ -70,7 +71,7 @@ function nthMatchingAt(
 // activity dates ascending and returns the date that completed the run.
 function streakMetAt(activities: Activity[], length: number): string | null {
   const dates = Array.from(
-    new Set(activities.map(a => a.startDate.split('T')[0])),
+    new Set(activities.map(a => activityDayKey(a))),
   ).sort();
   if (!dates.length) return null;
   let streak = 1;
@@ -107,8 +108,11 @@ const isRunWithElev = (minMetres: number) => (a: Activity) =>
   a.type === 'Run' && a.totalElevationGain >= minMetres;
 const isRun = (a: Activity) => a.type === 'Run';
 const isRide = (a: Activity) => a.type === 'Ride' || (a.type as string) === 'VirtualRide';
+// Wall-clock hour at the recording site — startDateLocal carries the local
+// time with a misleading Z suffix, so read the hour straight from the string
+// instead of letting Date re-shift it into the device timezone.
 const isAtHour = (predicate: (h: number) => boolean) => (a: Activity) =>
-  a.type === 'Run' && predicate(new Date(a.startDate).getHours());
+  a.type === 'Run' && predicate(parseInt((a.startDateLocal ?? a.startDate).slice(11, 13), 10));
 
 // ── Defs ──────────────────────────────────────────────────────────────────────
 
@@ -168,6 +172,165 @@ const MILESTONE_DEFS: MilestoneDef[] = [
 
 export function getAllMilestoneDefs(): MilestoneDef[] {
   return MILESTONE_DEFS;
+}
+
+// ── Progress toward unearned milestones ──────────────────────────────────────
+//
+// Powers the partial rings on locked badges and the "Next Badge" widget.
+// Binary badges (early bird, cyclist…) have no meaningful progress → null.
+
+export interface MilestoneProgress {
+  current: number;
+  target: number;
+  /** 0..1, clamped. */
+  pct: number;
+  unit: string;
+  /** Short human line: "412 / 500 km". */
+  label: string;
+}
+
+interface ProgressSpec {
+  target: number;
+  unit: string;
+  measure: keyof ProgressMeasures;
+  /** Pace-style goals: lower value = better. */
+  lowerIsBetter?: boolean;
+}
+
+interface ProgressMeasures {
+  bestSingleRunKm: number;
+  totalKm: number;
+  bestStreak: number;
+  runCount: number;
+  activityCount: number;
+  bestPaceMinKm: number;
+  bestSingleElev: number;
+  totalElev: number;
+}
+
+function computeMeasures(activities: Activity[]): ProgressMeasures {
+  let bestSingleRunKm = 0;
+  let totalKm = 0;
+  let runCount = 0;
+  let bestPaceMinKm = Infinity;
+  let bestSingleElev = 0;
+  let totalElev = 0;
+
+  for (const a of activities) {
+    totalKm += a.distance / 1000;
+    totalElev += a.totalElevationGain;
+    if (a.type === 'Run') {
+      runCount++;
+      bestSingleRunKm = Math.max(bestSingleRunKm, a.distance / 1000);
+      bestSingleElev = Math.max(bestSingleElev, a.totalElevationGain);
+      if (a.averageSpeed > 0) {
+        bestPaceMinKm = Math.min(bestPaceMinKm, 1000 / a.averageSpeed / 60);
+      }
+    }
+  }
+
+  // bestStreak via the same unique-day walk streakMetAt uses.
+  const dates = Array.from(new Set(activities.map(a => activityDayKey(a)))).sort();
+  let bestStreak = dates.length ? 1 : 0;
+  let streak = 1;
+  for (let i = 1; i < dates.length; i++) {
+    const diff = Math.round((new Date(dates[i]).getTime() - new Date(dates[i - 1]).getTime()) / 86400000);
+    streak = diff === 1 ? streak + 1 : 1;
+    if (streak > bestStreak) bestStreak = streak;
+  }
+
+  return {
+    bestSingleRunKm,
+    totalKm,
+    bestStreak,
+    runCount,
+    activityCount: activities.length,
+    bestPaceMinKm,
+    bestSingleElev,
+    totalElev,
+  };
+}
+
+const PROGRESS_SPECS: Record<string, ProgressSpec> = {
+  km_5:     { target: 5,     unit: 'km',   measure: 'bestSingleRunKm' },
+  km_10:    { target: 10,    unit: 'km',   measure: 'bestSingleRunKm' },
+  km_15:    { target: 15,    unit: 'km',   measure: 'bestSingleRunKm' },
+  km_21:    { target: 21.1,  unit: 'km',   measure: 'bestSingleRunKm' },
+  km_30:    { target: 30,    unit: 'km',   measure: 'bestSingleRunKm' },
+  km_42:    { target: 42.2,  unit: 'km',   measure: 'bestSingleRunKm' },
+  km_50:    { target: 50,    unit: 'km',   measure: 'bestSingleRunKm' },
+  km100:    { target: 100,   unit: 'km',   measure: 'totalKm' },
+  km250:    { target: 250,   unit: 'km',   measure: 'totalKm' },
+  km500:    { target: 500,   unit: 'km',   measure: 'totalKm' },
+  km1000:   { target: 1000,  unit: 'km',   measure: 'totalKm' },
+  km2000:   { target: 2000,  unit: 'km',   measure: 'totalKm' },
+  streak3:  { target: 3,     unit: 'days', measure: 'bestStreak' },
+  streak7:  { target: 7,     unit: 'days', measure: 'bestStreak' },
+  streak14: { target: 14,    unit: 'days', measure: 'bestStreak' },
+  streak30: { target: 30,    unit: 'days', measure: 'bestStreak' },
+  streak60: { target: 60,    unit: 'days', measure: 'bestStreak' },
+  streak100:{ target: 100,   unit: 'days', measure: 'bestStreak' },
+  runs5:    { target: 5,     unit: 'runs', measure: 'runCount' },
+  runs10:   { target: 10,    unit: 'runs', measure: 'runCount' },
+  runs25:   { target: 25,    unit: 'runs', measure: 'runCount' },
+  runs50:   { target: 50,    unit: 'runs', measure: 'runCount' },
+  runs100:  { target: 100,   unit: 'runs', measure: 'runCount' },
+  runs200:  { target: 200,   unit: 'runs', measure: 'runCount' },
+  acts100:  { target: 100,   unit: 'activities', measure: 'activityCount' },
+  sub7:     { target: 7,     unit: 'min/km', measure: 'bestPaceMinKm', lowerIsBetter: true },
+  sub6:     { target: 6,     unit: 'min/km', measure: 'bestPaceMinKm', lowerIsBetter: true },
+  sub5:     { target: 5,     unit: 'min/km', measure: 'bestPaceMinKm', lowerIsBetter: true },
+  sub4_5:   { target: 4.5,   unit: 'min/km', measure: 'bestPaceMinKm', lowerIsBetter: true },
+  sub4:     { target: 4,     unit: 'min/km', measure: 'bestPaceMinKm', lowerIsBetter: true },
+  elev200:  { target: 200,   unit: 'm',    measure: 'bestSingleElev' },
+  elev500:  { target: 500,   unit: 'm',    measure: 'bestSingleElev' },
+  elev1000: { target: 1000,  unit: 'm',    measure: 'bestSingleElev' },
+  elev2000: { target: 2000,  unit: 'm',    measure: 'bestSingleElev' },
+  total_elev5000:  { target: 5000, unit: 'm', measure: 'totalElev' },
+  total_elev10000: { target: 8849, unit: 'm', measure: 'totalElev' },
+};
+
+function fmtMeasure(v: number, unit: string): string {
+  if (unit === 'min/km') {
+    if (!isFinite(v)) return '—';
+    const m = Math.floor(v);
+    const s = Math.round((v - m) * 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+  return v >= 100 ? `${Math.round(v)}` : `${Math.round(v * 10) / 10}`;
+}
+
+/**
+ * Progress for every milestone id in one call (measures computed once).
+ * Ids without a spec (binary badges) are absent from the result.
+ */
+export function computeMilestoneProgress(activities: Activity[]): Record<string, MilestoneProgress> {
+  const m = computeMeasures(activities);
+  const out: Record<string, MilestoneProgress> = {};
+
+  for (const [id, spec] of Object.entries(PROGRESS_SPECS)) {
+    const value = m[spec.measure];
+    let pct: number;
+    if (spec.lowerIsBetter) {
+      pct = isFinite(value) && value > 0 ? Math.min(1, spec.target / value) : 0;
+    } else {
+      pct = Math.min(1, value / spec.target);
+    }
+    const currentLabel = spec.lowerIsBetter
+      ? fmtMeasure(value, spec.unit)
+      : fmtMeasure(Math.min(value, spec.target), spec.unit);
+    out[id] = {
+      current: spec.lowerIsBetter ? value : Math.min(value, spec.target),
+      target: spec.target,
+      pct,
+      unit: spec.unit,
+      label: spec.lowerIsBetter
+        ? `Best ${currentLabel} → ${fmtMeasure(spec.target, spec.unit)} ${spec.unit}`
+        : `${currentLabel} / ${fmtMeasure(spec.target, spec.unit)} ${spec.unit}`,
+    };
+  }
+
+  return out;
 }
 
 export function computeMilestones(
@@ -245,12 +408,17 @@ export function computeBestEfforts(activities: Activity[]): Record<number, BestE
  *  Uses sufferScore if available, otherwise falls back to
  *  distance-based proxy (km × 10) so the widget works for
  *  users without HR data or Strava premium suffer scores.
+ *  Buckets by the athlete's wall clock (start_date_local).
  */
 function dailySufferScores(activities: Activity[], days: number): number[] {
   const scores = new Array(days).fill(0);
-  const now = new Date();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   for (const act of activities) {
-    const daysAgo = Math.floor((now.getTime() - new Date(act.startDate).getTime()) / 86400000);
+    const dayKey = activityDayKey(act);
+    const actDay = new Date(dayKey);
+    actDay.setHours(0, 0, 0, 0);
+    const daysAgo = Math.round((today.getTime() - actDay.getTime()) / 86400000);
     if (daysAgo >= 0 && daysAgo < days) {
       // prefer real suffer score; fall back to km-based proxy
       const load = act.sufferScore
@@ -279,24 +447,52 @@ export interface TrainingLoad {
   history: { day: string; atl: number; ctl: number }[];
 }
 
-export function computeTrainingLoad(activities: Activity[]): TrainingLoad {
-  const DAYS = 42;
-  const raw = dailySufferScores(activities, DAYS);
-  const atlArr = ewma(raw, 7);
-  const ctlArr = ewma(raw, 42);
+export interface TrainingLoadSeries {
+  /** "M/D" labels, oldest → newest. */
+  labels: string[];
+  atl: number[];
+  ctl: number[];
+  /** Today's values. */
+  current: { atl: number; ctl: number; tsb: number };
+}
+
+// 42 warm-up days stabilise the EWMAs before the visible window starts, so
+// the left edge of the chart isn't a ramp from zero.
+const EWMA_WARMUP_DAYS = 42;
+
+/**
+ * ATL/CTL series for the last `days` days in ONE pass over the activities.
+ * Replaces the old per-day full recompute (56 × O(n) → O(n + days)).
+ */
+export function computeTrainingLoadSeries(activities: Activity[], days = 56): TrainingLoadSeries {
+  const total = days + EWMA_WARMUP_DAYS;
+  const raw = dailySufferScores(activities, total);
+  const atlArr = ewma(raw, 7).slice(-days);
+  const ctlArr = ewma(raw, 42).slice(-days);
 
   const today = new Date();
-  const history = atlArr.slice(-14).map((atl, i) => {
+  const labels = atlArr.map((_, i) => {
     const d = new Date(today);
-    d.setDate(d.getDate() - (13 - i));
-    return {
-      day: `${d.getMonth() + 1}/${d.getDate()}`,
-      atl,
-      ctl: ctlArr[atlArr.length - 14 + i],
-    };
+    d.setDate(d.getDate() - (days - 1 - i));
+    return `${d.getMonth() + 1}/${d.getDate()}`;
   });
 
-  const atl = atlArr[atlArr.length - 1];
-  const ctl = ctlArr[ctlArr.length - 1];
-  return { atl, ctl, tsb: Math.round((ctl - atl) * 10) / 10, history };
+  const atl = atlArr[atlArr.length - 1] ?? 0;
+  const ctl = ctlArr[ctlArr.length - 1] ?? 0;
+  return {
+    labels,
+    atl: atlArr,
+    ctl: ctlArr,
+    current: { atl, ctl, tsb: Math.round((ctl - atl) * 10) / 10 },
+  };
+}
+
+export function computeTrainingLoad(activities: Activity[]): TrainingLoad {
+  const series = computeTrainingLoadSeries(activities, 14);
+  return {
+    atl: series.current.atl,
+    ctl: series.current.ctl,
+    tsb: series.current.tsb,
+    history: series.labels.map((day, i) => ({ day, atl: series.atl[i], ctl: series.ctl[i] })),
+  };
 }
