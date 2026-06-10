@@ -106,19 +106,8 @@ const tests: Array<[string, () => void]> = [
   }],
 ];
 
-let passed = 0;
-const failures: string[] = [];
-for (const [name, fn] of tests) {
-  try {
-    fn();
-    passed += 1;
-  } catch (e) {
-    failures.push(`✗ ${name}\n    ${(e as Error).message.split('\n')[0]}`);
+describe('matchActivityToPrescription', () => {
+  for (const [name, fn] of tests) {
+    it(name, fn);
   }
-}
-
-console.log(`matchActivity: ${passed}/${tests.length} passed`);
-if (failures.length) {
-  console.log(failures.join('\n'));
-  process.exit(1);
-}
+});
