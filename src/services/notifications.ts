@@ -1,8 +1,8 @@
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
-import { addDays, format, getWeek, getYear, parseISO, startOfWeek, endOfWeek } from 'date-fns';
+import { addDays, format, startOfWeek } from 'date-fns';
 import { Goal, WorkoutKind } from '../store/useStore';
 import { WORKOUT_LABELS } from '../utils/workoutKinds';
+import { scheduleForDate } from './planSchedule';
 
 // Configure how notifications look when app is in foreground
 Notifications.setNotificationHandler({
@@ -16,11 +16,20 @@ Notifications.setNotificationHandler({
 });
 
 export const NotificationService = {
-  // Request permission + return granted boolean
+  // Request permission + return granted boolean. Only call from an explicit
+  // user action (Settings toggle, onboarding) — never from background sync.
   requestPermission: async (): Promise<boolean> => {
     const { status: existing } = await Notifications.getPermissionsAsync();
     if (existing === 'granted') return true;
     const { status } = await Notifications.requestPermissionsAsync();
+    return status === 'granted';
+  },
+
+  // Passive check used by every schedule* function. The old code called
+  // requestPermission from the post-launch sync timer, popping the OS
+  // permission dialog 3 seconds into first launch with no user gesture.
+  hasPermission: async (): Promise<boolean> => {
+    const { status } = await Notifications.getPermissionsAsync();
     return status === 'granted';
   },
 
@@ -37,16 +46,26 @@ export const NotificationService = {
     }
   },
 
-  // Schedule a weekly recap every Monday at 08:00
+  // Schedule the next weekly recap for Monday 08:00 as a ONE-SHOT.
+  // It re-arms on every app open/sync, so the body stays fresh — the old
+  // WEEKLY repeating trigger replayed week-old numbers forever if the app
+  // wasn't opened.
   scheduleWeeklyRecap: async (stats: {
     weekKm: number; weekDays: number; streak: number;
   }) => {
-    const granted = await NotificationService.requestPermission();
+    const granted = await NotificationService.hasPermission();
     if (!granted) return;
 
     try {
       await Notifications.cancelScheduledNotificationAsync('weekly-recap');
     } catch {}
+
+    const next = new Date();
+    next.setHours(8, 0, 0, 0);
+    const day = next.getDay(); // 0 = Sunday
+    let daysToMonday = (8 - day) % 7;
+    if (daysToMonday === 0 && Date.now() >= next.getTime()) daysToMonday = 7;
+    next.setDate(next.getDate() + daysToMonday);
 
     await Notifications.scheduleNotificationAsync({
       identifier: 'weekly-recap',
@@ -56,27 +75,25 @@ export const NotificationService = {
         data: { type: 'weekly-recap' },
       },
       trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
-        weekday: 2, // Monday (1=Sun, 2=Mon)
-        hour: 8,
-        minute: 0,
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: next,
       },
     });
   },
 
-  // Streak at risk reminder — fires daily at 20:00 only when streak is active
-  // and the user hasn't logged today yet. Caller must pass current state on
-  // every state change / app foreground so the schedule stays in sync.
+  // Streak-at-risk reminder — ONE-SHOT for tonight 20:00, only when the
+  // streak is active and nothing is logged today. Re-armed on each sync; the
+  // old DAILY repeating trigger kept congratulating dead streaks for weeks.
   scheduleStreakReminder: async (streak: number, hasActivityToday: boolean) => {
-    if (streak <= 0 || hasActivityToday) {
-      await NotificationService.cancelStreakReminder();
-      return;
-    }
+    await NotificationService.cancelStreakReminder();
+    if (streak <= 0 || hasActivityToday) return;
 
-    const granted = await NotificationService.requestPermission();
+    const granted = await NotificationService.hasPermission();
     if (!granted) return;
 
-    await NotificationService.cancelStreakReminder();
+    const tonight = new Date();
+    tonight.setHours(20, 0, 0, 0);
+    if (Date.now() >= tonight.getTime()) return; // past 20:00 — skip today
 
     await Notifications.scheduleNotificationAsync({
       identifier: 'streak-reminder',
@@ -86,29 +103,30 @@ export const NotificationService = {
         data: { type: 'streak-reminder' },
       },
       trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DAILY,
-        hour: 20,
-        minute: 0,
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: tonight,
       },
     });
   },
 
-  // Goal deadline approaching — fires once
+  // Goal deadline approaching — fires once, tomorrow 09:00. The body counts
+  // days as of WHEN IT FIRES (the old text was off by one).
   scheduleGoalDeadline: async (goalTitle: string, daysLeft: number) => {
-    if (daysLeft <= 0 || daysLeft > 7) return;
+    if (daysLeft <= 1 || daysLeft > 7) return;
 
-    const granted = await NotificationService.requestPermission();
+    const granted = await NotificationService.hasPermission();
     if (!granted) return;
 
     const trigger = new Date();
     trigger.setHours(9, 0, 0, 0);
     trigger.setDate(trigger.getDate() + 1);
+    const daysAtFire = daysLeft - 1;
 
     await Notifications.scheduleNotificationAsync({
       identifier: `goal-deadline-${goalTitle}`,
       content: {
         title: '🎯 Goal deadline approaching',
-        body: `"${goalTitle}" is due in ${daysLeft} day${daysLeft === 1 ? '' : 's'}. Keep pushing!`,
+        body: `"${goalTitle}" is due in ${daysAtFire} day${daysAtFire === 1 ? '' : 's'}. Keep pushing!`,
         data: { type: 'goal-deadline' },
       },
       trigger: {
@@ -154,7 +172,7 @@ export const NotificationService = {
   // goal's current phase, firing at 07:30 the morning of. Re-syncs every time
   // the goal is generated / regenerated so swapped days don't double-fire.
   syncWorkoutReminders: async (goals: Goal[]) => {
-    const granted = await NotificationService.requestPermission();
+    const granted = await NotificationService.hasPermission();
     if (!granted) return;
 
     // Drop any reminders the previous run scheduled — identifiers are
@@ -172,14 +190,12 @@ export const NotificationService = {
 
     for (const goal of goals) {
       if (goal.isSimple) continue;
-      const phase = (goal.phases || []).find(p =>
-        p.weekStart && p.weekEnd
-          && parseISO(p.weekStart).getTime() <= nowMs
-          && parseISO(p.weekEnd).getTime() >= nowMs,
-      ) || goal.phases?.[0];
-      if (!phase?.schedule?.length) continue;
+      // weeks[]-aware: the schedule actually in force this week, no
+      // phases[0] fallback for out-of-window dates.
+      const schedule = scheduleForDate(goal.phases, new Date());
+      if (!schedule?.length) continue;
 
-      for (const presc of phase.schedule) {
+      for (const presc of schedule) {
         if (presc.kind === 'REST') continue;
         const date = addDays(monday, presc.dayOfWeek);
         date.setHours(7, 30, 0, 0);
