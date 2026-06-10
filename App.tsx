@@ -1,6 +1,8 @@
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import TabNavigator from './src/navigation/TabNavigator';
 import { theme } from './src/theme';
 import { StravaService } from './src/services/strava';
@@ -133,13 +135,17 @@ export default function App() {
   };
 
   return (
-    <SafeAreaProvider>
-      <NavigationContainer theme={customDarkTheme}>
-        <StatusBar style="light" />
-        <TabNavigator />
-        {(!isReady || !fontsLoaded) && <SplashScreen />}
-        <GlobalToast />
-      </NavigationContainer>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <NavigationContainer theme={customDarkTheme}>
+          <BottomSheetModalProvider>
+            <StatusBar style="light" />
+            <TabNavigator />
+            {(!isReady || !fontsLoaded) && <SplashScreen />}
+            <GlobalToast />
+          </BottomSheetModalProvider>
+        </NavigationContainer>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

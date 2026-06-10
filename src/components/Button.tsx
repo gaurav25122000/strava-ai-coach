@@ -1,18 +1,23 @@
 import React from 'react';
-import { StyleSheet, View, ActivityIndicator, StyleProp, ViewStyle } from 'react-native';
+import { ActivityIndicator, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { LucideIcon } from 'lucide-react-native';
-import { theme } from '../theme';
-import { Typography } from './Typography';
+import { theme, withAlpha } from '../theme';
+import { familyStyle, WidgetFamily } from '../utils/widgetFamilies';
 import { PressableScale } from './PressableScale';
 
-type Variant = 'primary' | 'secondary' | 'outline' | 'ghost';
+type Variant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'destructive';
 type Size = 'sm' | 'md' | 'lg';
 
 interface ButtonProps {
   title: string;
   variant?: Variant;
   size?: Size;
+  /**
+   * Widget family driving the accent/gradient. Omit for the app-wide primary
+   * orange. Destructive ignores family and always uses the danger palette.
+   */
+  family?: WidgetFamily;
   /** Optional left-side lucide glyph. */
   icon?: LucideIcon;
   /** Swaps the label for a spinner and blocks presses. */
@@ -24,98 +29,112 @@ interface ButtonProps {
   style?: StyleProp<ViewStyle>;
 }
 
-const SIZES: Record<Size, { minHeight: number; padH: number; gap: number; icon: number }> = {
-  sm: { minHeight: 40, padH: 16, gap: 6, icon: 16 },
-  md: { minHeight: 52, padH: 22, gap: 8, icon: 18 },
-  lg: { minHeight: 58, padH: 28, gap: 10, icon: 20 },
+const SIZES: Record<Size, { height: number; padH: number; gap: number; icon: number; font: number; radius: number }> = {
+  sm: { height: 38, padH: 14, gap: 6, icon: 15, font: 13, radius: 12 },
+  md: { height: 46, padH: 20, gap: 8, icon: 17, font: 15, radius: 14 },
+  lg: { height: 54, padH: 24, gap: 9, icon: 19, font: 16, radius: 16 },
 };
 
 /**
- * Premium pressable button. Built on PressableScale so every press springs and
- * fires a haptic. The primary variant is a gradient slab with an accent glow;
- * secondary/outline/ghost are flatter for lower-emphasis actions. Honors
- * `loading` (spinner, press blocked) and `disabled` (dimmed, inert), and all
- * sizes meet the 44pt touch-target minimum.
+ * The app's single button. Gradient `primary` carries the main action of a
+ * surface (one per screen/sheet); `secondary` is a tinted fill for co-equal
+ * actions; `outline`/`ghost` recede; `destructive` warns. All variants spring
+ * on press via PressableScale and fire weight-appropriate haptics.
  */
-export const Button = ({
+export function Button({
   title,
   variant = 'primary',
   size = 'md',
-  icon: Glyph,
+  family,
+  icon: IconGlyph,
   loading = false,
   disabled = false,
   fullWidth = false,
   onPress,
   style,
-}: ButtonProps) => {
+}: ButtonProps) {
   const s = SIZES[size];
+  const accent = family ? familyStyle(family).accent : theme.colors.primary;
+  const gradient: [string, string] = family
+    ? familyStyle(family).gradient
+    : theme.colors.gradients.primary;
+
   const blocked = disabled || loading;
-  const labelColor = variant === 'primary' ? '#fff' : theme.colors.text;
+  const isFilled = variant === 'primary' || variant === 'destructive';
+  const fillGradient: [string, string] = variant === 'destructive' ? theme.colors.gradients.danger : gradient;
+  const contentColor =
+    isFilled ? theme.colors.onAccent
+    : variant === 'ghost' ? theme.colors.textSecondary
+    : accent;
 
-  const content = loading ? (
-    <ActivityIndicator color={labelColor} size="small" />
-  ) : (
-    <>
-      {Glyph ? <Glyph size={s.icon} color={labelColor} strokeWidth={2.5} /> : null}
-      <Typography variant="subtitle" color={labelColor} style={styles.label}>
-        {title}
-      </Typography>
-    </>
-  );
+  const frame: ViewStyle = {
+    height: s.height,
+    borderRadius: s.radius,
+    paddingHorizontal: s.padH,
+    ...(fullWidth ? { alignSelf: 'stretch' as const } : { alignSelf: 'flex-start' as const }),
+  };
 
-  const inner = (
-    <View style={[styles.inner, { minHeight: s.minHeight, paddingHorizontal: s.padH, gap: s.gap }]}>
-      {content}
+  const surface: ViewStyle =
+    variant === 'secondary' ? { backgroundColor: withAlpha(accent, 'tint') }
+    : variant === 'outline' ? { borderWidth: 1.5, borderColor: withAlpha(accent, 'heavy') }
+    : variant === 'ghost' ? {}
+    : {};
+
+  const glow = isFilled && !blocked ? theme.shadows.glow(fillGradient[0]) : undefined;
+
+  const content = (
+    <View style={[styles.content, { gap: s.gap }]}>
+      {loading ? (
+        <ActivityIndicator size="small" color={contentColor} />
+      ) : (
+        <>
+          {IconGlyph ? <IconGlyph size={s.icon} color={contentColor} strokeWidth={2.5} /> : null}
+          <Text
+            numberOfLines={1}
+            style={{
+              color: contentColor,
+              fontSize: s.font,
+              fontFamily: theme.fonts.semibold,
+              letterSpacing: 0.2,
+            }}
+          >
+            {title}
+          </Text>
+        </>
+      )}
     </View>
   );
-
-  const shape: ViewStyle = {
-    borderRadius: theme.borderRadius.full,
-    overflow: 'hidden',
-    opacity: disabled ? 0.4 : 1,
-    alignSelf: fullWidth ? 'stretch' : 'flex-start',
-  };
 
   return (
     <PressableScale
       onPress={blocked ? undefined : onPress}
-      haptic={blocked ? 'none' : variant === 'primary' ? 'medium' : 'selection'}
+      disabled={blocked}
+      scaleTo={0.97}
+      haptic={blocked ? 'none' : isFilled ? 'medium' : 'selection'}
+      style={[frame, glow, blocked && { opacity: theme.opacity.disabled }, style]}
       accessibilityRole="button"
       accessibilityState={{ disabled: blocked, busy: loading }}
-      accessibilityLabel={title}
-      style={[shape, variant === 'primary' && !disabled ? theme.shadows.glow(theme.colors.primary) : null, style]}
     >
-      {variant === 'primary' ? (
-        <LinearGradient colors={theme.colors.gradients.primary} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-          {inner}
-        </LinearGradient>
+      {isFilled ? (
+        <LinearGradient
+          colors={fillGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[StyleSheet.absoluteFillObject, { borderRadius: s.radius }]}
+        />
       ) : (
-        <View style={styles[`${variant}Bg`]}>{inner}</View>
+        <View style={[StyleSheet.absoluteFillObject, { borderRadius: s.radius }, surface]} />
       )}
+      {content}
     </PressableScale>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  inner: {
+  content: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  label: {
-    fontFamily: theme.fonts.semibold,
-  },
-  secondaryBg: {
-    backgroundColor: theme.colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  outlineBg: {
-    backgroundColor: 'transparent',
-    borderWidth: 1.5,
-    borderColor: theme.colors.border,
-  },
-  ghostBg: {
-    backgroundColor: 'transparent',
   },
 });

@@ -1,21 +1,42 @@
+// Hex alpha suffixes — the app-wide opacity system. Use `withAlpha(hex, 'tint')`
+// instead of ad-hoc string math like `accent + '22'` so levels stay consistent.
+export const alpha = {
+  faint: '0A',   // 4%  — hairlines, barely-there fills
+  soft: '14',    // 8%  — resting tints, dividers on dark
+  tint: '22',    // 13% — family tints, pill backgrounds
+  medium: '33',  // 20% — active tints, selected states
+  strong: '55',  // 33% — emphasised fills, gradients tails
+  heavy: '88',   // 53% — overlays, pressed scrims
+} as const;
+
+export type AlphaLevel = keyof typeof alpha;
+
+/** `#RRGGBB` + named opacity level → `#RRGGBBAA`. */
+export const withAlpha = (hex: string, level: AlphaLevel) => hex + alpha[level];
+
 export const theme = {
   colors: {
     background: '#1A1A24',
     surface: '#252636',
     surfaceElevated: '#2A2C40',
     surfaceMuted: '#1F2030',
+    surfaceGlass: 'rgba(42,44,64,0.65)',
     primary: '#F97316', // Orange
     primaryMuted: '#F9731622',
     secondary: '#10B981', // Green
     accent: '#8B5CF6', // Purple
     text: '#FFFFFF',
     textSecondary: '#9CA3AF',
+    /** Text/icons sitting on a family gradient or accent fill. */
+    onAccent: '#FFFFFF',
     border: '#374151',
     divider: 'rgba(255,255,255,0.06)',
+    scrim: 'rgba(10,10,16,0.6)',
     error: '#EF4444',
     success: '#22C55E',
     warning: '#F59E0B',
     info: '#3B82F6',
+    strava: '#FC4C02',
     heatmapLevels: {
       0: '#252636', // Empty
       1: '#431407', // Very low
@@ -82,10 +103,16 @@ export const theme = {
   typography: {
     display: { fontSize: 34, fontWeight: '800' as const, lineHeight: 40, letterSpacing: -0.8, fontFamily: 'Sora_800ExtraBold' },
     title: { fontSize: 22, fontWeight: '700' as const, lineHeight: 28, letterSpacing: -0.4, fontFamily: 'Sora_700Bold' },
+    heading: { fontSize: 19, fontWeight: '700' as const, lineHeight: 24, letterSpacing: -0.3, fontFamily: 'Sora_700Bold' },
     subtitle: { fontSize: 17, fontWeight: '600' as const, lineHeight: 22, letterSpacing: -0.2, fontFamily: 'Sora_600SemiBold' },
     body: { fontSize: 15, fontWeight: '500' as const, lineHeight: 20 },
+    footnote: { fontSize: 13, fontWeight: '500' as const, lineHeight: 18 },
     caption: { fontSize: 12, fontWeight: '600' as const, lineHeight: 16, letterSpacing: 0.3 },
+    /** Uppercase section labels / chips — callers apply textTransform. */
+    label: { fontSize: 11, fontWeight: '700' as const, lineHeight: 14, letterSpacing: 0.8 },
+    micro: { fontSize: 10, fontWeight: '600' as const, lineHeight: 13, letterSpacing: 0.4 },
     numeric: { fontSize: 28, fontWeight: '800' as const, lineHeight: 34, letterSpacing: -0.5, fontVariant: ['tabular-nums' as const], fontFamily: 'Sora_700Bold' },
+    numericSm: { fontSize: 20, fontWeight: '700' as const, lineHeight: 25, letterSpacing: -0.3, fontVariant: ['tabular-nums' as const], fontFamily: 'Sora_700Bold' },
   },
   shadows: {
     sm: { shadowColor: '#000', shadowOpacity: 0.25, shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 2 },
@@ -104,5 +131,14 @@ export const theme = {
     base: 280,
     slow: 460,
     spring: { damping: 18, stiffness: 220, mass: 0.9 },
+    /** Press feedback, toggles, small UI — matches PressableScale. */
+    springSnappy: { damping: 18, stiffness: 320, mass: 0.6 },
+    /** Sheets, large surfaces. */
+    springGentle: { damping: 22, stiffness: 160, mass: 1 },
   },
+  opacity: {
+    disabled: 0.45,
+    pressed: 0.7,
+  },
+  hitSlop: { top: 8, bottom: 8, left: 8, right: 8 },
 };
