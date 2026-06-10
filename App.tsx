@@ -10,9 +10,9 @@ import { syncAllNotifications } from './src/services/notificationSync';
 import { registerBackgroundSync } from './src/services/backgroundSync';
 import { performStravaSync } from './src/services/syncRunner';
 import { useStore } from './src/store/useStore';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Animated, { FadeOut, FadeIn } from 'react-native-reanimated';
-import { AppState, StyleSheet } from 'react-native';
+import { AppState, StyleSheet, View } from 'react-native';
 import { Typography } from './src/components/Typography';
 import { Flame } from 'lucide-react-native';
 import { GlobalToast } from './src/components/GlobalToast';
@@ -24,6 +24,41 @@ import {
   Sora_700Bold,
   Sora_800ExtraBold,
 } from '@expo-google-fonts/sora';
+
+// Last-resort crash screen — a render error anywhere below used to white-screen
+// the whole app with no way out short of force-killing it.
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('[ErrorBoundary]', error);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={styles.errorContainer}>
+          <Flame color={theme.colors.primary} size={40} />
+          <Typography variant="title" style={styles.errorTitle}>Something broke</Typography>
+          <Typography style={styles.errorBody} numberOfLines={4}>
+            {String(this.state.error)}
+          </Typography>
+          <Typography
+            onPress={() => this.setState({ error: null })}
+            style={styles.errorRetry}
+          >
+            Tap to retry
+          </Typography>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function SplashScreen() {
   return (
@@ -49,7 +84,27 @@ const styles = StyleSheet.create({
   splashTitle: {
     color: theme.colors.text,
     marginTop: theme.spacing.md,
-  }
+  },
+  errorContainer: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: theme.spacing.xl,
+    gap: theme.spacing.md,
+  },
+  errorTitle: {
+    color: theme.colors.text,
+  },
+  errorBody: {
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+  },
+  errorRetry: {
+    color: theme.colors.primary,
+    ...theme.typography.subtitle,
+    padding: theme.spacing.md,
+  },
 });
 
 export default function App() {
@@ -64,16 +119,13 @@ export default function App() {
 
   useEffect(() => {
     const init = async () => {
-      const start = Date.now();
       try {
         await StravaService.initialize();
         await registerBackgroundSync();
       } catch (e) {
         console.warn('Strava init error:', e);
       }
-      const elapsed = Date.now() - start;
-      const remaining = Math.max(0, 800 - elapsed);
-      setTimeout(() => setIsReady(true), remaining);
+      setIsReady(true);
     };
     init();
 
@@ -125,16 +177,18 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <NavigationContainer theme={customDarkTheme}>
-          <BottomSheetModalProvider>
-            <StatusBar style="light" />
-            <TabNavigator />
-            {(!isReady || !fontsLoaded) && <SplashScreen />}
-            <GlobalToast />
-          </BottomSheetModalProvider>
-        </NavigationContainer>
-      </SafeAreaProvider>
+      <ErrorBoundary>
+        <SafeAreaProvider>
+          <NavigationContainer theme={customDarkTheme}>
+            <BottomSheetModalProvider>
+              <StatusBar style="light" />
+              <TabNavigator />
+              {(!isReady || !fontsLoaded) && <SplashScreen />}
+              <GlobalToast />
+            </BottomSheetModalProvider>
+          </NavigationContainer>
+        </SafeAreaProvider>
+      </ErrorBoundary>
     </GestureHandlerRootView>
   );
 }

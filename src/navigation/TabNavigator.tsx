@@ -10,6 +10,7 @@ import ProfileStack from './ProfileStack';
 import ActivitiesStack from './ActivitiesStack';
 import { theme } from '../theme';
 import { Platform, View, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import Animated, {
   useSharedValue,
@@ -37,16 +38,17 @@ function TabBarBackground() {
   );
 }
 
-// Per-tab accent colour. Drives the icon tint and the thin pill background
-// behind the active tab cell. Aligned with the widget-family palette in
-// `src/utils/widgetFamilies.ts` so accents repeat across the app.
+// Per-tab accent colour, drawn from the widget-family palette so the tab bar
+// speaks the same colour language as the dashboard (the old map invented two
+// colours that existed nowhere else in the app).
+const FAM = theme.colors.families;
 const TAB_COLORS = {
-  Overview:   '#f97316',
-  Activities: '#e11d48',
-  Insights:   '#6366f1',
-  Goals:      '#10b981',
-  Chat:       '#ec4899',
-  Profile:    '#8b5cf6',
+  Overview:   FAM.activity.accent,
+  Activities: FAM.health.accent,
+  Insights:   FAM.progress.accent,
+  Goals:      FAM.plan.accent,
+  Chat:       FAM.social.accent,
+  Profile:    FAM.recovery.accent,
 } as const;
 
 // Soft tactile click on tab change — but only when actually switching tabs.
@@ -109,6 +111,11 @@ function ActivePill({ children, color, focused }: { children: React.ReactNode; c
 }
 
 export default function TabNavigator() {
+  const insets = useSafeAreaInsets();
+  // Safe-area-driven: 54pt of content + whatever the device's home indicator
+  // / gesture bar needs. The old hardcoded 88/64 misfit edge-to-edge Androids.
+  const bottomPad = Math.max(insets.bottom, 10);
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -120,8 +127,8 @@ export default function TabNavigator() {
           borderTopColor: theme.colors.divider,
           borderTopWidth: StyleSheet.hairlineWidth,
           elevation: 0,
-          height: Platform.OS === 'ios' ? 88 : 64,
-          paddingBottom: Platform.OS === 'ios' ? 28 : 10,
+          height: 54 + bottomPad,
+          paddingBottom: bottomPad,
           paddingTop: 8,
         },
         tabBarInactiveTintColor: theme.colors.textSecondary,
