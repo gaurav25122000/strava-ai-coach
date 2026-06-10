@@ -77,6 +77,9 @@
     ],
     "setupFiles": [
       "./jest.setup.js"
+    ],
+    "transformIgnorePatterns": [
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|native-base|react-native-svg|victory-native|@shopify/react-native-skia|@gorhom/bottom-sheet|react-native-reanimated|react-native-gesture-handler|lucide-react-native|react-native-worklets|d3-.*|internmap))"
     ]
   }
 }
