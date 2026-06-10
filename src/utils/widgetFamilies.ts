@@ -32,22 +32,21 @@ export function familyStyle(family: WidgetFamily): FamilyStyle {
 
 // Widgets on the Overview screen, mapped to their families. New widgets MUST
 // be added here so the Customise Widgets modal can group + colour them.
+// 2026-06 curation: CurrentFocus + UpcomingWorkout folded into TodayHero,
+// SufferTrend folded into TrainingLoad, WellnessScore + KudosLeaderboard +
+// dead TodayBlock removed, NextBadge added.
 export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   // Plan-driven
-  HeroBanner:        'activity',
-  CurrentFocus:      'plan',
-  UpcomingWorkout:   'plan',
+  TodayHero:         'plan',
   CoachInsight:      'plan',
   WeeklyDigest:      'plan',
   ActiveGoals:       'plan',
-  TodayBlock:        'plan',
   // Recovery / wellness
   RecoveryAdvisor:   'recovery',
-  WellnessScore:     'recovery',
   InjuryAlert:       'recovery',
   TrainingLoad:      'recovery',
-  SufferTrend:       'recovery',
   // Volume / activity
+  HeroBanner:        'activity',
   WeeklyGoalTracker: 'activity',
   ThisWeek:          'activity',
   ActivityMap:       'activity',
@@ -72,11 +71,55 @@ export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   RacePredictor:     'records',
   BestEfforts:       'records',
   Badges:            'records',
+  NextBadge:         'records',
   StarredSegments:   'records',
   // Social
-  KudosLeaderboard:  'social',
   PhotoStream:       'social',
 };
+
+/** Every renderable widget id — derived so it can never drift from the map. */
+export const KNOWN_WIDGET_IDS = new Set(Object.keys(WIDGET_FAMILY));
+
+/**
+ * Widget ids removed or merged away; persisted layouts are migrated through
+ * this map (null = drop, string = replace).
+ */
+export const RETIRED_WIDGETS: Record<string, string | null> = {
+  TodayBlock: 'TodayHero',
+  CurrentFocus: 'TodayHero',
+  UpcomingWorkout: 'TodayHero',
+  WellnessScore: null,
+  SufferTrend: 'TrainingLoad',
+  KudosLeaderboard: null,
+};
+
+// The curated default dashboard for fresh installs (and the single source of
+// truth — the store and OverviewScreen must NOT keep their own copies).
+// Order = narrative: today's plan → this week → recovery → trends → records.
+export const DEFAULT_WIDGET_LAYOUT: string[] = [
+  'TodayHero',
+  'HeroBanner',
+  'WeeklyGoalTracker',
+  'ThisWeek',
+  'CoachInsight',
+  'WeeklyDigest',
+  'RecoveryAdvisor',
+  'TrainingLoad',
+  'IntensityDistribution',
+  'PaceTrend',
+  'ActivityMap',
+  'RecentActivities',
+  'MonthlyVolume',
+  'HeartRate',
+  'PersonalBests',
+  'BestEfforts',
+  'Badges',
+  'NextBadge',
+  'ActiveGoals',
+  'YearToDate',
+  'AllTimeStats',
+  'ShoeTracker',
+];
 
 // Friendly category labels (used in the widget catalog modal headers).
 export const WIDGET_GROUP_ORDER: WidgetFamily[] = [
@@ -104,12 +147,9 @@ export const INSIGHT_FAMILY: Record<string, WidgetFamily> = {
 export const WIDGET_TITLES: Record<string, string> = {
   TodayHero:             "Today's Workout",
   HeroBanner:            'Streaks & Totals',
-  CurrentFocus:          'Current Focus',
-  UpcomingWorkout:       'Upcoming Workout',
   CoachInsight:          'Coach Insight',
   WeeklyDigest:          'AI Weekly Digest',
   RecoveryAdvisor:       'Recovery Advisor',
-  WellnessScore:         'Wellness Score',
   InjuryAlert:           'Injury Alert',
   WeeklyGoalTracker:     'Weekly Goal Tracker',
   ThisWeek:              'This Week Stats',
@@ -128,10 +168,9 @@ export const WIDGET_TITLES: Record<string, string> = {
   AllTimeStats:          'All-Time Stats',
   ActiveGoals:           'Active Goals List',
   TrainingLoad:          'Training Load (ATL/CTL)',
-  BestEfforts:           'Estimated Best Efforts',
+  BestEfforts:           'Best Efforts',
   Badges:                'Milestones & Badges',
-  SufferTrend:           'Suffer Trend (8 weeks)',
-  KudosLeaderboard:      'Top Kudos',
+  NextBadge:             'Next Badge',
   StarredSegments:       'Starred Segments',
   StravaTotals:          'Strava Lifetime Totals',
   SportSplit:            'Sport Split (this year)',

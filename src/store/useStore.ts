@@ -3,6 +3,11 @@ import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import { activityDayKey, formatPace, localDateStr, mondayOf, weekKey } from '../utils/dates';
+import { DEFAULT_WIDGET_LAYOUT, KNOWN_WIDGET_IDS, RETIRED_WIDGETS } from '../utils/widgetFamilies';
+import { ToastOptions, useToastStore } from './useToast';
+
+export type { ToastOptions } from './useToast';
 
 const asyncStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
@@ -45,12 +50,18 @@ export interface ActivityZoneDistribution {
 
 export interface Activity {
   id: string;
-  type: 'Run' | 'Ride' | 'Workout' | 'Walk';
+  // Strava sport_type ('Run' | 'TrailRun' | 'Ride' | 'Walk' | 'Hike' | 'Swim'
+  // | 'WeightTraining' | …). Kept open — Strava adds types and the old
+  // 4-value union silently lied about what's stored.
+  type: string;
   distance: number; // in meters
   movingTime: number; // in seconds
   elapsedTime: number;
   totalElevationGain: number; // in meters
+  /** UTC instant (Strava start_date). Sort with this. */
   startDate: string;
+  /** Athlete wall-clock (Strava start_date_local). Day-bucket with this. */
+  startDateLocal?: string;
   averageSpeed: number; // m/s
   maxSpeed: number;
   averageHeartRate?: number;
@@ -58,10 +69,20 @@ export interface Activity {
   averageCadence?: number;
   steps?: number;
   calories?: number;
+  /** True when calories came from our MET estimate, not Strava. */
+  caloriesEstimated?: boolean;
   kilojoules?: number;
   averageWatts?: number;
+  /** True when watts came from a power meter (Strava device_watts). */
+  deviceWatts?: boolean;
   sufferScore?: number;
   name?: string;
+  /** Strava gear id (shoe/bike) for per-activity gear attribution. */
+  gearId?: string;
+  /** Route polyline (summary from list, full from detail enrichment). */
+  polyline?: string;
+  /** Number of photos on Strava — gates the PhotoStream fetch. */
+  photoCount?: number;
   // Social engagement from Strava — preserved when present so widgets like
   // KudosLeaderboard can rank activities without a per-activity detail fetch.
   kudosCount?: number;
@@ -253,33 +274,14 @@ export interface AthleteStats {
   athlete: any; // raw Strava athlete payload
 }
 
-export interface ToastOptions {
-  title: string;
-  message: string;
-  type?: 'success' | 'error' | 'info';
-}
-
-// Get local YYYY-MM-DD string without UTC conversion
-function localDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-// Compute current streak and best streak from a list of activities
-function computeStreaks(activities: Activity[]): { currentStreak: number; bestStreak: number; currentWeeklyStreak: number; bestWeeklyStreak: number } {
+// Compute current streak and best streak from a list of activities.
+// Exported for tests — day bucketing goes through activityDayKey so the
+// athlete's wall clock (start_date_local) wins over the UTC instant.
+export function computeStreaks(activities: Activity[]): { currentStreak: number; bestStreak: number; currentWeeklyStreak: number; bestWeeklyStreak: number } {
   if (!activities.length) return { currentStreak: 0, bestStreak: 0, currentWeeklyStreak: 0, bestWeeklyStreak: 0 };
 
   // Get unique dates that had at least one activity
-  const runDates = new Set(
-    activities
-      .map(a => {
-        // Parse ISO string as local date to avoid UTC offset issues
-        const raw = a.startDate.split('T')[0];
-        return raw;
-      })
-  );
+  const runDates = new Set(activities.map(a => activityDayKey(a)));
 
   if (!runDates.size) return { currentStreak: 0, bestStreak: 0, currentWeeklyStreak: 0, bestWeeklyStreak: 0 };
 
@@ -320,13 +322,7 @@ function computeStreaks(activities: Activity[]): { currentStreak: number; bestSt
 
   // Weekly Streaks
   const runWeeks = new Set(
-    activities.map(a => {
-      const d = new Date(a.startDate.split('T')[0]);
-      const day = d.getDay();
-      const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday
-      const monday = new Date(d.setDate(diff));
-      return localDateStr(monday);
-    })
+    activities.map(a => weekKey(new Date(activityDayKey(a))))
   );
 
   const sortedWeeks = Array.from(runWeeks).sort();
@@ -345,12 +341,9 @@ function computeStreaks(activities: Activity[]): { currentStreak: number; bestSt
     }
   }
 
-  const todayDate = new Date();
-  const todayDay = todayDate.getDay();
-  const diffToday = todayDate.getDate() - todayDay + (todayDay === 0 ? -6 : 1);
-  const thisMonday = new Date(new Date().setDate(diffToday));
+  const thisMonday = mondayOf(new Date());
   const thisWeekStr = localDateStr(thisMonday);
-  
+
   const lastMonday = new Date(thisMonday.getTime() - 7 * 86400000);
   const lastWeekStr = localDateStr(lastMonday);
 
@@ -371,6 +364,43 @@ function computeStreaks(activities: Activity[]): { currentStreak: number; bestSt
   return { currentStreak: current, bestStreak: best, currentWeeklyStreak: currentWeekly, bestWeeklyStreak: bestWeekly };
 }
 
+// Roll the activity list up into UserStats. Run-ish types count as runs so
+// TrailRun/VirtualRun no longer vanish from totals.
+function deriveStats(activities: Activity[], prev: UserStats): UserStats {
+  let totalRuns = 0;
+  let totalWalks = 0;
+  let totalKm = 0;
+  let topElev = 0;
+  let bestPace = Infinity;
+
+  for (const act of activities) {
+    const isRun = act.type === 'Run' || act.type === 'TrailRun' || act.type === 'VirtualRun';
+    if (isRun) totalRuns++;
+    if (act.type === 'Walk' || act.type === 'Hike') totalWalks++;
+    totalKm += act.distance / 1000;
+    if (act.totalElevationGain > topElev) topElev = act.totalElevationGain;
+    if (act.averageSpeed > 0 && isRun) {
+      const minPerKm = 1000 / act.averageSpeed / 60;
+      if (minPerKm < bestPace) bestPace = minPerKm;
+    }
+  }
+
+  const sorted = [...activities].sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+  const lastRunDate = sorted.length > 0 ? activityDayKey(sorted[0]) : '';
+  const streaks = computeStreaks(activities);
+
+  return {
+    ...prev,
+    totalRuns,
+    totalWalks,
+    totalKm: Math.round(totalKm),
+    topElev: Math.round(topElev),
+    lastRunDate,
+    bestPace: isFinite(bestPace) ? formatPace(bestPace) : '0:00',
+    ...streaks,
+  };
+}
+
 interface AppState {
   activities: Activity[];
   goals: Goal[];
@@ -384,6 +414,13 @@ interface AppState {
   weeklyDigest: WeeklyDigest | null;
   lastSyncedAt: string | null;             // ISO timestamp of most recent Strava sync
   setActivities: (activities: Activity[]) => void;
+  /**
+   * Merge freshly-synced activities into the store by id (incremental sync).
+   * Existing enrichment (zones cache, real calories, best efforts) survives.
+   */
+  upsertActivities: (incoming: Activity[]) => void;
+  /** Patch one activity with detail-fetch enrichment (calories, polyline…). */
+  enrichActivity: (activityId: string, patch: Partial<Activity>) => void;
   // Attach per-activity zone distribution (cached). No-op if the activity
   // isn't in the store (e.g. it was pruned).
   setActivityZones: (activityId: string, zones: ActivityZoneDistribution[]) => void;
@@ -409,7 +446,6 @@ interface AppState {
   setStarredSegments: (segs: any[]) => void;
   athleteStats: AthleteStats | null;
   setAthleteStats: (stats: AthleteStats | null) => void;
-  toast: ToastOptions | null;
   setToast: (toast: ToastOptions | null) => void;
 }
 
@@ -428,8 +464,10 @@ export const useStore = create<AppState>()(
       setStarredSegments: (starredSegments) => set({ starredSegments }),
       athleteStats: null,
       setAthleteStats: (athleteStats) => set({ athleteStats }),
-      toast: null,
-      setToast: (toast) => set({ toast }),
+      // Delegates to the dedicated toast store — deliberately does NOT set()
+      // here, so showing a toast never re-renders main-store subscribers or
+      // triggers a persist write.
+      setToast: (toast) => useToastStore.getState().show(toast),
       userStats: {
         currentStreak: 0,
         bestStreak: 0,
@@ -456,58 +494,62 @@ export const useStore = create<AppState>()(
         injuries: '',
       },
       setActivities: (activities) => set((state) => {
-        let totalRuns = 0;
-        let totalWalks = 0;
-        let totalKm = 0;
-        let topElev = 0;
-        let bestPace = 999;
-
-        activities.forEach(act => {
-           if (act.type === 'Run') totalRuns++;
-           if (act.type === 'Walk') totalWalks++;
-           totalKm += (act.distance / 1000);
-           if (act.totalElevationGain > topElev) topElev = act.totalElevationGain;
-
-           if (act.averageSpeed > 0 && act.type === 'Run') {
-              const minPerKm = 1000 / act.averageSpeed / 60;
-              if (minPerKm < bestPace) bestPace = minPerKm;
-           }
+        // A full sync replaces summary rows but must not wipe enrichment
+        // (zone caches, real calories, best efforts) gathered since.
+        const prevById = new Map(state.activities.map((a) => [a.id, a]));
+        const merged = activities.map((a) => {
+          const prev = prevById.get(a.id);
+          if (!prev) return a;
+          return {
+            ...a,
+            zones: a.zones ?? prev.zones,
+            polyline: a.polyline ?? prev.polyline,
+            ...(prev.calories !== undefined && !prev.caloriesEstimated && a.caloriesEstimated !== false
+              ? { calories: prev.calories, caloriesEstimated: false }
+              : {}),
+          };
         });
-
-        const sorted = [...activities].sort((a,b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
-        const lastRunDate = sorted.length > 0 ? sorted[0].startDate.split('T')[0] : '';
-
-        const { currentStreak, bestStreak, currentWeeklyStreak, bestWeeklyStreak } = computeStreaks(activities);
-
-        return {
-          activities,
-          userStats: {
-             ...state.userStats,
-             totalRuns,
-             totalWalks,
-             totalKm: Math.round(totalKm),
-             topElev: Math.round(topElev),
-             lastRunDate,
-             bestPace: bestPace === 999 ? '0:00' : bestPace.toFixed(2).replace('.', ':'),
-             currentStreak,
-             bestStreak,
-             currentWeeklyStreak,
-             bestWeeklyStreak,
-          }
-        };
+        return { activities: merged, userStats: deriveStats(merged, state.userStats) };
       }),
+      upsertActivities: (incoming) => set((state) => {
+        if (!incoming.length) return state;
+        const byId = new Map(state.activities.map((a) => [a.id, a]));
+        for (const a of incoming) {
+          const prev = byId.get(a.id);
+          byId.set(a.id, prev ? {
+            ...prev,
+            ...a,
+            zones: a.zones ?? prev.zones,
+            polyline: a.polyline ?? prev.polyline,
+            ...(prev.calories !== undefined && !prev.caloriesEstimated
+              ? { calories: prev.calories, caloriesEstimated: false }
+              : {}),
+          } : a);
+        }
+        const merged = Array.from(byId.values()).sort(
+          (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime(),
+        );
+        return { activities: merged, userStats: deriveStats(merged, state.userStats) };
+      }),
+      enrichActivity: (activityId, patch) => set((state) => ({
+        activities: state.activities.map((a) =>
+          a.id === activityId ? { ...a, ...patch } : a,
+        ),
+      })),
       setLifetimeStats: (stats: any) => set((state) => {
         const runDist = (stats.all_run_totals?.distance || 0) / 1000;
         const rideDist = (stats.all_ride_totals?.distance || 0) / 1000;
         const swimDist = (stats.all_swim_totals?.distance || 0) / 1000;
         const totalKm = Math.round(runDist + rideDist + swimDist);
         const runCount = stats.all_run_totals?.count || 0;
-        
+
+        // Strava's lifetime rollup is authoritative — assign, don't max(),
+        // so deleting an activity on Strava is reflected here too.
         return {
           userStats: {
             ...state.userStats,
-            totalRuns: runCount > state.userStats.totalRuns ? runCount : state.userStats.totalRuns,
-            totalKm: totalKm > state.userStats.totalKm ? totalKm : state.userStats.totalKm,
+            totalRuns: runCount,
+            totalKm,
           }
         };
       }),
@@ -545,13 +587,9 @@ export const useStore = create<AppState>()(
         timeFormat: '24h',
         coachPersonality: 'Encouraging Supporter',
         privacyZones: false,
-        widgetLayout: [
-          'HeroBanner', 'CurrentFocus', 'CoachInsight', 'WeeklyDigest', 'InjuryAlert', 'RecoveryAdvisor',
-          'WeeklyGoalTracker', 'ThisWeek', 'ShoeTracker', 'ActivityMap', 'RecentActivities', 'MonthlyVolume', 'HeartRate',
-          'IntensityDistribution', 'SufferTrend', 'PersonalBests', 'RacePredictor',
-          'ActivityMix', 'YearToDate', 'AllTimeStats', 'ActiveGoals',
-          'TrainingLoad', 'BestEfforts', 'Badges', 'KudosLeaderboard', 'StarredSegments'
-        ],
+        // Single source of truth in widgetFamilies.ts — fresh installs and
+        // migrated installs both flow through it.
+        widgetLayout: [...DEFAULT_WIDGET_LAYOUT],
       },
       updateSettings: (newSettings) => set((state) => ({
         settings: { ...state.settings, ...newSettings }
@@ -577,7 +615,11 @@ export const useStore = create<AppState>()(
       // v1 would mask the revamp on every existing device.
       // v3 (2026-05): adds three Strava-powered default-on widgets so existing
       // users see them without having to opt in via the customise modal.
-      version: 3,
+      // v4 (2026-06): widget curation — retired ids are remapped/dropped via
+      // RETIRED_WIDGETS, TodayHero guaranteed first, NextBadge introduced.
+      // Activities/starredSegments/athleteStats also leave this blob for the
+      // separate data cache (they rehydrate from the old blob one last time).
+      version: 4,
       migrate: (persistedState: any, fromVersion: number) => {
         if (!persistedState) return persistedState;
         const next = { ...persistedState };
@@ -591,36 +633,36 @@ export const useStore = create<AppState>()(
           next.settings = { ...(next.settings ?? {}), widgetLayout: withHero };
         }
 
-        if (fromVersion < 3) {
-          const layout: string[] = next.settings?.widgetLayout ?? [];
-          // Append the three new Strava-powered widgets if missing — they're
-          // default-on so previously-installed users see them too.
-          const additions = ['SufferTrend', 'KudosLeaderboard', 'StarredSegments'];
-          const merged = [...layout];
-          for (const id of additions) {
-            if (!merged.includes(id)) merged.push(id);
+        if (fromVersion < 4) {
+          const layout: string[] = next.settings?.widgetLayout ?? [...DEFAULT_WIDGET_LAYOUT];
+          const migrated: string[] = [];
+          for (const id of layout) {
+            const replacement = id in RETIRED_WIDGETS ? RETIRED_WIDGETS[id] : id;
+            if (replacement && !migrated.includes(replacement)) migrated.push(replacement);
           }
-          next.settings = { ...(next.settings ?? {}), widgetLayout: merged };
+          if (!migrated.includes('TodayHero')) migrated.unshift('TodayHero');
+          if (migrated.includes('Badges') && !migrated.includes('NextBadge')) {
+            migrated.splice(migrated.indexOf('Badges') + 1, 0, 'NextBadge');
+          }
+          next.settings = { ...(next.settings ?? {}), widgetLayout: migrated };
         }
 
-        // Final defensive cleanup against the current `known` set.
-        const known = new Set([
-          'TodayHero','HeroBanner','CurrentFocus','UpcomingWorkout','CoachInsight','WeeklyDigest',
-          'RecoveryAdvisor','WellnessScore','InjuryAlert','TrainingLoad','SufferTrend',
-          'WeeklyGoalTracker','ThisWeek','ActivityMap','RecentActivities','MonthlyVolume','ActivityMix','YearToDate','AllTimeStats','ShoeTracker',
-          'StravaTotals','SportSplit','TrainerRatio',
-          'HeartRate','IntensityDistribution','Cadence','PowerZones','EnergyExpenditure',
-          'PaceTrend','PersonalBests','RacePredictor','BestEfforts','Badges','ActiveGoals','TodayBlock','StarredSegments',
-          'KudosLeaderboard','PhotoStream',
-        ]);
+        // Final defensive cleanup against the live widget registry.
         const layout: string[] = next.settings?.widgetLayout ?? [];
-        const cleaned = layout.filter((id) => known.has(id));
-        next.settings = { ...(next.settings ?? {}), widgetLayout: cleaned };
+        next.settings = {
+          ...(next.settings ?? {}),
+          widgetLayout: layout.filter((id) => KNOWN_WIDGET_IDS.has(id)),
+        };
 
         return next;
       },
+      onRehydrateStorage: () => () => {
+        markMainHydrated();
+      },
+      // Activities (plus other bulky raw Strava payloads) are intentionally
+      // NOT in this blob — they live in the debounced data cache below so a
+      // settings tap never serialises the whole training history.
       partialize: (state) => ({
-        activities: state.activities,
         goals: state.goals,
         userStats: state.userStats,
         userProfile: state.userProfile,
@@ -632,9 +674,139 @@ export const useStore = create<AppState>()(
         weeklyDigest: state.weeklyDigest,
         lastSyncedAt: state.lastSyncedAt,
         hrZones: state.hrZones,
-        starredSegments: state.starredSegments,
-        athleteStats: state.athleteStats,
       }),
     }
   )
 );
+
+// ---------------------------------------------------------------------------
+// Bulk data cache — activities + raw Strava payloads.
+//
+// zustand's persist middleware serialises its whole blob on EVERY set(),
+// which at multi-MB activity histories was the app's dominant source of lag.
+// The bulky collections live here instead: a debounced writer that only runs
+// when one of them actually changes, plus an explicit hydrate step on launch.
+// ---------------------------------------------------------------------------
+
+const DATA_CACHE_KEY = 'ai-coach-data-cache';
+const DATA_SAVE_DEBOUNCE_MS = 800;
+
+let mainHydrated = false;
+let dataHydrated = false;
+let resolveHydration: (() => void) | null = null;
+let hydrationPromise: Promise<void> = new Promise((res) => { resolveHydration = res; });
+let resolveMainHydration: (() => void) | null = null;
+const mainHydrationPromise: Promise<void> = new Promise((res) => { resolveMainHydration = res; });
+
+function markMainHydrated() {
+  mainHydrated = true;
+  resolveMainHydration?.();
+  maybeResolveHydration();
+}
+
+function maybeResolveHydration() {
+  if (mainHydrated && dataHydrated) resolveHydration?.();
+}
+
+/**
+ * Resolves once both the settings blob and the data cache have rehydrated.
+ * Sync paths (background task, foreground refresh) MUST await this before
+ * writing goals/activities, or a fast sync can clobber not-yet-loaded state.
+ */
+export function waitForHydration(): Promise<void> {
+  return hydrationPromise;
+}
+
+export function isHydrated(): boolean {
+  return mainHydrated && dataHydrated;
+}
+
+let dataHydrationStarted = false;
+
+/**
+ * Load the bulk data cache. Auto-started at module load (so headless
+ * background-task entry points get it too); calling again is a no-op.
+ */
+export async function hydrateDataCache(): Promise<void> {
+  if (dataHydrationStarted) return hydrationPromise;
+  dataHydrationStarted = true;
+  try {
+    // The main blob migrates first — pre-v4 installs still carry activities
+    // inside it, and zustand's default merge will have placed them in state.
+    await mainHydrationPromise;
+    const raw = await AsyncStorage.getItem(DATA_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const cur = useStore.getState();
+      useStore.setState({
+        // In-memory data (e.g. a sync that raced hydration, or legacy-blob
+        // activities) wins over the cache.
+        activities: cur.activities.length ? cur.activities : (parsed.activities ?? []),
+        starredSegments: cur.starredSegments.length ? cur.starredSegments : (parsed.starredSegments ?? []),
+        athleteStats: cur.athleteStats ?? parsed.athleteStats ?? null,
+      });
+      if (cur.activities.length === 0 && parsed.activities?.length) {
+        // Stats were persisted in the main blob, but recompute defensively in
+        // case the two blobs ever diverge.
+        useStore.setState((s) => ({ userStats: deriveStats(s.activities, s.userStats) }));
+      }
+    }
+  } catch (e) {
+    console.warn('[dataCache] hydrate failed:', e);
+  } finally {
+    dataHydrated = true;
+    maybeResolveHydration();
+  }
+}
+
+let dataSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleDataSave() {
+  if (dataSaveTimer) clearTimeout(dataSaveTimer);
+  dataSaveTimer = setTimeout(async () => {
+    dataSaveTimer = null;
+    try {
+      const s = useStore.getState();
+      await AsyncStorage.setItem(
+        DATA_CACHE_KEY,
+        JSON.stringify({
+          activities: s.activities,
+          starredSegments: s.starredSegments,
+          athleteStats: s.athleteStats,
+        }),
+      );
+    } catch (e) {
+      console.warn('[dataCache] save failed:', e);
+    }
+  }, DATA_SAVE_DEBOUNCE_MS);
+}
+
+/** Flush a pending debounced save immediately (background task teardown). */
+export async function flushDataCache(): Promise<void> {
+  if (!dataSaveTimer) return;
+  clearTimeout(dataSaveTimer);
+  dataSaveTimer = null;
+  const s = useStore.getState();
+  await AsyncStorage.setItem(
+    DATA_CACHE_KEY,
+    JSON.stringify({
+      activities: s.activities,
+      starredSegments: s.starredSegments,
+      athleteStats: s.athleteStats,
+    }),
+  );
+}
+
+useStore.subscribe((s, prev) => {
+  if (
+    s.activities !== prev.activities ||
+    s.starredSegments !== prev.starredSegments ||
+    s.athleteStats !== prev.athleteStats
+  ) {
+    scheduleDataSave();
+  }
+});
+
+// Kick off data hydration as soon as the module loads — covers both normal
+// app launch and headless background-task execution.
+hydrateDataCache();

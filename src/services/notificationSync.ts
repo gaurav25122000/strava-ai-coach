@@ -1,12 +1,6 @@
 import { NotificationService } from './notifications';
 import { useStore } from '../store/useStore';
-
-function localDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
+import { activityDayKey, localDateStr, mondayOf } from '../utils/dates';
 
 // Reconcile all scheduled notifications with the current store state. Safe to
 // call on app launch, foreground, and after activity sync.
@@ -14,16 +8,15 @@ export async function syncAllNotifications() {
   const { activities, userStats, goals } = useStore.getState();
 
   const today = localDateStr(new Date());
-  const hasActivityToday = activities.some(
-    (a) => a.startDate.split('T')[0] === today,
-  );
+  const hasActivityToday = activities.some((a) => activityDayKey(a) === today);
 
-  const now = new Date();
-  const weekStart = new Date(now);
-  weekStart.setDate(now.getDate() - now.getDay() + 1);
-  const weekActs = activities.filter((a) => new Date(a.startDate) >= weekStart);
+  // mondayOf handles the Sunday edge — the old inline math computed *next*
+  // Monday on Sundays, so Sunday-evening recaps reported an empty week.
+  const weekStart = mondayOf(new Date());
+  const weekStartKey = localDateStr(weekStart);
+  const weekActs = activities.filter((a) => activityDayKey(a) >= weekStartKey);
   const weekKm = weekActs.reduce((s, a) => s + a.distance / 1000, 0);
-  const weekDays = new Set(weekActs.map((a) => a.startDate.split('T')[0])).size;
+  const weekDays = new Set(weekActs.map((a) => activityDayKey(a))).size;
 
   await NotificationService.scheduleWeeklyRecap({
     weekKm,

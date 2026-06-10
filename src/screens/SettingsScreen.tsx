@@ -173,7 +173,6 @@ export default function SettingsScreen() {
 
       syncStrava();
     } catch (error: any) {
-      console.log( settings.stravaClientSecret)
       console.error('Error exchanging token:', error);
       setToast({ title: 'Error', message: 'Failed to authenticate with Strava', type: 'error' });
     }

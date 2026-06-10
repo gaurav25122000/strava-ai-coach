@@ -1,25 +1,17 @@
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
-import { StravaService } from './strava';
-import { useStore } from '../store/useStore';
-import { computeAllProgress } from './goalProgress';
+import { flushDataCache } from '../store/useStore';
+import { performStravaSync } from './syncRunner';
 
 export const BACKGROUND_SYNC_TASK = 'strava-background-sync';
 
 // Must be defined at module top-level (outside any component).
 TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
   try {
-    await StravaService.initialize();
-    if (!StravaService.isAuthenticated()) {
-      // Nothing to sync, but the task itself ran fine.
-      return BackgroundTask.BackgroundTaskResult.Success;
-    }
-    const activities = await StravaService.syncActivities();
-    const { setActivities, setLastSyncedAt, goals, setGoals } = useStore.getState();
-    setActivities(activities);
-    setLastSyncedAt(new Date().toISOString());
-    // Re-derive AI-goal progress from the freshly-synced activities.
-    setGoals(computeAllProgress(goals, activities));
+    await performStravaSync({ force: true });
+    // Headless runs can be killed right after the task resolves — make sure
+    // the debounced activity cache hits disk before that.
+    await flushDataCache();
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch (e) {
     console.error('[BackgroundSync] error:', e);

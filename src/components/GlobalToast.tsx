@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInUp, FadeOutUp } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CheckCircle, AlertCircle, Info } from 'lucide-react-native';
@@ -7,11 +8,14 @@ import * as Haptics from 'expo-haptics';
 import { Icon } from './Icon';
 import { PressableScale } from './PressableScale';
 import { Typography } from './Typography';
-import { useStore } from '../store/useStore';
+import { useToastStore } from '../store/useToast';
 import { theme } from '../theme';
 
 export function GlobalToast() {
-  const { toast, setToast } = useStore();
+  // Dedicated store — the toast lifecycle no longer touches (or persists)
+  // the main app store.
+  const toast = useToastStore((s) => s.toast);
+  const setToast = useToastStore((s) => s.show);
 
   useEffect(() => {
     if (toast) {
@@ -29,6 +33,8 @@ export function GlobalToast() {
     }
   }, [toast, setToast]);
 
+  const insets = useSafeAreaInsets();
+
   if (!toast) return null;
 
   const isError = toast.type === 'error';
@@ -39,7 +45,7 @@ export function GlobalToast() {
       <Animated.View
         entering={FadeInUp.springify()}
         exiting={FadeOutUp.springify()}
-        style={[styles.wrapper, theme.shadows.glow(gradient[0])]}
+        style={[styles.wrapper, { top: insets.top + 8 }, theme.shadows.glow(gradient[0])]}
       >
         <PressableScale
           onPress={() => setToast(null)}
@@ -69,7 +75,6 @@ export function GlobalToast() {
 const styles = StyleSheet.create({
   wrapper: {
     position: 'absolute',
-    top: 60, // safe area top margin
     alignSelf: 'center',
     borderRadius: theme.borderRadius.full,
     zIndex: 9999,

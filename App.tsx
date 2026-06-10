@@ -8,6 +8,7 @@ import { theme } from './src/theme';
 import { StravaService } from './src/services/strava';
 import { syncAllNotifications } from './src/services/notificationSync';
 import { registerBackgroundSync } from './src/services/backgroundSync';
+import { performStravaSync } from './src/services/syncRunner';
 import { useStore } from './src/store/useStore';
 import { useEffect, useState } from 'react';
 import Animated, { FadeOut, FadeIn } from 'react-native-reanimated';
@@ -91,25 +92,13 @@ export default function App() {
 
     // Re-sync on app foreground:
     //  • notifications (day boundary may have crossed while backgrounded)
-    //  • Strava activities, if last sync was >30 min ago — Android background
-    //    fetch is unreliable, so we treat foreground transitions as a
-    //    guaranteed sync trigger.
+    //  • Strava activities via the shared sync runner (incremental, skips
+    //    when <30 min fresh, waits for store hydration).
     const appStateSub = AppState.addEventListener('change', async (state) => {
       if (state !== 'active') return;
       syncAllNotifications().catch(e => console.warn('notif sync error:', e));
       try {
-        await StravaService.initialize();
-        if (!StravaService.isAuthenticated()) return;
-        const lastSyncedAt = useStore.getState().lastSyncedAt;
-        const stale = !lastSyncedAt || (Date.now() - new Date(lastSyncedAt).getTime()) > 30 * 60 * 1000;
-        if (!stale) return;
-        const activities = await StravaService.syncActivities();
-        const { setActivities, setLastSyncedAt, goals, setGoals } = useStore.getState();
-        setActivities(activities);
-        setLastSyncedAt(new Date().toISOString());
-        // Lazy-import to avoid a hot circular dep on cold start.
-        const { computeAllProgress } = await import('./src/services/goalProgress');
-        setGoals(computeAllProgress(goals, activities));
+        await performStravaSync();
       } catch (e) {
         console.warn('[ForegroundSync] error:', e);
       }
