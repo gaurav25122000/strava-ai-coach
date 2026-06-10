@@ -467,6 +467,9 @@ interface AppState {
   setStarredSegments: (segs: any[]) => void;
   athleteStats: AthleteStats | null;
   setAthleteStats: (stats: AthleteStats | null) => void;
+  /** Main coach-chat transcript — persisted so conversations survive restarts. */
+  coachChat: Array<{ role: 'user' | 'assistant'; text: string; at: string }>;
+  setCoachChat: (messages: Array<{ role: 'user' | 'assistant'; text: string; at: string }>) => void;
   setToast: (toast: ToastOptions | null) => void;
 }
 
@@ -485,6 +488,9 @@ export const useStore = create<AppState>()(
       setStarredSegments: (starredSegments) => set({ starredSegments }),
       athleteStats: null,
       setAthleteStats: (athleteStats) => set({ athleteStats }),
+      coachChat: [],
+      // Cap the persisted transcript — the chat UI shows the tail anyway.
+      setCoachChat: (coachChat) => set({ coachChat: coachChat.slice(-100) }),
       // Delegates to the dedicated toast store — deliberately does NOT set()
       // here, so showing a toast never re-renders main-store subscribers or
       // triggers a persist write.
@@ -695,6 +701,7 @@ export const useStore = create<AppState>()(
         weeklyDigest: state.weeklyDigest,
         lastSyncedAt: state.lastSyncedAt,
         hrZones: state.hrZones,
+        coachChat: state.coachChat,
       }),
     }
   )
