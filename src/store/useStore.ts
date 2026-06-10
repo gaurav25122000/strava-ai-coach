@@ -121,6 +121,15 @@ export interface DailyPrescription {
   rest?: { kind: RestKind; note: string };
 }
 
+export interface PlanWeek {
+  /** Monday of this week, ISO YYYY-MM-DD. */
+  weekStart: string;
+  /** 7 entries, dayOfWeek 0..6. */
+  schedule: DailyPrescription[];
+  /** Optional per-week volume so plans can express real progression. */
+  volumeKm?: number;
+}
+
 export interface Phase {
   name: string;
   description: string;
@@ -129,7 +138,13 @@ export interface Phase {
   keyWorkout: string;
   weekStart?: string;                     // ISO date for phase start (optional for back-compat)
   weekEnd?: string;                       // ISO date for phase end
-  schedule?: DailyPrescription[];         // 7 entries, dayOfWeek 0..6 (optional for back-compat)
+  /**
+   * Legacy single 7-day template repeated across the phase. Newer plans use
+   * `weeks` (one schedule per week, real progression); `schedule` is kept as
+   * weeks[0] for back-compat with old consumers.
+   */
+  schedule?: DailyPrescription[];
+  weeks?: PlanWeek[];
 }
 
 export interface CheckIn {
