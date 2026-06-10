@@ -156,6 +156,12 @@ export interface CheckIn {
   activityId?: string;                     // present if source === 'STRAVA'
   notes?: string;                          // manual note, or the auto-match reason for STRAVA check-ins
   perceivedEffort?: number;                // 1-10 RPE, manual only
+  /**
+   * True for system-generated "Auto-skipped" placeholders. Unlike real manual
+   * check-ins these are replaceable — a late Strava sync that finds an
+   * activity for the date overwrites the auto-skip.
+   */
+  auto?: boolean;
   // How well an auto-matched Strava activity satisfied the day's prescription.
   // 'matched' → counts as done; 'partial' → logged but short/wrong-intensity;
   // 'mismatch' → wrong discipline (e.g. a ride on a run day). Undefined for
