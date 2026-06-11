@@ -55,7 +55,7 @@ export const ProgressBar = ({
 const styles = StyleSheet.create({
   container: {
     width: '100%',
-    backgroundColor: '#374151',
+    backgroundColor: theme.colors.border,
     borderRadius: theme.borderRadius.full,
     overflow: 'hidden',
   },

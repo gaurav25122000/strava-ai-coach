@@ -132,9 +132,9 @@ export const HeatmapCalendar = ({ data }: HeatmapCalendarProps) => {
           <View style={styles.streakValue}>
             <AnimatedNumber
               value={streak}
-              style={[styles.statValue, { color: streak > 0 ? '#f97316' : theme.colors.textSecondary }]}
+              style={[styles.statValue, { color: streak > 0 ? theme.colors.primary : theme.colors.textSecondary }]}
             />
-            <Flame size={14} color={streak > 0 ? '#f97316' : theme.colors.textSecondary} strokeWidth={2.5} fill={streak > 0 ? '#f97316' : 'transparent'} />
+            <Flame size={14} color={streak > 0 ? theme.colors.primary : theme.colors.textSecondary} strokeWidth={2.5} fill={streak > 0 ? theme.colors.primary : 'transparent'} />
           </View>
           <Typography style={styles.statLabel}>Day Streak</Typography>
         </View>
@@ -284,7 +284,7 @@ const styles = StyleSheet.create({
 
   cell: { width: CELL, height: CELL, borderRadius: 3 },
   todayCell: { borderWidth: 2, borderColor: theme.colors.primary },
-  selectedCell: { borderWidth: 1.5, borderColor: '#fff', transform: [{ scale: 1.15 }] },
+  selectedCell: { borderWidth: 1.5, borderColor: theme.colors.text, transform: [{ scale: 1.15 }] },
 
   tooltip: {
     flexDirection: 'row', alignItems: 'center',

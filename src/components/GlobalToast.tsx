@@ -60,8 +60,8 @@ export function GlobalToast() {
             style={styles.container}
           >
             {isError
-              ? <Icon icon={AlertCircle} variant="plain" size="md" color="#fff" />
-              : <Icon icon={CheckCircle} variant="plain" size="md" color="#fff" />}
+              ? <Icon icon={AlertCircle} variant="plain" size="md" color={theme.colors.onAccent} />
+              : <Icon icon={CheckCircle} variant="plain" size="md" color={theme.colors.onAccent} />}
             <Typography style={styles.text}>
               {toast.title ? `${toast.title}: ` : ''}{toast.message}
             </Typography>
@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   text: {
-    color: '#fff',
+    color: theme.colors.onAccent,
     fontWeight: '700',
     marginLeft: theme.spacing.sm,
     fontSize: 14,

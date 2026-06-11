@@ -132,7 +132,7 @@ export function TodayHero({
           </View>
           {currentStreak > 0 && (
             <View style={styles.streakBadge}>
-              <Icon icon={Flame} variant="plain" size="sm" color="#FCD34D" />
+              <Icon icon={Flame} variant="plain" size="sm" color={theme.colors.families.records.accent} />
               <Typography style={styles.streakValue}>{currentStreak}</Typography>
               <Typography style={styles.streakLabel}>day streak</Typography>
             </View>
@@ -142,7 +142,7 @@ export function TodayHero({
         {activeGoal && presc && kind !== 'REST' ? (
           <View style={styles.workoutBlock}>
             <View style={styles.workoutHeader}>
-              <View style={styles.workoutKindBadge}>{workoutIcon(kind, 16, '#fff')}</View>
+              <View style={styles.workoutKindBadge}>{workoutIcon(kind, 16, theme.colors.onAccent)}</View>
               <Typography style={styles.workoutTitle} numberOfLines={2}>{presc.title}</Typography>
             </View>
             <Typography style={styles.workoutDesc} numberOfLines={3}>{presc.description}</Typography>
@@ -150,19 +150,19 @@ export function TodayHero({
               <View style={styles.metaRow}>
                 {typeof presc.distanceKm === 'number' && (
                   <View style={styles.metaPill}>
-                    <Icon icon={MapPin} variant="plain" size="xs" color="#fff" />
+                    <Icon icon={MapPin} variant="plain" size="xs" color={theme.colors.onAccent} />
                     <Typography style={styles.metaText}>{presc.distanceKm} km</Typography>
                   </View>
                 )}
                 {typeof presc.durationMin === 'number' && (
                   <View style={styles.metaPill}>
-                    <Icon icon={Clock} variant="plain" size="xs" color="#fff" />
+                    <Icon icon={Clock} variant="plain" size="xs" color={theme.colors.onAccent} />
                     <Typography style={styles.metaText}>{presc.durationMin} min</Typography>
                   </View>
                 )}
                 {presc.intensity && (
                   <View style={styles.metaPill}>
-                    <Icon icon={Heart} variant="plain" size="xs" color="#fff" />
+                    <Icon icon={Heart} variant="plain" size="xs" color={theme.colors.onAccent} />
                     <Typography style={styles.metaText}>{presc.intensity}</Typography>
                   </View>
                 )}
@@ -177,7 +177,7 @@ export function TodayHero({
                 accessibilityRole="button"
                 accessibilityLabel="Skip today's workout"
               >
-                <Icon icon={SkipForward} variant="plain" size="sm" color="#fff" />
+                <Icon icon={SkipForward} variant="plain" size="sm" color={theme.colors.onAccent} />
                 <Typography style={styles.ctaSecondaryText}>Skip</Typography>
               </PressableScale>
               <PressableScale

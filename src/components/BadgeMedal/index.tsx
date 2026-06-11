@@ -65,7 +65,7 @@ export function BadgeMedal({ milestone, size = 64, unlocked, hideLabel = false, 
         </LinearGradient>
         {!unlocked && (
           <View style={styles.lockOverlay}>
-            <Lock size={Math.round(size * 0.32)} color="#fff" />
+            <Lock size={Math.round(size * 0.32)} color={theme.colors.onAccent} />
           </View>
         )}
       </View>

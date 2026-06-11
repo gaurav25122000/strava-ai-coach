@@ -2,8 +2,8 @@ import { StyleSheet } from 'react-native';
 import { theme } from '../../theme';
 
 // Shared visual primitives for premium sheet bodies. Every value here is
-// referenced from `FieldBlock`, `SectionLabel`, `SegmentedControl`, `RowBlock`,
-// and `SheetCTA` — keeping the visual rules in one place so the sheets share a
+// referenced from `FieldBlock`, `SectionLabel`, `SegmentedControl`, and
+// `RowBlock` — keeping the visual rules in one place so the sheets share a
 // look across screens.
 export const sheetStyles = StyleSheet.create({
   // ── Section label ──────────────────────────────────────────────────
@@ -105,7 +105,7 @@ export const sheetStyles = StyleSheet.create({
   segmentedTextActive: {
     fontSize: 13,
     fontWeight: '800',
-    color: '#fff',
+    color: theme.colors.onAccent,
     letterSpacing: 0.3,
   },
   segmentedTextInactive: {
@@ -175,35 +175,5 @@ export const sheetStyles = StyleSheet.create({
     color: 'rgba(255,255,255,0.78)',
     marginTop: 2,
     lineHeight: 18,
-  },
-
-  // ── Big CTA ────────────────────────────────────────────────────────
-  ctaOuter: {
-    width: '100%',
-    height: 54,
-    borderRadius: 14,
-    overflow: 'hidden',
-    marginTop: 18,
-  },
-  ctaGradient: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  ctaText: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#fff',
-    letterSpacing: 0.3,
-  },
-  ctaDisabled: {
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  ctaTextDisabled: {
-    color: theme.colors.textSecondary,
   },
 });

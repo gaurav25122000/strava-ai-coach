@@ -121,7 +121,7 @@ export function Icon({
           style,
         ]}
       >
-        <Glyph size={px} color="#fff" strokeWidth={stroke} />
+        <Glyph size={px} color={theme.colors.onAccent} strokeWidth={stroke} />
       </LinearGradient>
     );
   }
@@ -166,7 +166,7 @@ export function Icon({
         style,
       ]}
     >
-      <Glyph size={px} color="#fff" strokeWidth={stroke} />
+      <Glyph size={px} color={theme.colors.onAccent} strokeWidth={stroke} />
     </View>
   );
 }

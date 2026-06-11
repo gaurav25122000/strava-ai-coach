@@ -5,7 +5,6 @@ import {
   TextInput,
   TextInputProps,
   TouchableOpacity,
-  ActivityIndicator,
   ViewStyle,
   StyleProp,
   Pressable,
@@ -312,63 +311,6 @@ export function HelperRow({
         <Text style={s.helperDesc}>{description}</Text>
       </View>
     </View>
-  );
-}
-
-// ── SheetCTA ───────────────────────────────────────────────────────────
-// Full-width 54-tall gradient submit button. Pass `loading` for a spinner.
-// Disabled state collapses to a muted surface block with secondary text.
-export function SheetCTA({
-  label,
-  onPress,
-  family,
-  icon,
-  loading,
-  disabled,
-}: {
-  label: string;
-  onPress: () => void;
-  family: WidgetFamily;
-  icon?: LucideIcon;
-  loading?: boolean;
-  disabled?: boolean;
-}) {
-  const fam = familyStyle(family);
-  const blocked = disabled || loading;
-
-  if (blocked) {
-    return (
-      <View style={[s.ctaOuter, s.ctaDisabled]}>
-        <View style={s.ctaGradient}>
-          {loading ? (
-            <ActivityIndicator color={theme.colors.textSecondary} />
-          ) : (
-            <>
-              {icon && <Icon icon={icon} variant="plain" size="md" color={theme.colors.textSecondary} />}
-              <Text style={[s.ctaText, s.ctaTextDisabled]}>{label}</Text>
-            </>
-          )}
-        </View>
-      </View>
-    );
-  }
-
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.88}
-      style={[s.ctaOuter, theme.shadows.glow(fam.accent)]}
-    >
-      <LinearGradient
-        colors={fam.gradient}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={s.ctaGradient}
-      >
-        {icon && <Icon icon={icon} variant="plain" size="md" color="#fff" />}
-        <Text style={s.ctaText}>{label}</Text>
-      </LinearGradient>
-    </TouchableOpacity>
   );
 }
 
