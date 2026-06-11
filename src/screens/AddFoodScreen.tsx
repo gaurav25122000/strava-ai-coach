@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { FlatList, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ScrollView, SectionList, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Camera, Check, ChevronLeft, Heart, Image as ImageIcon, Minus, Plus, Search, Sparkles,
@@ -24,10 +24,9 @@ import {
 
 type Mode = 'library' | 'manual' | 'photo';
 
-/** Library list row: section label or tappable food. */
-type LibRow =
-  | { type: 'header'; title: string }
-  | { type: 'food'; item: FoodItem };
+/** Library section: sticky title + keyed food rows (keys must be unique
+ *  across sections — a favourited food also appears under "All foods"). */
+type FoodSection = { title: string; data: { k: string; f: FoodItem }[] };
 
 const CATEGORY_KEYS = Object.keys(FOOD_CATEGORY_LABELS) as FoodCategory[];
 
@@ -90,10 +89,12 @@ export default function AddFoodScreen({ navigation, route }: any) {
     ? CATEGORY_KEYS
     : CATEGORY_KEYS.filter((c) => c !== 'custom');
 
-  const rows = useMemo<LibRow[]>(() => {
+  const sections = useMemo<FoodSection[]>(() => {
     const results = searchFoods(query, category, customItems);
-    const all: LibRow[] = results.map((item) => ({ type: 'food', item }));
-    if (query.trim() || category !== 'all') return all;
+    const allData = results.map((f) => ({ k: `all-${f.name}`, f }));
+    if (query.trim() || category !== 'all') {
+      return allData.length ? [{ title: '', data: allData }] : [];
+    }
 
     // Per-serving FoodItem reconstructed from a logged entry — lets manual/
     // photo foods (which live in neither the library nor My Foods) appear in
@@ -120,14 +121,9 @@ export default function AddFoodScreen({ navigation, route }: any) {
     // Default view pins favourites + recently logged above the full list.
     // Favourites resolve from the library/My Foods first, then from log
     // history — so hearting a one-off photo food still sticks.
-    const pinned: LibRow[] = [];
     const favs = favoriteFoods
       .map((name) => results.find((f) => f.name === name) ?? newestEntryNamed(name))
       .filter((f): f is FoodItem => f !== null);
-    if (favs.length) {
-      pinned.push({ type: 'header', title: '★ Favourites' });
-      favs.forEach((item) => pinned.push({ type: 'food', item }));
-    }
     const seen = new Set<string>(favs.map((f) => f.name));
     const recents: FoodItem[] = [];
     for (let i = foodLog.length - 1; i >= 0 && recents.length < 8; i -= 1) {
@@ -136,12 +132,11 @@ export default function AddFoodScreen({ navigation, route }: any) {
       seen.add(e.name);
       recents.push(fromEntry(e));
     }
-    if (recents.length) {
-      pinned.push({ type: 'header', title: 'Recent' });
-      recents.forEach((item) => pinned.push({ type: 'food', item }));
-    }
-    if (!pinned.length) return all;
-    return [...pinned, { type: 'header', title: 'All foods' }, ...all];
+    const out: FoodSection[] = [];
+    if (favs.length) out.push({ title: '★ Favourites', data: favs.map((f) => ({ k: `fav-${f.name}`, f })) });
+    if (recents.length) out.push({ title: 'Recent', data: recents.map((f) => ({ k: `rec-${f.name}`, f })) });
+    out.push({ title: out.length ? 'All foods' : '', data: allData });
+    return out;
   }, [query, category, customItems, favoriteFoods, foodLog]);
 
   // ── Manual state ──────────────────────────────────────────────────────
@@ -319,11 +314,7 @@ export default function AddFoodScreen({ navigation, route }: any) {
     );
   };
 
-  const renderRow = ({ item: row }: { item: LibRow }) => {
-    if (row.type === 'header') {
-      return <Typography style={styles.sectionLabel}>{row.title}</Typography>;
-    }
-    const { item } = row;
+  const renderFood = (item: FoodItem) => {
     const fav = favoriteFoods.includes(item.name);
     return (
       <PressableScale
@@ -434,20 +425,32 @@ export default function AddFoodScreen({ navigation, route }: any) {
       </View>
 
       {mode === 'library' && (
-        <FlatList
-          data={rows}
-          keyExtractor={(row, i) => (row.type === 'header' ? `header-${row.title}` : `food-${i}-${row.item.name}`)}
-          renderItem={renderRow}
-          ListHeaderComponent={libraryHeader}
-          ListEmptyComponent={
-            <Typography style={styles.emptyTxt}>
-              Nothing matches “{query}” — try Manual entry.
-            </Typography>
-          }
-          contentContainerStyle={styles.listContent}
-          keyboardShouldPersistTaps="handled"
-          initialNumToRender={14}
-        />
+        <>
+          {/* Search + categories live OUTSIDE the list so they never scroll
+              away; the section titles stick under them as the list moves. */}
+          {libraryHeader}
+          <SectionList
+            sections={sections}
+            keyExtractor={(row) => row.k}
+            renderItem={({ item: row }) => renderFood(row.f)}
+            renderSectionHeader={({ section }) =>
+              section.title ? (
+                <View style={styles.stickyHeader}>
+                  <Typography style={styles.sectionLabel}>{section.title}</Typography>
+                </View>
+              ) : null
+            }
+            stickySectionHeadersEnabled
+            ListEmptyComponent={
+              <Typography style={styles.emptyTxt}>
+                Nothing matches “{query}” — try Manual entry.
+              </Typography>
+            }
+            contentContainerStyle={styles.listContent}
+            keyboardShouldPersistTaps="handled"
+            initialNumToRender={14}
+          />
+        </>
       )}
 
       {mode === 'manual' && (
@@ -776,6 +779,7 @@ const styles = StyleSheet.create({
   },
   libHeader: {
     gap: 10,
+    paddingHorizontal: 16,
     paddingBottom: 10,
   },
   searchBox: {
@@ -813,12 +817,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 130,
   },
+  // Solid background so list rows vanish cleanly behind the pinned title.
+  stickyHeader: {
+    backgroundColor: theme.colors.background,
+    paddingTop: 10,
+    paddingBottom: 5,
+  },
   sectionLabel: {
     ...theme.typography.micro,
     color: theme.colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
-    marginTop: 14,
   },
   foodRow: {
     flexDirection: 'row',
