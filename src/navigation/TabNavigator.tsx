@@ -117,7 +117,7 @@ function DockItem({
 
 const dockStyles = StyleSheet.create({
   idle: {
-    width: 44,
+    width: 48,
     height: 38,
     alignItems: 'center',
     justifyContent: 'center',
@@ -146,8 +146,8 @@ export default function TabNavigator() {
           left: 14,
           right: 14,
           bottom: Math.max(insets.bottom, 12),
-          height: 60,
-          borderRadius: 30,
+          height: 62,
+          borderRadius: 31,
           overflow: 'hidden',
           backgroundColor: 'transparent',
           borderWidth: 1,
@@ -160,7 +160,10 @@ export default function TabNavigator() {
         },
         tabBarShowLabel: false,
         tabBarInactiveTintColor: theme.colors.textSecondary,
-        tabBarItemStyle: { paddingHorizontal: 0, height: 60, justifyContent: 'center' },
+        // Let the icon container own centering — explicit item heights fight
+        // the 1px dock border and shift everything off-axis.
+        tabBarItemStyle: { paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0 },
+        tabBarIconStyle: { flex: 1, marginTop: 0, marginBottom: 0, alignItems: 'center', justifyContent: 'center' },
         tabBarHideOnKeyboard: true,
       }}
       screenListeners={tabScreenListeners}
