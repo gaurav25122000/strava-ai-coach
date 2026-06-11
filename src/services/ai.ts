@@ -15,6 +15,60 @@ const MODELS = {
   anthropic: 'claude-opus-4-8',
 } as const;
 
+// Newly-launched flash models get capacity-throttled ("high demand", 429/503).
+// When that happens we retry once on the previous stable flash so the athlete
+// still gets a plan instead of an apology.
+const GEMINI_FALLBACK = 'gemini-2.5-flash';
+
+const isGeminiCapacityError = (e: any) => {
+  const status = e?.response?.status;
+  const msg: string = e?.response?.data?.error?.message || '';
+  return (
+    status === 429 ||
+    status === 503 ||
+    // Under load Gemini sometimes hangs instead of rejecting — same treatment.
+    e?.code === 'ECONNABORTED' ||
+    /high demand|overloaded|capacity|resource.?exhausted/i.test(msg)
+  );
+};
+
+// Keep individual Gemini attempts short enough that the retry ladder fits
+// inside the generation watchdog even when calls hang rather than reject.
+const GEMINI_ATTEMPT_TIMEOUT_MS = 90_000;
+
+// Capacity rejections come back in ~1-2s, so retry rounds are cheap. Plans
+// generate in the background behind the progress pill, which makes waiting
+// out a throttling spike (free-tier keys get these at peak) acceptable UX.
+const CAPACITY_RETRY_ROUNDS = 3;
+const CAPACITY_BACKOFF_MS = 18_000;
+
+/**
+ * POST to Gemini: newest flash first, previous flash on capacity errors,
+ * with backed-off retry rounds before giving up.
+ */
+async function geminiGenerate(body: any, apiKey: string, timeout: number) {
+  const cfg = {
+    headers: { 'Content-Type': 'application/json', 'X-goog-api-key': apiKey },
+    timeout: Math.min(timeout, GEMINI_ATTEMPT_TIMEOUT_MS),
+  };
+  const url = (model: string) =>
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  let lastErr: any;
+  for (let round = 1; round <= CAPACITY_RETRY_ROUNDS; round++) {
+    if (round > 1) await new Promise((r) => setTimeout(r, CAPACITY_BACKOFF_MS));
+    for (const model of [MODELS.gemini, GEMINI_FALLBACK]) {
+      try {
+        return await axios.post(url(model), body, cfg);
+      } catch (e: any) {
+        if (!isGeminiCapacityError(e)) throw e;
+        lastErr = e;
+        console.warn(`[AI] ${model} at capacity (round ${round}/${CAPACITY_RETRY_ROUNDS})`);
+      }
+    }
+  }
+  throw lastErr;
+}
+
 const PLAN_TIMEOUT_MS = 120_000;
 const CHAT_TIMEOUT_MS = 60_000;
 
@@ -395,8 +449,7 @@ function providerError(provider: Provider, e: any): Error {
 async function requestPlan(provider: Provider, apiKey: string, system: string, turns: Turn[]): Promise<any> {
   try {
     if (provider === 'gemini') {
-      const resp = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/${MODELS.gemini}:generateContent`,
+      const resp = await geminiGenerate(
         {
           system_instruction: { parts: [{ text: system }] },
           contents: turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
@@ -406,7 +459,8 @@ async function requestPlan(provider: Provider, apiKey: string, system: string, t
             maxOutputTokens: 32768,
           },
         },
-        { headers: { 'Content-Type': 'application/json', 'X-goog-api-key': apiKey }, timeout: PLAN_TIMEOUT_MS },
+        apiKey,
+        PLAN_TIMEOUT_MS,
       );
       return JSON.parse(resp.data.candidates[0].content.parts[0].text);
     }
@@ -566,10 +620,10 @@ Units: athlete prefers ${extras.unit || 'metric'}. Answer concisely in markdown.
           role: m.role === 'assistant' ? 'model' : 'user',
           parts: [{ text: m.text }],
         }));
-        const resp = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/${MODELS.gemini}:generateContent`,
+        const resp = await geminiGenerate(
           { system_instruction: { parts: [{ text: system }] }, contents },
-          { headers: { 'Content-Type': 'application/json', 'X-goog-api-key': apiKey }, timeout: CHAT_TIMEOUT_MS },
+          apiKey,
+          CHAT_TIMEOUT_MS,
         );
         return resp.data.candidates[0].content.parts[0].text;
       }
