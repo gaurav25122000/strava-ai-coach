@@ -27,6 +27,8 @@ const ITEMS: MenuItemDef[] = [
   { key: 'settings', title: 'Settings',        sub: 'Strava, AI provider and preferences',          icon: Settings,   family: 'recovery', screen: 'Settings' },
 ];
 
+const recordsFam = familyStyle('records');
+
 /**
  * Hub screen behind the last tab: profile hero on top, then the app's
  * tool screens as rows. Every destination here is also reachable from the
@@ -47,8 +49,6 @@ export default function MenuScreen({ navigation }: any) {
     .join('')
     .toUpperCase();
 
-  const recordsFam = familyStyle('records');
-
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView
@@ -65,12 +65,7 @@ export default function MenuScreen({ navigation }: any) {
             accessibilityRole="button"
             accessibilityLabel="Open profile"
           >
-            <LinearGradient
-              colors={theme.colors.gradients.records}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.hero}
-            >
+            <View style={styles.hero}>
               <View style={styles.avatarRing}>
                 {hasAvatar ? (
                   <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
@@ -78,7 +73,7 @@ export default function MenuScreen({ navigation }: any) {
                   <View style={styles.avatarFallback}>
                     {initials
                       ? <Typography style={styles.avatarInitials}>{initials}</Typography>
-                      : <User size={26} color={theme.colors.onAccent} />}
+                      : <User size={26} color={recordsFam.accent} />}
                   </View>
                 )}
               </View>
@@ -88,8 +83,8 @@ export default function MenuScreen({ navigation }: any) {
                 </Typography>
                 <Typography style={styles.heroSub}>Athlete details & training profile</Typography>
               </View>
-              <ChevronRight size={20} color={theme.colors.onAccent} />
-            </LinearGradient>
+              <ChevronRight size={20} color={theme.colors.textSecondary} />
+            </View>
           </PressableScale>
         </StaggerItem>
 
@@ -151,13 +146,16 @@ const styles = StyleSheet.create({
     gap: 14,
     borderRadius: 20,
     padding: 16,
+    backgroundColor: theme.colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: withAlpha(recordsFam.accent, 'strong'),
   },
   avatarRing: {
     width: 56,
     height: 56,
     borderRadius: 28,
     borderWidth: 2,
-    borderColor: withAlpha('#FFFFFF', 'strong'),
+    borderColor: recordsFam.accent,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
@@ -171,22 +169,22 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: withAlpha(recordsFam.accent, 'tint'),
   },
   avatarInitials: {
     ...theme.typography.heading,
-    color: theme.colors.onAccent,
+    color: recordsFam.accent,
   },
   heroBody: {
     flex: 1,
   },
   heroName: {
     ...theme.typography.subtitle,
-    color: theme.colors.onAccent,
+    color: theme.colors.text,
   },
   heroSub: {
     ...theme.typography.micro,
-    color: withAlpha('#FFFFFF', 'heavy'),
+    color: theme.colors.textSecondary,
     marginTop: 2,
   },
   row: {

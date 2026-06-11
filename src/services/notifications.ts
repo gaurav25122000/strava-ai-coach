@@ -109,6 +109,37 @@ export const NotificationService = {
     });
   },
 
+  // Daily meal-logging reminders for the calorie tracker. Static repeating
+  // triggers (no "only if nothing logged" — that would need a background
+  // task); toggled from the tracker screen, so requesting permission here is
+  // a legitimate user gesture.
+  setMealReminders: async (enabled: boolean): Promise<boolean> => {
+    const MEALS: Array<{ id: string; hour: number; minute: number; title: string; body: string }> = [
+      { id: 'meal-reminder-breakfast', hour: 10, minute: 0,  title: '🍳 Breakfast logged?', body: 'Take 10 seconds to log your morning meal.' },
+      { id: 'meal-reminder-lunch',     hour: 14, minute: 30, title: '🥗 Lunch check-in',    body: 'Log lunch while you still remember what was on the plate.' },
+      { id: 'meal-reminder-dinner',    hour: 21, minute: 0,  title: '🍽️ Close out the day', body: 'Log dinner and see today’s energy balance.' },
+    ];
+    for (const m of MEALS) {
+      try { await Notifications.cancelScheduledNotificationAsync(m.id); } catch { /* may not exist */ }
+    }
+    if (!enabled) return true;
+
+    const granted = await NotificationService.requestPermission();
+    if (!granted) return false;
+    for (const m of MEALS) {
+      await Notifications.scheduleNotificationAsync({
+        identifier: m.id,
+        content: { title: m.title, body: m.body, data: { type: 'meal-reminder' } },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DAILY,
+          hour: m.hour,
+          minute: m.minute,
+        },
+      });
+    }
+    return true;
+  },
+
   // Goal deadline approaching — fires once, tomorrow 09:00. The body counts
   // days as of WHEN IT FIRES (the old text was off by one).
   scheduleGoalDeadline: async (goalTitle: string, daysLeft: number) => {

@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Lightbulb, Star, Zap } from 'lucide-react-native';
+import { format } from 'date-fns';
 import { WidgetCard } from '../components/WidgetCard';
 import { Typography } from '../components/Typography';
 import { theme, withAlpha } from '../theme';
@@ -13,6 +14,15 @@ import { EmptyHint } from './common';
  * dashboard only showed `tip || summary`; surfacing all three keeps the
  * generation cost honest.
  */
+// weekKey is the Monday of the recapped week (YYYY-MM-DD) — render it as a
+// human label rather than a bare ISO date.
+function digestCaption(weekKey?: string): string | undefined {
+  if (!weekKey) return undefined;
+  const d = new Date(`${weekKey}T00:00:00`);
+  if (isNaN(d.getTime())) return weekKey;
+  return `week of ${format(d, 'd MMM')}`;
+}
+
 export const WeeklyDigestWidget = memo(function WeeklyDigestWidget() {
   const weeklyDigest = useStore((s) => s.weeklyDigest);
 
@@ -31,7 +41,7 @@ export const WeeklyDigestWidget = memo(function WeeklyDigestWidget() {
       family={WIDGET_FAMILY.WeeklyDigest}
       title={WIDGET_TITLES.WeeklyDigest}
       icon={Zap}
-      caption={weeklyDigest?.weekKey}
+      caption={digestCaption(weeklyDigest?.weekKey)}
     >
       {rows.length === 0 ? (
         <EmptyHint

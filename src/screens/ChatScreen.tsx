@@ -33,6 +33,7 @@ import { Button } from '../components/Button';
 import { Sheet } from '../components/Sheet';
 import { useStore } from '../store/useStore';
 import { AIService, ChatMessage } from '../services/ai';
+import { nutritionContext } from '../services/calories';
 import { theme, withAlpha } from '../theme';
 import { secureSettingsStorage } from '../store/useStore';
 import { familyStyle } from '../utils/widgetFamilies';
@@ -351,7 +352,15 @@ export default function ChatScreen() {
         userProfile,
         activities,
         coachGoal,
-        { bestEfforts, unit: settings.unit },
+        {
+          bestEfforts,
+          unit: settings.unit,
+          nutrition: nutritionContext(
+            useStore.getState().foodLog,
+            activities,
+            useStore.getState().calorieGoal,
+          ),
+        },
       );
       setCoachChat([
         ...useStore.getState().coachChat,

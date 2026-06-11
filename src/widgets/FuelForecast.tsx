@@ -95,7 +95,7 @@ export const FuelForecastWidget = memo(function FuelForecastWidget() {
           </View>
         </View>
         <PressableScale
-          onPress={() => navigation.navigate('Menu', { screen: 'CalorieTracker' })}
+          onPress={() => navigation.navigate('Menu', { screen: 'CalorieTracker', initial: false })}
           style={[styles.advice, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
           accessibilityRole="button"
           accessibilityLabel="Open calorie tracker"

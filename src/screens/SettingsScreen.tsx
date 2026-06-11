@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, View, StyleSheet, ScrollView, TextInput, Platform, Linking as RNLinking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { theme, withAlpha } from '../theme';
 import { Typography } from '../components/Typography';
@@ -39,6 +40,7 @@ import {
   KeyRound,
   RefreshCw,
   Sparkles,
+  ChevronLeft,
   ChevronRight,
   Check,
 } from 'lucide-react-native';
@@ -114,6 +116,7 @@ export default function SettingsScreen() {
   const setActivities = useStore(s => s.setActivities);
   const setAthleteStats = useStore(s => s.setAthleteStats);
   const setToast = useStore(s => s.setToast);
+  const navigation = useNavigation<any>();
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -322,8 +325,18 @@ export default function SettingsScreen() {
           end={{ x: 1, y: 1 }}
           style={styles.heroHeader}
         >
-          <Typography style={styles.heroTitle}>Settings</Typography>
-          <Typography style={styles.heroSub}>Connect, customise, manage your data</Typography>
+          <PressableScale
+            onPress={() => { if (navigation.canGoBack()) navigation.goBack(); else navigation.navigate('MenuHome'); }}
+            hitSlop={theme.hitSlop}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <ChevronLeft size={24} color={theme.colors.onAccent} />
+          </PressableScale>
+          <View style={{ flex: 1 }}>
+            <Typography style={styles.heroTitle}>Settings</Typography>
+            <Typography style={styles.heroSub}>Connect, customise, manage your data</Typography>
+          </View>
         </LinearGradient>
 
         {/* ---------- Account ---------- */}
@@ -629,9 +642,11 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background,
   },
   scrollContent: {
-    paddingBottom: theme.spacing.xxl,
+    // Clear the floating dock, like every other Menu-stack screen.
+    paddingBottom: 130,
   },
   heroHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
     paddingHorizontal: 20, paddingTop: 14, paddingBottom: 22, marginBottom: 16,
   },
   heroTitle: { fontSize: 24, fontFamily: theme.fonts.display, color: theme.colors.onAccent },

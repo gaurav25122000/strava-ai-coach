@@ -37,6 +37,8 @@ import { CalorieWeekWidget } from './CalorieWeek';
 import { EnergyTrendWidget } from './EnergyTrend';
 import { ProteinTrackerWidget } from './ProteinTracker';
 import { MacroSplitWidget } from './MacroSplit';
+import { WaterTrackerWidget } from './WaterTracker';
+import { WeightTrendWidget } from './WeightTrend';
 import { FuelForecastWidget } from './FuelForecast';
 
 /**
@@ -83,5 +85,7 @@ export const WIDGET_REGISTRY: Record<string, React.ComponentType> = {
   EnergyTrend: EnergyTrendWidget,
   ProteinTracker: ProteinTrackerWidget,
   MacroSplit: MacroSplitWidget,
+  WaterTracker: WaterTrackerWidget,
+  WeightTrend: WeightTrendWidget,
   FuelForecast: FuelForecastWidget,
 };

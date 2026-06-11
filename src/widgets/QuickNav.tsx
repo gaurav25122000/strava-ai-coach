@@ -42,7 +42,10 @@ export const QuickNavWidget = memo(function QuickNavWidget() {
             <PressableScale
               key={s.key}
               style={[styles.tile, { borderColor: withAlpha(fam.accent, 'strong') }]}
-              onPress={() => navigation.navigate('Menu', { screen: s.screen })}
+              // initial:false keeps MenuHome under the pushed screen — without
+              // it a lazy-mounted Menu stack opens with the target as its only
+              // route and back/popToTop dead-end there.
+              onPress={() => navigation.navigate('Menu', { screen: s.screen, initial: false })}
               accessibilityRole="button"
               accessibilityLabel={s.title}
             >

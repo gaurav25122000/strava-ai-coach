@@ -300,8 +300,25 @@ export interface FoodLogEntry {
   loggedAt: string; // ISO
 }
 
+/** A user-saved food (same nutrition shape as the built-in library). */
+export interface CustomFood {
+  name: string;
+  calories: number; // kcal per serving
+  serving: string;
+  protein: number;  // grams per serving
+  carbs: number;
+  fat: number;
+}
+
+export interface WeightEntry {
+  /** YYYY-MM-DD (one entry per day — re-logging replaces). */
+  date: string;
+  kg: number;
+}
+
 export interface WeeklyDigest {
-  weekKey: string; // "2025-W18"
+  /** Monday of the recapped week, YYYY-MM-DD (utils/dates weekKey format). */
+  weekKey: string;
   generatedAt: string;
   summary: string;
   highlight: string;
@@ -508,6 +525,20 @@ interface AppState {
   addFoodEntries: (entries: FoodLogEntry[]) => void;
   removeFoodEntry: (id: string) => void;
   setCalorieGoal: (kcal: number) => void;
+  /** Food names starred in the Add Food library. */
+  favoriteFoods: string[];
+  toggleFavoriteFood: (name: string) => void;
+  /** User-defined foods (saved manual entries), searchable like the library. */
+  customFoods: CustomFood[];
+  addCustomFood: (food: CustomFood) => void;
+  /** Glasses of water per YYYY-MM-DD day. */
+  waterLog: Record<string, number>;
+  setWater: (day: string, glasses: number) => void;
+  /** Morning weigh-ins, ascending by date. */
+  weightLog: WeightEntry[];
+  addWeightEntry: (date: string, kg: number) => void;
+  mealRemindersEnabled: boolean;
+  setMealRemindersEnabled: (on: boolean) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -545,6 +576,40 @@ export const useStore = create<AppState>()(
         foodLog: state.foodLog.filter((e) => e.id !== id),
       })),
       setCalorieGoal: (calorieGoal) => set({ calorieGoal }),
+      favoriteFoods: [],
+      toggleFavoriteFood: (name) => set((state) => ({
+        favoriteFoods: state.favoriteFoods.includes(name)
+          ? state.favoriteFoods.filter((n) => n !== name)
+          : [...state.favoriteFoods, name],
+      })),
+      customFoods: [],
+      // Same-name saves overwrite, so re-saving a tweaked recipe just works.
+      addCustomFood: (food) => set((state) => ({
+        customFoods: [
+          ...state.customFoods.filter((f) => f.name.toLowerCase() !== food.name.toLowerCase()),
+          food,
+        ],
+      })),
+      waterLog: {},
+      setWater: (day, glasses) => set((state) => ({
+        waterLog: { ...state.waterLog, [day]: Math.max(0, Math.min(20, Math.round(glasses))) },
+      })),
+      weightLog: [],
+      addWeightEntry: (date, kg) => set((state) => {
+        const weightLog = [
+          ...state.weightLog.filter((w) => w.date !== date),
+          { date, kg },
+        ].sort((a, b) => a.date.localeCompare(b.date));
+        // Keep the profile (BMR, protein targets, fuel forecasts) in lockstep
+        // with the newest weigh-in.
+        const latest = weightLog[weightLog.length - 1];
+        return {
+          weightLog,
+          userProfile: { ...state.userProfile, weight: latest.kg },
+        };
+      }),
+      mealRemindersEnabled: false,
+      setMealRemindersEnabled: (mealRemindersEnabled) => set({ mealRemindersEnabled }),
       userStats: {
         currentStreak: 0,
         bestStreak: 0,
@@ -691,7 +756,8 @@ export const useStore = create<AppState>()(
       // v7 (2026-06): WeeklyGoalTracker→ThisWeek, StreakGuard→HeroBanner.
       // v8 (2026-06): calorie tracker — QuickNav, CaloriesToday, CalorieWeek
       // widgets slot into existing layouts.
-      version: 8,
+      // v9 (2026-06): WaterTracker + WeightTrend widgets.
+      version: 9,
       migrate: (persistedState: any, fromVersion: number) => {
         if (!persistedState) return persistedState;
         const next = { ...persistedState };
@@ -756,6 +822,20 @@ export const useStore = create<AppState>()(
           next.settings = { ...(next.settings ?? {}), widgetLayout: migrated };
         }
 
+        if (fromVersion < 9) {
+          const layout: string[] = next.settings?.widgetLayout ?? [...DEFAULT_WIDGET_LAYOUT];
+          const migrated = [...layout];
+          const chain = ['WaterTracker', 'WeightTrend'];
+          let anchor = migrated.indexOf('MacroSplit');
+          for (const id of chain) {
+            if (!migrated.includes(id)) {
+              migrated.splice(anchor >= 0 ? anchor + 1 : migrated.length, 0, id);
+            }
+            anchor = migrated.indexOf(id);
+          }
+          next.settings = { ...(next.settings ?? {}), widgetLayout: migrated };
+        }
+
         // Final defensive cleanup against the live widget registry.
         const layout: string[] = next.settings?.widgetLayout ?? [];
         next.settings = {
@@ -786,6 +866,11 @@ export const useStore = create<AppState>()(
         coachChat: state.coachChat,
         foodLog: state.foodLog,
         calorieGoal: state.calorieGoal,
+        favoriteFoods: state.favoriteFoods,
+        customFoods: state.customFoods,
+        waterLog: state.waterLog,
+        weightLog: state.weightLog,
+        mealRemindersEnabled: state.mealRemindersEnabled,
       }),
     }
   )

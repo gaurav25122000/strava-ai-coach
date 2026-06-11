@@ -49,6 +49,8 @@ export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   EnergyTrend:       'health',
   ProteinTracker:    'health',
   MacroSplit:        'health',
+  WaterTracker:      'health',
+  WeightTrend:       'health',
   // Recovery / wellness
   InjuryAlert:       'recovery',
   TrainingLoad:      'recovery',
@@ -127,6 +129,8 @@ export const DEFAULT_WIDGET_LAYOUT: string[] = [
   'EnergyTrend',
   'ProteinTracker',
   'MacroSplit',
+  'WaterTracker',
+  'WeightTrend',
   'CoachInsight',
   'WeeklyDigest',
   'TrainingLoad',
@@ -210,5 +214,7 @@ export const WIDGET_TITLES: Record<string, string> = {
   EnergyTrend:           'Energy Trend (14d)',
   ProteinTracker:        'Protein Tracker',
   MacroSplit:            'Macro Split (7d)',
+  WaterTracker:          'Water Today',
+  WeightTrend:           'Weight Trend',
   FuelForecast:          'Fuel Forecast',
 };

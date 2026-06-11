@@ -38,7 +38,8 @@ export const CaloriesTodayWidget = memo(function CaloriesTodayWidget() {
   const over = eaten > goal;
   const fam = familyStyle('health');
 
-  const openTracker = () => navigation.navigate('Menu', { screen: 'CalorieTracker' });
+  const openTracker = () =>
+    navigation.navigate('Menu', { screen: 'CalorieTracker', initial: false });
 
   return (
     <WidgetCard

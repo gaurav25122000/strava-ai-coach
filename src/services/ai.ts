@@ -669,6 +669,77 @@ async function requestFoodAnalysis(
   }
 }
 
+// ── Weekly digest ────────────────────────────────────────────────────────────
+// The digest widget shipped long before anything generated digests — this is
+// the generator. One structured call per week, fired post-sync.
+
+const DIGEST_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary:   { type: 'string' },  // 2 sentences on the week's training
+    highlight: { type: 'string' },  // the single best thing that happened
+    tip:       { type: 'string' },  // one actionable focus for next week
+  },
+  required: ['summary', 'highlight', 'tip'],
+};
+
+const DIGEST_SYSTEM = `You are a running coach writing a weekly recap card. Tone: direct, warm, specific to the data given — never generic filler. Each field: summary ≤ 2 short sentences, highlight ≤ 1 sentence, tip ≤ 1 actionable sentence for the coming week. If nutrition data is present, weave fueling into the tip only when it matters. Output through the structured response only.`;
+
+async function requestDigest(provider: Provider, apiKey: string, context: string): Promise<any> {
+  try {
+    if (provider === 'gemini') {
+      const resp = await geminiGenerate(
+        {
+          system_instruction: { parts: [{ text: DIGEST_SYSTEM }] },
+          contents: [{ role: 'user', parts: [{ text: context }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: DIGEST_SCHEMA,
+            maxOutputTokens: 1024,
+          },
+        },
+        apiKey,
+        CHAT_TIMEOUT_MS,
+      );
+      return JSON.parse(resp.data.candidates[0].content.parts[0].text);
+    }
+    if (provider === 'openai') {
+      const resp = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          model: MODELS.openai,
+          max_completion_tokens: 512,
+          response_format: { type: 'json_schema', json_schema: { name: 'weekly_digest', schema: DIGEST_SCHEMA } },
+          messages: [
+            { role: 'system', content: DIGEST_SYSTEM },
+            { role: 'user', content: context },
+          ],
+        },
+        { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, timeout: CHAT_TIMEOUT_MS },
+      );
+      return JSON.parse(resp.data.choices[0].message.content);
+    }
+    const resp = await axios.post(
+      'https://api.anthropic.com/v1/messages',
+      {
+        model: MODELS.anthropic,
+        max_tokens: 512,
+        system: DIGEST_SYSTEM,
+        tools: [{ name: 'submit_digest', description: 'Submit the weekly digest.', input_schema: DIGEST_SCHEMA }],
+        tool_choice: { type: 'tool', name: 'submit_digest' },
+        messages: [{ role: 'user', content: context }],
+      },
+      { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }, timeout: CHAT_TIMEOUT_MS },
+    );
+    const toolUse = (resp.data.content || []).find((b: any) => b.type === 'tool_use');
+    if (!toolUse?.input) throw new Error('anthropic: no structured digest returned');
+    return toolUse.input;
+  } catch (e: any) {
+    if (e?.message?.startsWith(provider)) throw e;
+    throw providerError(provider, e);
+  }
+}
+
 // ── Plan summaries (compact context instead of full-JSON history bloat) ─────
 
 function planSummaryText(phases: Phase[] | undefined): string {
@@ -713,6 +784,8 @@ export type ChatMessage = { role: 'user' | 'assistant'; text: string };
 export interface ChatExtras {
   bestEfforts?: Record<number, BestEffort>;
   unit?: 'metric' | 'imperial';
+  /** Pre-built NUTRITION LOG block from services/calories.nutritionContext. */
+  nutrition?: string | null;
 }
 
 export const AIService = {
@@ -729,6 +802,21 @@ export const AIService = {
     if (!apiKey) throw new Error('API Key is missing');
     const raw = await requestFoodAnalysis(provider, apiKey, base64, mimeType);
     return normaliseFoodAnalysis(raw);
+  },
+
+  /** One structured weekly-digest generation. Context built by the caller. */
+  generateWeeklyDigest: async (
+    context: string,
+    provider: Provider,
+    apiKey: string,
+  ): Promise<{ summary: string; highlight: string; tip: string }> => {
+    if (!apiKey) throw new Error('API Key is missing');
+    const raw = await requestDigest(provider, apiKey, context);
+    return {
+      summary: String(raw?.summary || '').slice(0, 400),
+      highlight: String(raw?.highlight || '').slice(0, 300),
+      tip: String(raw?.tip || '').slice(0, 300),
+    };
   },
 
   chatWithCoach: async (
@@ -781,6 +869,7 @@ ${snap.prLines.length ? snap.prLines.join('\n') : 'No PRs recorded yet.'}
 RECENT LOG (14 days, newest first):
 ${log.length ? log.join('\n') : 'No recent activities.'}
 ${goalContext}
+${extras.nutrition ? `\n${extras.nutrition}\nUse this when fueling/recovery/energy comes up — flag big deficits on hard-training days and low protein. Don't mention the tracker unprompted if intake looks fine.` : ''}
 
 Units: athlete prefers ${extras.unit || 'metric'}. Answer concisely in markdown. Be direct, specific, and data-driven; reference the actual log when relevant.`;
 

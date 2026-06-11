@@ -1,4 +1,4 @@
-import { Activity, FoodLogEntry, MealType } from '../store/useStore';
+import { Activity, FoodLogEntry, MealType, WeightEntry } from '../store/useStore';
 import { activityDayKey, localDateStr } from '../utils/dates';
 
 // ── Calorie tracker aggregations ─────────────────────────────────────────────
@@ -107,4 +107,89 @@ export function calorieWeekSeries(
     });
   }
   return out;
+}
+
+// ── Smart goal (BMR-based) ───────────────────────────────────────────────────
+
+/**
+ * Suggested daily intake: Mifflin-St Jeor BMR (sex-averaged constant — the
+ * profile doesn't record sex) × 1.35 non-exercise activity factor, plus the
+ * athlete's average daily Strava burn over the last 14 days. Rounded to 50.
+ * Null when the profile lacks weight/height/dob.
+ */
+export function suggestedCalorieGoal(
+  profile: { weight?: number; height?: number; dob?: string },
+  activities: Activity[],
+  today: Date = new Date(),
+): number | null {
+  const { weight, height, dob } = profile;
+  if (!weight || !height || !dob) return null;
+  const age = (today.getTime() - new Date(dob).getTime()) / (365.25 * 86400000);
+  if (!Number.isFinite(age) || age < 10 || age > 100) return null;
+  const bmr = 10 * weight + 6.25 * height - 5 * age - 78;
+  const recent = calorieWeekSeries([], activities, 14, today);
+  const avgBurn = recent.reduce((s, d) => s + d.burned, 0) / recent.length;
+  return Math.round((bmr * 1.35 + avgBurn) / 50) * 50;
+}
+
+// ── Weight trend ─────────────────────────────────────────────────────────────
+
+export interface WeightTrend {
+  /** Most recent weigh-in. */
+  current: WeightEntry;
+  /** Change vs the closest entry ≥ `days` ago (or the oldest available). */
+  deltaKg: number | null;
+  entries: WeightEntry[];
+}
+
+export function weightTrend(weightLog: WeightEntry[], days = 30, today: Date = new Date()): WeightTrend | null {
+  if (!weightLog.length) return null;
+  const sorted = [...weightLog].sort((a, b) => a.date.localeCompare(b.date));
+  const current = sorted[sorted.length - 1];
+  const cutoff = new Date(today);
+  cutoff.setDate(cutoff.getDate() - days);
+  const cutoffKey = localDateStr(cutoff);
+  // Baseline = newest entry at or before the cutoff; fall back to the oldest
+  // entry so a short log still shows its full-range delta.
+  const baseline = [...sorted].reverse().find((w) => w.date <= cutoffKey) ?? sorted[0];
+  const deltaKg = baseline.date === current.date
+    ? null
+    : Math.round((current.kg - baseline.kg) * 10) / 10;
+  return { current, deltaKg, entries: sorted };
+}
+
+/** One shared delta string so every surface renders the stat identically. */
+export function formatWeightDelta(deltaKg: number | null, days = 30): string {
+  if (deltaKg == null) return `— · ${days}d`;
+  const sign = deltaKg > 0 ? '+' : deltaKg < 0 ? '−' : '±';
+  return `${sign}${Math.abs(deltaKg)} kg · ${days}d`;
+}
+
+// ── Coach context ────────────────────────────────────────────────────────────
+
+/**
+ * Compact nutrition block for LLM prompts (coach chat, weekly digest).
+ * Null when the athlete has never logged food — the coach shouldn't nag
+ * about a feature they don't use.
+ */
+export function nutritionContext(
+  foodLog: FoodLogEntry[],
+  activities: Activity[],
+  calorieGoal: number,
+  today: Date = new Date(),
+): string | null {
+  if (!foodLog.length) return null;
+  const todayKey = localDateStr(today);
+  const week = calorieWeekSeries(foodLog, activities, 7, today);
+  const loggedDays = week.filter((d) => d.eaten > 0);
+  const m = macrosOn(foodLog, todayKey);
+  const lines = [
+    `- Today: ${eatenOn(foodLog, todayKey)} kcal eaten, ${burnedOn(activities, todayKey)} kcal active burn, goal ${calorieGoal} kcal (P ${m.protein} g / C ${m.carbs} g / F ${m.fat} g so far)`,
+  ];
+  if (loggedDays.length) {
+    const avgEaten = Math.round(loggedDays.reduce((s, d) => s + d.eaten, 0) / loggedDays.length);
+    const avgNet = Math.round(loggedDays.reduce((s, d) => s + d.eaten - d.burned, 0) / loggedDays.length);
+    lines.push(`- Last 7 days: ${loggedDays.length}/7 days logged, avg ${avgEaten} kcal eaten, avg net ${avgNet >= 0 ? '+' : ''}${avgNet} kcal vs active burn`);
+  }
+  return `NUTRITION LOG (athlete's calorie tracker):\n${lines.join('\n')}`;
 }

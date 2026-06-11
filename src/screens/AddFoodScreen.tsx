@@ -2,13 +2,14 @@ import React, { useMemo, useState } from 'react';
 import { FlatList, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  Camera, Check, ChevronLeft, Image as ImageIcon, Minus, Plus, Search, Sparkles,
+  Camera, Check, ChevronLeft, Heart, Image as ImageIcon, Minus, Plus, Search, Sparkles,
 } from 'lucide-react-native';
 import { Typography } from '../components/Typography';
 import { PressableScale } from '../components/PressableScale';
 import { Button } from '../components/Button';
 import { Sheet } from '../components/Sheet';
 import { FieldBlock, SegmentedControl } from '../components/SheetUI';
+import { Toggle } from '../components/Toggle';
 import { Pulsing } from '../components/Pulsing';
 import { theme, withAlpha } from '../theme';
 import { familyStyle } from '../utils/widgetFamilies';
@@ -22,6 +23,11 @@ import {
 } from '../store/useStore';
 
 type Mode = 'library' | 'manual' | 'photo';
+
+/** Library list row: section label or tappable food. */
+type LibRow =
+  | { type: 'header'; title: string }
+  | { type: 'food'; item: FoodItem };
 
 const CATEGORY_KEYS = Object.keys(FOOD_CATEGORY_LABELS) as FoodCategory[];
 
@@ -43,6 +49,11 @@ export default function AddFoodScreen({ navigation, route }: any) {
 
   const addFoodEntries = useStore((s) => s.addFoodEntries);
   const setToast = useStore((s) => s.setToast);
+  const foodLog = useStore((s) => s.foodLog);
+  const favoriteFoods = useStore((s) => s.favoriteFoods);
+  const toggleFavoriteFood = useStore((s) => s.toggleFavoriteFood);
+  const customFoods = useStore((s) => s.customFoods);
+  const addCustomFood = useStore((s) => s.addCustomFood);
   const fam = familyStyle('health');
 
   // ── Library state ─────────────────────────────────────────────────────
@@ -51,7 +62,67 @@ export default function AddFoodScreen({ navigation, route }: any) {
   const [picked, setPicked] = useState<FoodItem | null>(null);
   const [qty, setQty] = useState(1);
 
-  const results = useMemo(() => searchFoods(query, category), [query, category]);
+  const customItems = useMemo<FoodItem[]>(
+    () => customFoods.map((f) => ({ ...f, category: 'custom' as const })),
+    [customFoods],
+  );
+  const categoryKeys = customItems.length
+    ? CATEGORY_KEYS
+    : CATEGORY_KEYS.filter((c) => c !== 'custom');
+
+  const rows = useMemo<LibRow[]>(() => {
+    const results = searchFoods(query, category, customItems);
+    const all: LibRow[] = results.map((item) => ({ type: 'food', item }));
+    if (query.trim() || category !== 'all') return all;
+
+    // Per-serving FoodItem reconstructed from a logged entry — lets manual/
+    // photo foods (which live in neither the library nor My Foods) appear in
+    // Favourites and Recents.
+    const fromEntry = (e: (typeof foodLog)[number]): FoodItem => {
+      const q = e.quantity || 1;
+      return {
+        name: e.name,
+        category: 'custom',
+        calories: Math.round(e.calories / q),
+        serving: e.serving ?? 'serving',
+        protein: Math.round((e.protein ?? 0) / q),
+        carbs: Math.round((e.carbs ?? 0) / q),
+        fat: Math.round((e.fat ?? 0) / q),
+      };
+    };
+    const newestEntryNamed = (name: string) => {
+      for (let i = foodLog.length - 1; i >= 0; i -= 1) {
+        if (foodLog[i].name === name) return fromEntry(foodLog[i]);
+      }
+      return null;
+    };
+
+    // Default view pins favourites + recently logged above the full list.
+    // Favourites resolve from the library/My Foods first, then from log
+    // history — so hearting a one-off photo food still sticks.
+    const pinned: LibRow[] = [];
+    const favs = favoriteFoods
+      .map((name) => results.find((f) => f.name === name) ?? newestEntryNamed(name))
+      .filter((f): f is FoodItem => f !== null);
+    if (favs.length) {
+      pinned.push({ type: 'header', title: '★ Favourites' });
+      favs.forEach((item) => pinned.push({ type: 'food', item }));
+    }
+    const seen = new Set<string>(favs.map((f) => f.name));
+    const recents: FoodItem[] = [];
+    for (let i = foodLog.length - 1; i >= 0 && recents.length < 8; i -= 1) {
+      const e = foodLog[i];
+      if (seen.has(e.name)) continue;
+      seen.add(e.name);
+      recents.push(fromEntry(e));
+    }
+    if (recents.length) {
+      pinned.push({ type: 'header', title: 'Recent' });
+      recents.forEach((item) => pinned.push({ type: 'food', item }));
+    }
+    if (!pinned.length) return all;
+    return [...pinned, { type: 'header', title: 'All foods' }, ...all];
+  }, [query, category, customItems, favoriteFoods, foodLog]);
 
   // ── Manual state ──────────────────────────────────────────────────────
   const [mName, setMName] = useState('');
@@ -60,6 +131,7 @@ export default function AddFoodScreen({ navigation, route }: any) {
   const [mCarbs, setMCarbs] = useState('');
   const [mFat, setMFat] = useState('');
   const [mServing, setMServing] = useState('');
+  const [saveToMyFoods, setSaveToMyFoods] = useState(false);
 
   // ── Photo state ───────────────────────────────────────────────────────
   const [analyzing, setAnalyzing] = useState(false);
@@ -106,6 +178,16 @@ export default function AddFoodScreen({ navigation, route }: any) {
       const v = parseFloat(s);
       return Number.isFinite(v) && v > 0 ? Math.round(v) : undefined;
     };
+    if (saveToMyFoods) {
+      addCustomFood({
+        name: mName.trim(),
+        calories: kcal,
+        serving: mServing.trim() || '1 serving',
+        protein: num(mProtein) ?? 0,
+        carbs: num(mCarbs) ?? 0,
+        fat: num(mFat) ?? 0,
+      });
+    }
     finish([{
       id: entryId(),
       date,
@@ -199,21 +281,40 @@ export default function AddFoodScreen({ navigation, route }: any) {
     );
   };
 
-  const renderFood = ({ item }: { item: FoodItem }) => (
-    <PressableScale
-      onPress={() => { setPicked(item); setQty(1); }}
-      style={styles.foodRow}
-      accessibilityRole="button"
-      accessibilityLabel={`Add ${item.name}`}
-    >
-      <View style={styles.foodBody}>
-        <Typography style={styles.foodName} numberOfLines={1}>{item.name}</Typography>
-        <Typography style={styles.foodSub}>{item.serving} · P {item.protein} C {item.carbs} F {item.fat}</Typography>
-      </View>
-      <Typography style={[styles.foodKcal, { color: fam.accent }]}>{item.calories} kcal</Typography>
-      <Plus size={16} color={fam.accent} />
-    </PressableScale>
-  );
+  const renderRow = ({ item: row }: { item: LibRow }) => {
+    if (row.type === 'header') {
+      return <Typography style={styles.sectionLabel}>{row.title}</Typography>;
+    }
+    const { item } = row;
+    const fav = favoriteFoods.includes(item.name);
+    return (
+      <PressableScale
+        onPress={() => { setPicked(item); setQty(1); }}
+        style={styles.foodRow}
+        accessibilityRole="button"
+        accessibilityLabel={`Add ${item.name}`}
+      >
+        <View style={styles.foodBody}>
+          <Typography style={styles.foodName} numberOfLines={1}>{item.name}</Typography>
+          <Typography style={styles.foodSub}>{item.serving} · P {item.protein} C {item.carbs} F {item.fat}</Typography>
+        </View>
+        <Typography style={[styles.foodKcal, { color: fam.accent }]}>{item.calories} kcal</Typography>
+        <Plus size={16} color={fam.accent} />
+        <PressableScale
+          onPress={() => toggleFavoriteFood(item.name)}
+          hitSlop={theme.hitSlop}
+          accessibilityRole="button"
+          accessibilityLabel={fav ? `Remove ${item.name} from favourites` : `Add ${item.name} to favourites`}
+        >
+          <Heart
+            size={16}
+            color={fav ? fam.accent : theme.colors.textSecondary}
+            fill={fav ? fam.accent : 'transparent'}
+          />
+        </PressableScale>
+      </PressableScale>
+    );
+  };
 
   const libraryHeader = (
     <View style={styles.libHeader}>
@@ -229,7 +330,7 @@ export default function AddFoodScreen({ navigation, route }: any) {
         />
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.catRow}>
-        {(['all', ...CATEGORY_KEYS] as const).map((c) => {
+        {(['all', ...categoryKeys] as ('all' | FoodCategory)[]).map((c) => {
           const active = category === c;
           return (
             <PressableScale
@@ -296,9 +397,9 @@ export default function AddFoodScreen({ navigation, route }: any) {
 
       {mode === 'library' && (
         <FlatList
-          data={results}
-          keyExtractor={(f) => f.name}
-          renderItem={renderFood}
+          data={rows}
+          keyExtractor={(row, i) => (row.type === 'header' ? `header-${row.title}` : `food-${i}-${row.item.name}`)}
+          renderItem={renderRow}
           ListHeaderComponent={libraryHeader}
           ListEmptyComponent={
             <Typography style={styles.emptyTxt}>
@@ -327,6 +428,15 @@ export default function AddFoodScreen({ navigation, route }: any) {
             </View>
           </View>
           <FieldBlock label="Serving (optional)" family="health" value={mServing} onChangeText={setMServing} placeholder="1 bowl" />
+          <View style={styles.saveRow}>
+            <Typography style={styles.saveRowTxt}>Save to My Foods</Typography>
+            <Toggle
+              value={saveToMyFoods}
+              onValueChange={setSaveToMyFoods}
+              accent={fam.accent}
+              accessibilityLabel="Save to My Foods"
+            />
+          </View>
           <Button title="Add to log" family="health" fullWidth icon={Plus} onPress={addManual} />
         </ScrollView>
       )}
@@ -546,6 +656,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 130,
   },
+  sectionLabel: {
+    ...theme.typography.micro,
+    color: theme.colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginTop: 14,
+  },
   foodRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -580,6 +697,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 130,
     gap: 12,
+  },
+  saveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  saveRowTxt: {
+    ...theme.typography.footnote,
+    color: theme.colors.text,
   },
   macroInputs: {
     flexDirection: 'row',

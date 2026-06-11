@@ -23,7 +23,7 @@ import {
   User, Award, Activity, CalendarDays, Weight,
   Heart, HeartPulse, Target, Moon, Utensils, Zap, Check,
   Pencil, Flame, Trophy, Ruler,
-  Settings, ActivitySquare, Clock, Mountain, Timer,
+  ChevronLeft, Clock, Mountain, Timer,
   type LucideIcon,
 } from 'lucide-react-native';
 import { Icon } from '../components/Icon';
@@ -355,27 +355,16 @@ export default function ProfileScreen() {
             start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
             style={st.heroBanner}
           >
-            {/* Top-left utility icons — quick access to settings / gear */}
+            {/* Top-left back button — Settings/Gear now live in the Menu hub */}
             <View style={st.heroIconRow}>
               <PressableScale
-                onPress={() => navigation.navigate('Settings')}
+                onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('MenuHome'))}
                 style={st.heroIconBtn}
-                haptic="selection"
                 hitSlop={theme.hitSlop}
                 accessibilityRole="button"
-                accessibilityLabel="Open settings"
+                accessibilityLabel="Back"
               >
-                <Icon icon={Settings} variant="plain" size="md" color={theme.colors.onAccent} />
-              </PressableScale>
-              <PressableScale
-                onPress={() => navigation.navigate('GearHealth')}
-                style={st.heroIconBtn}
-                haptic="selection"
-                hitSlop={theme.hitSlop}
-                accessibilityRole="button"
-                accessibilityLabel="Gear and health"
-              >
-                <Icon icon={ActivitySquare} variant="plain" size="md" color={theme.colors.onAccent} />
+                <Icon icon={ChevronLeft} variant="plain" size="md" color={theme.colors.onAccent} />
               </PressableScale>
             </View>
           </LinearGradient>

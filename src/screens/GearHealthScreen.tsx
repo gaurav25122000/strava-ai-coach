@@ -4,9 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
+import { useNavigation } from '@react-navigation/native';
 import { DonutRing } from '../components/DonutRing';
 import { theme, withAlpha } from '../theme';
 import { Typography } from '../components/Typography';
+import { PressableScale } from '../components/PressableScale';
 import { WidgetCard } from '../components/WidgetCard';
 import { Sheet } from '../components/Sheet';
 import { Button } from '../components/Button';
@@ -19,7 +21,7 @@ import { useStore } from '../store/useStore';
 import { performStravaSync } from '../services/syncRunner';
 import {
   Plus, AlertCircle, Footprints, Heart,
-  Pencil, Activity, Check, Trash2,
+  Pencil, Activity, Check, Trash2, ChevronLeft,
 } from 'lucide-react-native';
 import { Icon } from '../components/Icon';
 
@@ -100,6 +102,7 @@ export default function GearHealthScreen() {
   const updateInjury = useStore(s => s.updateInjury);
   const removeInjury = useStore(s => s.removeInjury);
   const setToast = useStore(s => s.setToast);
+  const navigation = useNavigation<any>();
 
   const [shoeForm, setShoeForm] = useState<ShoeForm | null>(null);
   const [injuryType, setInjuryType] = useState('');
@@ -241,6 +244,14 @@ export default function GearHealthScreen() {
           end={{ x: 1, y: 1 }}
           style={styles.heroHeader}
         >
+          <PressableScale
+            onPress={() => { if (navigation.canGoBack()) navigation.goBack(); else navigation.navigate('MenuHome'); }}
+            hitSlop={theme.hitSlop}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <ChevronLeft size={24} color={theme.colors.onAccent} />
+          </PressableScale>
           <View style={{ flex: 1 }}>
             <Typography style={styles.heroTitle}>Gear & Health</Typography>
             <Typography style={styles.heroSub}>Track shoe mileage and log injuries</Typography>
@@ -578,7 +589,8 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background,
   },
   scrollContent: {
-    paddingBottom: theme.spacing.xxl,
+    // Clear the floating dock, like every other Menu-stack screen.
+    paddingBottom: 130,
   },
   heroHeader: {
     flexDirection: 'row',
