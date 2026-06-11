@@ -56,8 +56,8 @@ export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   YearToDate:        'activity',
   AllTimeStats:      'activity',
   ShoeTracker:       'activity',
-  StravaTotals:      'activity',
-  SportSplit:        'activity',
+  StreakGuard:       'activity',
+  ActiveHours:       'activity',
   TrainerRatio:      'activity',
   // Health / physiology
   HeartRate:         'health',
@@ -91,6 +91,10 @@ export const RETIRED_WIDGETS: Record<string, string | null> = {
   WellnessScore: null,
   SufferTrend: 'TrainingLoad',
   KudosLeaderboard: null,
+  // v5 (2026-06): SportSplit folded into ActivityMix (count/km toggle);
+  // StravaTotals folded into All-Time Stats (per-sport row from local data).
+  SportSplit: 'ActivityMix',
+  StravaTotals: 'AllTimeStats',
 };
 
 // The curated default dashboard for fresh installs (and the single source of
@@ -99,6 +103,7 @@ export const RETIRED_WIDGETS: Record<string, string | null> = {
 export const DEFAULT_WIDGET_LAYOUT: string[] = [
   'TodayHero',
   'HeroBanner',
+  'StreakGuard',
   'WeeklyGoalTracker',
   'ThisWeek',
   'CoachInsight',
@@ -110,6 +115,7 @@ export const DEFAULT_WIDGET_LAYOUT: string[] = [
   'ActivityMap',
   'RecentActivities',
   'MonthlyVolume',
+  'ActiveHours',
   'HeartRate',
   'PersonalBests',
   'BestEfforts',
@@ -163,7 +169,7 @@ export const WIDGET_TITLES: Record<string, string> = {
   HeartRate:             'Heart Rate Stats',
   PersonalBests:         'Personal Bests',
   RacePredictor:         'Race Predictor',
-  ActivityMix:           'Activity Mix',
+  ActivityMix:           'Sport Mix',
   YearToDate:            'Year to Date',
   AllTimeStats:          'All-Time Stats',
   ActiveGoals:           'Active Goals List',
@@ -172,8 +178,8 @@ export const WIDGET_TITLES: Record<string, string> = {
   Badges:                'Milestones & Badges',
   NextBadge:             'Next Badge',
   StarredSegments:       'Starred Segments',
-  StravaTotals:          'Strava Lifetime Totals',
-  SportSplit:            'Sport Split (this year)',
+  StreakGuard:           'Streak Guard',
+  ActiveHours:           'Active Hours',
   TrainerRatio:          'Trainer vs Outdoor',
   PhotoStream:           'Recent Photos',
   PowerZones:            'Power Zones',

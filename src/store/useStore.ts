@@ -645,7 +645,8 @@ export const useStore = create<AppState>()(
       // RETIRED_WIDGETS, TodayHero guaranteed first, NextBadge introduced.
       // Activities/starredSegments/athleteStats also leave this blob for the
       // separate data cache (they rehydrate from the old blob one last time).
-      version: 4,
+      // v5 (2026-06): SportSplit→ActivityMix, StravaTotals→AllTimeStats.
+      version: 5,
       migrate: (persistedState: any, fromVersion: number) => {
         if (!persistedState) return persistedState;
         const next = { ...persistedState };
@@ -659,7 +660,7 @@ export const useStore = create<AppState>()(
           next.settings = { ...(next.settings ?? {}), widgetLayout: withHero };
         }
 
-        if (fromVersion < 4) {
+        if (fromVersion < 5) {
           const layout: string[] = next.settings?.widgetLayout ?? [...DEFAULT_WIDGET_LAYOUT];
           const migrated: string[] = [];
           for (const id of layout) {
@@ -669,6 +670,15 @@ export const useStore = create<AppState>()(
           if (!migrated.includes('TodayHero')) migrated.unshift('TodayHero');
           if (migrated.includes('Badges') && !migrated.includes('NextBadge')) {
             migrated.splice(migrated.indexOf('Badges') + 1, 0, 'NextBadge');
+          }
+          // v5 additions slot into existing layouts at their default positions.
+          if (!migrated.includes('StreakGuard')) {
+            const anchor = migrated.indexOf('HeroBanner');
+            migrated.splice(anchor >= 0 ? anchor + 1 : 1, 0, 'StreakGuard');
+          }
+          if (!migrated.includes('ActiveHours')) {
+            const anchor = migrated.indexOf('MonthlyVolume');
+            migrated.splice(anchor >= 0 ? anchor + 1 : migrated.length, 0, 'ActiveHours');
           }
           next.settings = { ...(next.settings ?? {}), widgetLayout: migrated };
         }

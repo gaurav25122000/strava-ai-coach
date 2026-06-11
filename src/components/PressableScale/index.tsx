@@ -24,7 +24,7 @@ interface PressableScaleProps extends Omit<PressableProps, 'style'> {
 // providing tap feedback for a card / row / chip.
 export function PressableScale({
   scaleTo = 0.97,
-  haptic = 'selection',
+  haptic = 'none',
   onPressIn,
   onPressOut,
   onPress,

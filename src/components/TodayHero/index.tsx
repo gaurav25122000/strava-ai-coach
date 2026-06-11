@@ -103,11 +103,9 @@ export function TodayHero({
     onMarkDone();
   }, [onMarkDone]);
   const handleSkip = useCallback(() => {
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onSkip();
   }, [onSkip]);
   const handleCreateGoal = useCallback(() => {
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onCreateGoal();
   }, [onCreateGoal]);
 

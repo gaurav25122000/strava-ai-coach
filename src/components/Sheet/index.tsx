@@ -18,7 +18,6 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
 import { theme } from '../../theme';
 import { Typography } from '../Typography';
 
@@ -79,7 +78,6 @@ export function Sheet({
   const startClose = useCallback(() => {
     if (closing.current) return;
     closing.current = true;
-    if (Platform.OS !== 'web') Haptics.selectionAsync();
     backdrop.value = withTiming(0, { duration: EXIT_MS });
     ty.value = withTiming(measuredH.current, { duration: EXIT_MS }, (done) => {
       if (done) runOnJS(finishClose)();
@@ -92,7 +90,6 @@ export function Sheet({
       ty.value = windowH;
       backdrop.value = 0;
       setMounted(true);
-      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } else if (mounted && !closing.current) {
       startClose();
     }

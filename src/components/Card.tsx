@@ -2,7 +2,6 @@ import React from 'react';
 import { StyleSheet, ViewProps, TouchableOpacity, Platform } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Haptics from 'expo-haptics';
 import { theme } from '../theme';
 
 type Variant = 'flat' | 'elevated' | 'glass' | 'gradient';
@@ -40,7 +39,6 @@ export const Card = ({
   };
   const handlePress = () => {
     if (onPress) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       onPress();
     }
   };

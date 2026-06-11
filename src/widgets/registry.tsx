@@ -16,8 +16,8 @@ import { ActivityMixWidget } from './ActivityMix';
 import { YearToDateWidget } from './YearToDate';
 import { AllTimeStatsWidget } from './AllTimeStats';
 import { ShoeTrackerWidget } from './ShoeTracker';
-import { StravaTotalsWidget } from './StravaTotals';
-import { SportSplitWidget } from './SportSplit';
+import { StreakGuardWidget } from './StreakGuard';
+import { ActiveHoursWidget } from './ActiveHours';
 import { TrainerRatioWidget } from './TrainerRatio';
 import { HeartRateWidget } from './HeartRate';
 import { IntensityDistributionWidget } from './IntensityDistribution';
@@ -56,8 +56,8 @@ export const WIDGET_REGISTRY: Record<string, React.ComponentType> = {
   YearToDate: YearToDateWidget,
   AllTimeStats: AllTimeStatsWidget,
   ShoeTracker: ShoeTrackerWidget,
-  StravaTotals: StravaTotalsWidget,
-  SportSplit: SportSplitWidget,
+  StreakGuard: StreakGuardWidget,
+  ActiveHours: ActiveHoursWidget,
   TrainerRatio: TrainerRatioWidget,
   HeartRate: HeartRateWidget,
   IntensityDistribution: IntensityDistributionWidget,

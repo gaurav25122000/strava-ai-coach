@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useMemo, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { CartesianChart, Bar, useChartPressState } from 'victory-native';
 import { LinearGradient as SkLinearGradient, vec } from '@shopify/react-native-skia';
 import Animated, {
@@ -8,7 +8,6 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
 } from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
 import { theme, withAlpha } from '../../theme';
 import { familyStyle, WidgetFamily } from '../../utils/widgetFamilies';
 import { niceCeil } from '../../utils/downsample';
@@ -71,7 +70,6 @@ export const ChartBars = memo(function ChartBars({
       const p = points[i];
       if (!p) return;
       setActive({ label: labels[i], value: p.value });
-      if (Platform.OS !== 'web') Haptics.selectionAsync();
     },
     [points, labels],
   );

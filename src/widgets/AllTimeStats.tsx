@@ -36,12 +36,16 @@ export const AllTimeStatsWidget = memo(function AllTimeStatsWidget() {
     let hrCount = 0;
     let bestPaceMin = Infinity;
     const days = new Set<string>();
+    const perSport: Record<string, { km: number; count: number }> = {};
     for (const a of activities) {
       time += a.movingTime;
       elev += a.totalElevationGain;
       km += a.distance / 1000;
       if (a.totalElevationGain > topElev) topElev = a.totalElevationGain;
       days.add(activityDayKey(a));
+      const sport = (perSport[a.type] ??= { km: 0, count: 0 });
+      sport.km += a.distance / 1000;
+      sport.count += 1;
       if ((a.averageHeartRate || 0) > 0) {
         hrSum += a.averageHeartRate!;
         hrCount++;
@@ -52,7 +56,14 @@ export const AllTimeStatsWidget = memo(function AllTimeStatsWidget() {
         if (pace > 0 && pace < bestPaceMin) bestPaceMin = pace;
       }
     }
+    // Per-sport rollup (absorbs the old Strava Lifetime Totals widget — local
+    // history covers every sport, including the walks Strava's API omits).
+    const sports = Object.entries(perSport)
+      .map(([type, v]) => ({ type, km: Math.round(v.km), count: v.count }))
+      .sort((a, b) => b.km - a.km)
+      .slice(0, 4);
     return {
+      sports,
       totalKm: Math.round(km),
       totalTime: time,
       totalElev: Math.round(elev),
@@ -112,6 +123,19 @@ export const AllTimeStatsWidget = memo(function AllTimeStatsWidget() {
               );
             })}
           </View>
+          {stats.sports.length > 1 && (
+            <View style={styles.sportRow}>
+              {stats.sports.map((s) => (
+                <View key={s.type} style={styles.sportChip}>
+                  <Typography style={[styles.sportType, { color: accent }]} numberOfLines={1}>
+                    {s.type}
+                  </Typography>
+                  <Typography style={styles.sportVal}>{s.km} km</Typography>
+                  <Typography style={styles.sportCount}>{s.count}×</Typography>
+                </View>
+              ))}
+            </View>
+          )}
         </>
       )}
     </WidgetCard>
@@ -151,6 +175,34 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
   },
   tileLbl: {
+    ...theme.typography.micro,
+    color: theme.colors.textSecondary,
+  },
+  sportRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  sportChip: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+    borderRadius: theme.borderRadius.md,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  sportType: {
+    ...theme.typography.micro,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  sportVal: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: theme.colors.text,
+    marginTop: 2,
+  },
+  sportCount: {
     ...theme.typography.micro,
     color: theme.colors.textSecondary,
   },

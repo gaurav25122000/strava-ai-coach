@@ -1,5 +1,5 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { Canvas, Path, Skia } from '@shopify/react-native-skia';
 import {
   Easing,
@@ -7,7 +7,6 @@ import {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
 import { theme, withAlpha } from '../../theme';
 import { PressableScale } from '../PressableScale';
 
@@ -171,7 +170,6 @@ export const ChartDonut = memo(function ChartDonut({
 
   const onLegendPress = (i: number) => {
     setSelected((cur) => (cur === i ? null : i));
-    if (Platform.OS !== 'web') Haptics.selectionAsync();
   };
 
   const shown = selected !== null ? clean[selected] : null;
