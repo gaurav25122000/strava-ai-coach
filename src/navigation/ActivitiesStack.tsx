@@ -17,7 +17,10 @@ function ActivityDetailWrapper({ route, navigation }: any) {
   return (
     <ActivityDetailScreen
       activity={route.params.activity}
-      onClose={() => navigation.goBack()}
+      // canGoBack guard: a double-tap during the dismiss animation, or the
+      // tab-blur popToTop having already removed this route, would otherwise
+      // dispatch GO_BACK with nothing to pop.
+      onClose={() => { if (navigation.canGoBack()) navigation.goBack(); }}
     />
   );
 }
