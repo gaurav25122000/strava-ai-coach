@@ -465,8 +465,10 @@ export default function GoalsScreen() {
         setFormVisible(false);
         // Don't apply silently — surface the diff for review.
         setPlanDiff({ goal: existing, plan, updatedHistory });
-      } catch {
-        setToast({ title: 'Error', message: 'Failed to update plan. Check API Key.', type: 'error' });
+      } catch (e: any) {
+        console.error('[PlanEdit] failed:', e);
+        const detail = typeof e?.message === 'string' && e.message ? e.message : 'Failed to update plan.';
+        setToast({ title: 'Plan update failed', message: detail.length > 160 ? `${detail.slice(0, 157)}…` : detail, type: 'error' });
       } finally {
         setIsGenerating(false);
       }

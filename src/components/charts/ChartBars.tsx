@@ -92,8 +92,10 @@ export const ChartBars = memo(function ChartBars({
     };
   }, [isActive, chartW]);
 
-  // X labels get sparse automatically when there are many buckets.
-  const xTickCount = Math.min(points.length, points.length > 16 ? 6 : points.length);
+  // X labels go sparse based on what actually fits: date-style labels need
+  // ~64px each, so cap ticks by measured width rather than bucket count.
+  const maxTicks = chartW > 0 ? Math.max(2, Math.min(8, Math.floor(chartW / 64))) : 5;
+  const xTickCount = Math.min(points.length, maxTicks);
 
   if (!points.length) return <View style={{ height }} />;
 
