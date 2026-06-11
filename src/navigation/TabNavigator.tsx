@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StackActions } from '@react-navigation/native';
-import { Home, BarChart2, Target, MessageCircle, User, List } from 'lucide-react-native';
+import { Home, BarChart2, Target, MessageCircle, LayoutGrid, List } from 'lucide-react-native';
 import OverviewScreen from '../screens/OverviewScreen';
 import InsightsScreen from '../screens/InsightsScreen';
 import GoalsScreen from '../screens/GoalsScreen';
@@ -49,7 +49,7 @@ const TAB_COLORS = {
   Insights:   FAM.progress.accent,
   Goals:      FAM.plan.accent,
   Chat:       FAM.social.accent,
-  Profile:    FAM.recovery.accent,
+  Menu:       FAM.recovery.accent,
 } as const;
 
 function tabScreenListeners({ navigation, route }: { navigation: any; route: any }) {
@@ -234,14 +234,14 @@ export default function TabNavigator() {
         }}
       />
       <Tab.Screen
-        name="Profile"
+        name="Menu"
         component={ProfileStack}
         options={{
-          tabBarActiveTintColor: TAB_COLORS.Profile,
-          tabBarAccessibilityLabel: "Profile tab",
+          tabBarActiveTintColor: TAB_COLORS.Menu,
+          tabBarAccessibilityLabel: "Menu tab",
           tabBarIcon: ({ color, size, focused }) => (
-            <DockItem color={TAB_COLORS.Profile} gradient={theme.colors.gradients.recovery} focused={focused}>
-              <User color={focused ? theme.colors.onAccent : color} size={size - 2} />
+            <DockItem color={TAB_COLORS.Menu} gradient={theme.colors.gradients.recovery} focused={focused}>
+              <LayoutGrid color={focused ? theme.colors.onAccent : color} size={size - 2} />
             </DockItem>
           ),
         }}

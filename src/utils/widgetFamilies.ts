@@ -41,6 +41,14 @@ export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   CoachInsight:      'plan',
   WeeklyDigest:      'plan',
   ActiveGoals:       'plan',
+  QuickNav:          'plan',
+  FuelForecast:      'plan',
+  // Nutrition
+  CaloriesToday:     'health',
+  CalorieWeek:       'health',
+  EnergyTrend:       'health',
+  ProteinTracker:    'health',
+  MacroSplit:        'health',
   // Recovery / wellness
   InjuryAlert:       'recovery',
   TrainingLoad:      'recovery',
@@ -109,9 +117,16 @@ export const RETIRED_WIDGETS: Record<string, string | null> = {
 // Order = narrative: today's plan → this week → recovery → trends → records.
 export const DEFAULT_WIDGET_LAYOUT: string[] = [
   'TodayHero',
+  'QuickNav',
   'HeroBanner',
   'ThisWeek',
   'WeeklyRecap',
+  'CaloriesToday',
+  'FuelForecast',
+  'CalorieWeek',
+  'EnergyTrend',
+  'ProteinTracker',
+  'MacroSplit',
   'CoachInsight',
   'WeeklyDigest',
   'TrainingLoad',
@@ -189,4 +204,11 @@ export const WIDGET_TITLES: Record<string, string> = {
   PhotoStream:           'Recent Photos',
   PowerZones:            'Power Zones',
   EnergyExpenditure:     'Energy Expenditure (7d)',
+  QuickNav:              'Shortcuts',
+  CaloriesToday:         'Calories Today',
+  CalorieWeek:           'Calorie Balance (7d)',
+  EnergyTrend:           'Energy Trend (14d)',
+  ProteinTracker:        'Protein Tracker',
+  MacroSplit:            'Macro Split (7d)',
+  FuelForecast:          'Fuel Forecast',
 };

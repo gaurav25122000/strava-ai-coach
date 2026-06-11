@@ -57,7 +57,14 @@
         }
       ],
       "expo-font",
-      "expo-background-task"
+      "expo-background-task",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow access to your photos to log meals from pictures.",
+          "cameraPermission": "Allow camera access to snap meals for calorie logging."
+        }
+      ]
     ],
     "extra": {
       "eas": {

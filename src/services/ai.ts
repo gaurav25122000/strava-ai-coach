@@ -514,6 +514,161 @@ async function requestPlan(provider: Provider, apiKey: string, system: string, t
   }
 }
 
+// ── Food photo analysis ──────────────────────────────────────────────────────
+// Same structured-output discipline as plans: every provider is held to
+// FOOD_SCHEMA, so the tracker never parses prose.
+
+const FOOD_SCHEMA = {
+  type: 'object',
+  properties: {
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name:     { type: 'string' },   // "Masala dosa"
+          calories: { type: 'number' },   // kcal for the VISIBLE portion
+          protein:  { type: 'number' },   // grams
+          carbs:    { type: 'number' },
+          fat:      { type: 'number' },
+          serving:  { type: 'string' },   // "1 plate", "2 pieces"
+        },
+        required: ['name', 'calories'],
+      },
+    },
+    note: { type: 'string' },             // one-line confidence/assumption note
+  },
+  required: ['items'],
+};
+
+export interface FoodAnalysisItem {
+  name: string;
+  calories: number;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+  serving?: string;
+}
+
+export interface FoodAnalysis {
+  items: FoodAnalysisItem[];
+  note?: string;
+}
+
+const FOOD_SYSTEM = `You are a precise nutritionist analysing a meal photo. Identify each distinct food/drink visible and estimate nutrition for the PORTION SHOWN (not per 100 g). Rules:
+- One entry per distinct item (a thali = several entries). Maximum 10 items.
+- calories in kcal for the visible portion; protein/carbs/fat in grams.
+- serving describes the visible portion in plain words ("1 bowl", "2 rotis").
+- Estimate realistically; if unsure between sizes, pick the middle and say so in "note".
+- If the photo contains no food, return an empty items array and explain in "note".
+Output nothing outside the structured response.`;
+
+function normaliseFoodAnalysis(raw: any): FoodAnalysis {
+  const items = (Array.isArray(raw?.items) ? raw.items : [])
+    .filter((i: any) => i?.name && typeof i.calories === 'number' && i.calories >= 0)
+    .slice(0, 10)
+    .map((i: any) => ({
+      name: String(i.name).slice(0, 60),
+      calories: Math.round(i.calories),
+      protein: typeof i.protein === 'number' ? Math.round(i.protein) : undefined,
+      carbs: typeof i.carbs === 'number' ? Math.round(i.carbs) : undefined,
+      fat: typeof i.fat === 'number' ? Math.round(i.fat) : undefined,
+      serving: i.serving ? String(i.serving).slice(0, 40) : undefined,
+    }));
+  return { items, note: raw?.note ? String(raw.note).slice(0, 200) : undefined };
+}
+
+const FOOD_TIMEOUT_MS = 60_000;
+
+async function requestFoodAnalysis(
+  provider: Provider,
+  apiKey: string,
+  base64: string,
+  mimeType: string,
+): Promise<any> {
+  const prompt = 'Analyse this meal photo and return every visible food item with portion-level nutrition.';
+  try {
+    if (provider === 'gemini') {
+      const resp = await geminiGenerate(
+        {
+          system_instruction: { parts: [{ text: FOOD_SYSTEM }] },
+          contents: [{
+            role: 'user',
+            parts: [
+              { inline_data: { mime_type: mimeType, data: base64 } },
+              { text: prompt },
+            ],
+          }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: FOOD_SCHEMA,
+            maxOutputTokens: 4096,
+          },
+        },
+        apiKey,
+        FOOD_TIMEOUT_MS,
+      );
+      return JSON.parse(resp.data.candidates[0].content.parts[0].text);
+    }
+
+    if (provider === 'openai') {
+      const resp = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          model: MODELS.openai,
+          max_completion_tokens: 2048,
+          response_format: {
+            type: 'json_schema',
+            json_schema: { name: 'food_analysis', schema: FOOD_SCHEMA },
+          },
+          messages: [
+            { role: 'system', content: FOOD_SYSTEM },
+            {
+              role: 'user',
+              content: [
+                { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+                { type: 'text', text: prompt },
+              ],
+            },
+          ],
+        },
+        { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, timeout: FOOD_TIMEOUT_MS },
+      );
+      return JSON.parse(resp.data.choices[0].message.content);
+    }
+
+    // Anthropic — forced tool use, tool input IS the analysis.
+    const resp = await axios.post(
+      'https://api.anthropic.com/v1/messages',
+      {
+        model: MODELS.anthropic,
+        max_tokens: 2048,
+        system: FOOD_SYSTEM,
+        tools: [{
+          name: 'submit_food_analysis',
+          description: 'Submit the analysed food items from the photo.',
+          input_schema: FOOD_SCHEMA,
+        }],
+        tool_choice: { type: 'tool', name: 'submit_food_analysis' },
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64 } },
+            { type: 'text', text: prompt },
+          ],
+        }],
+      },
+      { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }, timeout: FOOD_TIMEOUT_MS },
+    );
+    const toolUse = (resp.data.content || []).find((b: any) => b.type === 'tool_use');
+    if (!toolUse?.input) throw new Error('anthropic: no structured analysis returned');
+    return toolUse.input;
+  } catch (e: any) {
+    if (e?.message?.startsWith(provider)) throw e;
+    throw providerError(provider, e);
+  }
+}
+
 // ── Plan summaries (compact context instead of full-JSON history bloat) ─────
 
 function planSummaryText(phases: Phase[] | undefined): string {
@@ -561,6 +716,21 @@ export interface ChatExtras {
 }
 
 export const AIService = {
+  /**
+   * Vision pass over a meal photo → structured per-item nutrition. Used by
+   * the calorie tracker's photo logging flow.
+   */
+  analyzeFoodPhoto: async (
+    base64: string,
+    mimeType: string,
+    provider: Provider,
+    apiKey: string,
+  ): Promise<FoodAnalysis> => {
+    if (!apiKey) throw new Error('API Key is missing');
+    const raw = await requestFoodAnalysis(provider, apiKey, base64, mimeType);
+    return normaliseFoodAnalysis(raw);
+  },
+
   chatWithCoach: async (
     messages: ChatMessage[],
     provider: Provider,

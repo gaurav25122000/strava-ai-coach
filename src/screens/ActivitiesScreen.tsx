@@ -420,7 +420,7 @@ export default function ActivitiesScreen() {
   }, [navigation]);
 
   function openSettings() {
-    (navigation as any).getParent()?.navigate('Profile', { screen: 'Settings' });
+    (navigation as any).getParent()?.navigate('Menu', { screen: 'Settings' });
   }
 
   const renderItem = useCallback(({ item, index }: { item: Activity; index: number }) => (

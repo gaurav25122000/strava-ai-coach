@@ -278,6 +278,28 @@ export interface BestEffort {
   activityName?: string;
 }
 
+export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
+
+export interface FoodLogEntry {
+  id: string;
+  /** YYYY-MM-DD (athlete-local) day the food was eaten. */
+  date: string;
+  meal: MealType;
+  name: string;
+  /** Total kcal for the logged quantity (serving kcal × quantity). */
+  calories: number;
+  /** Macros in grams, total for the entry. */
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+  /** Serving multiplier the totals were computed with. */
+  quantity: number;
+  /** Human serving descriptor — "1 bowl", "100 g". */
+  serving?: string;
+  source: 'library' | 'manual' | 'photo';
+  loggedAt: string; // ISO
+}
+
 export interface WeeklyDigest {
   weekKey: string; // "2025-W18"
   generatedAt: string;
@@ -479,6 +501,13 @@ interface AppState {
   /** Transient: a plan generation running in the background (not persisted). */
   goalGeneration: { title: string; startedAt: number } | null;
   setGoalGeneration: (gen: { title: string; startedAt: number } | null) => void;
+  /** Meals/snacks the athlete logged in the calorie tracker. */
+  foodLog: FoodLogEntry[];
+  /** Daily intake target in kcal. */
+  calorieGoal: number;
+  addFoodEntries: (entries: FoodLogEntry[]) => void;
+  removeFoodEntry: (id: string) => void;
+  setCalorieGoal: (kcal: number) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -505,6 +534,17 @@ export const useStore = create<AppState>()(
       setToast: (toast) => useToastStore.getState().show(toast),
       goalGeneration: null,
       setGoalGeneration: (goalGeneration) => set({ goalGeneration }),
+      foodLog: [],
+      // 2,200 kcal is a neutral adult default; the athlete tunes it in the
+      // tracker (goal chip → edit sheet).
+      calorieGoal: 2200,
+      addFoodEntries: (entries) => set((state) => ({
+        foodLog: [...state.foodLog, ...entries],
+      })),
+      removeFoodEntry: (id) => set((state) => ({
+        foodLog: state.foodLog.filter((e) => e.id !== id),
+      })),
+      setCalorieGoal: (calorieGoal) => set({ calorieGoal }),
       userStats: {
         currentStreak: 0,
         bestStreak: 0,
@@ -649,7 +689,9 @@ export const useStore = create<AppState>()(
       // v6 (2026-06): RecoveryAdvisor→TrainingLoad, BestEfforts→PersonalBests;
       // WeeklyRecap, PRProximity, RestBalance introduced.
       // v7 (2026-06): WeeklyGoalTracker→ThisWeek, StreakGuard→HeroBanner.
-      version: 7,
+      // v8 (2026-06): calorie tracker — QuickNav, CaloriesToday, CalorieWeek
+      // widgets slot into existing layouts.
+      version: 8,
       migrate: (persistedState: any, fromVersion: number) => {
         if (!persistedState) return persistedState;
         const next = { ...persistedState };
@@ -694,6 +736,26 @@ export const useStore = create<AppState>()(
           next.settings = { ...(next.settings ?? {}), widgetLayout: migrated };
         }
 
+        if (fromVersion < 8) {
+          const layout: string[] = next.settings?.widgetLayout ?? [...DEFAULT_WIDGET_LAYOUT];
+          const migrated = [...layout];
+          if (!migrated.includes('QuickNav')) {
+            const anchor = migrated.indexOf('TodayHero');
+            migrated.splice(anchor >= 0 ? anchor + 1 : 0, 0, 'QuickNav');
+          }
+          // Nutrition suite lands as a block after WeeklyRecap, mirroring the
+          // default-layout order.
+          const chain = ['CaloriesToday', 'FuelForecast', 'CalorieWeek', 'EnergyTrend', 'ProteinTracker', 'MacroSplit'];
+          let anchor = migrated.indexOf('WeeklyRecap');
+          for (const id of chain) {
+            if (!migrated.includes(id)) {
+              migrated.splice(anchor >= 0 ? anchor + 1 : migrated.length, 0, id);
+            }
+            anchor = migrated.indexOf(id);
+          }
+          next.settings = { ...(next.settings ?? {}), widgetLayout: migrated };
+        }
+
         // Final defensive cleanup against the live widget registry.
         const layout: string[] = next.settings?.widgetLayout ?? [];
         next.settings = {
@@ -722,6 +784,8 @@ export const useStore = create<AppState>()(
         lastSyncedAt: state.lastSyncedAt,
         hrZones: state.hrZones,
         coachChat: state.coachChat,
+        foodLog: state.foodLog,
+        calorieGoal: state.calorieGoal,
       }),
     }
   )

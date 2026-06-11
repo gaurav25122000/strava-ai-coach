@@ -31,6 +31,13 @@ import { BadgesWidget } from './Badges';
 import { NextBadgeWidget } from './NextBadge';
 import { StarredSegmentsWidget } from './StarredSegments';
 import { PhotoStreamWidget } from './PhotoStream';
+import { QuickNavWidget } from './QuickNav';
+import { CaloriesTodayWidget } from './CaloriesToday';
+import { CalorieWeekWidget } from './CalorieWeek';
+import { EnergyTrendWidget } from './EnergyTrend';
+import { ProteinTrackerWidget } from './ProteinTracker';
+import { MacroSplitWidget } from './MacroSplit';
+import { FuelForecastWidget } from './FuelForecast';
 
 /**
  * id → component for every dashboard widget. Keys MUST mirror
@@ -70,4 +77,11 @@ export const WIDGET_REGISTRY: Record<string, React.ComponentType> = {
   NextBadge: NextBadgeWidget,
   StarredSegments: StarredSegmentsWidget,
   PhotoStream: PhotoStreamWidget,
+  QuickNav: QuickNavWidget,
+  CaloriesToday: CaloriesTodayWidget,
+  CalorieWeek: CalorieWeekWidget,
+  EnergyTrend: EnergyTrendWidget,
+  ProteinTracker: ProteinTrackerWidget,
+  MacroSplit: MacroSplitWidget,
+  FuelForecast: FuelForecastWidget,
 };
