@@ -622,6 +622,53 @@ export const FOOD_LIBRARY: FoodItem[] = [
   { name: 'Salmon Nigiri (2 pieces)', category: 'fastfood', calories: 70, serving: '2 pieces', protein: 4, carbs: 14, fat: 0.5 },
 ];
 
+// ── Serving parsing ──────────────────────────────────────────────────────────
+// Lets the quantity sheet work in natural units: "6 pieces" steps per piece,
+// "100 g" takes a grams input, "1 bowl" falls back to a servings multiplier.
+
+export type ServingMode = 'pieces' | 'weight' | 'servings';
+
+export interface ParsedServing {
+  mode: ServingMode;
+  /** pieces: units in ONE base serving ("6 pieces" → 6). */
+  count: number;
+  /** Unit word(s) without parentheticals — "pieces", "nuts", "medium". */
+  unit: string;
+  /** weight: grams/ml in one base serving ("100 g" → 100). */
+  baseWeight: number | null;
+  /** 'g' or 'ml' for weight mode. */
+  weightUnit: 'g' | 'ml' | null;
+}
+
+export function parseServing(serving: string): ParsedServing {
+  const s = serving.trim();
+  const lead = s.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
+  const count = lead ? parseFloat(lead[1]) : NaN;
+  const rest = (lead ? lead[2] : s).replace(/\(.*?\)/g, '').trim();
+
+  // "100 g", "330 ml", "150 g cooked" — the serving IS a weight/volume.
+  const weightMatch = rest.match(/^(g|ml)\b/i);
+  if (lead && weightMatch && Number.isFinite(count) && count > 0) {
+    const wu = weightMatch[1].toLowerCase() as 'g' | 'ml';
+    return { mode: 'weight', count: 1, unit: wu, baseWeight: count, weightUnit: wu };
+  }
+
+  // "6 pieces", "23 nuts (28 g)", "4 squares" — countable units.
+  if (lead && Number.isFinite(count) && count > 1 && rest) {
+    return { mode: 'pieces', count: Math.round(count), unit: rest, baseWeight: null, weightUnit: null };
+  }
+
+  // "1 medium", "1 katori", "⅔ cup", "1 bar (44 g)" — one nameable serving.
+  return { mode: 'servings', count: 1, unit: rest || 'serving', baseWeight: null, weightUnit: null };
+}
+
+/** "4 pieces" / "1 piece" — naive singular for the n === 1 case. */
+export function unitLabel(n: number, unit: string): string {
+  if (n !== 1) return unit;
+  if (unit === 'halves') return 'half';
+  return unit.replace(/s$/, '');
+}
+
 /**
  * Case-insensitive library search; prefix matches rank above substring
  * matches so "pa" surfaces Paratha/Paneer before Chapati. `extra` lets

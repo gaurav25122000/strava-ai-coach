@@ -14,7 +14,7 @@ import { Pulsing } from '../components/Pulsing';
 import { theme, withAlpha } from '../theme';
 import { familyStyle } from '../utils/widgetFamilies';
 import {
-  FOOD_CATEGORY_LABELS, FOOD_LIBRARY, FoodCategory, FoodItem, searchFoods,
+  FOOD_CATEGORY_LABELS, FoodCategory, FoodItem, parseServing, searchFoods, unitLabel,
 } from '../services/foodLibrary';
 import { MEAL_LABELS, MEAL_ORDER } from '../services/calories';
 import { AIService, FoodAnalysisItem } from '../services/ai';
@@ -66,6 +66,26 @@ export default function AddFoodScreen({ navigation, route }: any) {
     () => customFoods.map((f) => ({ ...f, category: 'custom' as const })),
     [customFoods],
   );
+
+  // Natural-unit quantity editing: "6 pieces" steps per piece, "100 g" takes
+  // a free grams/ml input, single servings keep the 0.5× multiplier.
+  const parsed = useMemo(() => (picked ? parseServing(picked.serving) : null), [picked]);
+  const [gramsDraft, setGramsDraft] = useState('');
+  const effMult = useMemo(() => {
+    if (!picked || !parsed) return 1;
+    if (parsed.mode === 'weight') {
+      const g = parseFloat(gramsDraft);
+      return Number.isFinite(g) && g > 0 && parsed.baseWeight ? g / parsed.baseWeight : 0;
+    }
+    return qty;
+  }, [picked, parsed, gramsDraft, qty]);
+
+  const pickFood = (item: FoodItem) => {
+    setPicked(item);
+    setQty(1);
+    const p = parseServing(item.serving);
+    setGramsDraft(p.mode === 'weight' && p.baseWeight ? String(p.baseWeight) : '');
+  };
   const categoryKeys = customItems.length
     ? CATEGORY_KEYS
     : CATEGORY_KEYS.filter((c) => c !== 'custom');
@@ -150,18 +170,36 @@ export default function AddFoodScreen({ navigation, route }: any) {
   };
 
   const addLibraryItem = () => {
-    if (!picked) return;
+    if (!picked || !parsed) return;
+    const mult = effMult;
+    if (!(mult > 0)) {
+      setToast({ title: 'Invalid amount', message: 'Enter a weight above zero.', type: 'error' });
+      return;
+    }
+    // Pieces/weight entries log the ACTUAL portion as the serving string
+    // (quantity 1), so the log reads "4 pieces · 180 kcal" rather than
+    // "0.67 × 6 pieces".
+    let serving = picked.serving;
+    let quantity = qty;
+    if (parsed.mode === 'weight') {
+      serving = `${Math.round(parseFloat(gramsDraft))} ${parsed.weightUnit}`;
+      quantity = 1;
+    } else if (parsed.mode === 'pieces') {
+      const pieces = Math.round(qty * parsed.count);
+      serving = `${pieces} ${unitLabel(pieces, parsed.unit)}`;
+      quantity = 1;
+    }
     finish([{
       id: entryId(),
       date,
       meal,
       name: picked.name,
-      calories: Math.round(picked.calories * qty),
-      protein: Math.round(picked.protein * qty),
-      carbs: Math.round(picked.carbs * qty),
-      fat: Math.round(picked.fat * qty),
-      quantity: qty,
-      serving: picked.serving,
+      calories: Math.round(picked.calories * mult),
+      protein: Math.round(picked.protein * mult),
+      carbs: Math.round(picked.carbs * mult),
+      fat: Math.round(picked.fat * mult),
+      quantity,
+      serving,
       source: 'library',
       loggedAt: new Date().toISOString(),
     }], picked.name);
@@ -289,7 +327,7 @@ export default function AddFoodScreen({ navigation, route }: any) {
     const fav = favoriteFoods.includes(item.name);
     return (
       <PressableScale
-        onPress={() => { setPicked(item); setQty(1); }}
+        onPress={() => pickFood(item)}
         style={styles.foodRow}
         accessibilityRole="button"
         accessibilityLabel={`Add ${item.name}`}
@@ -521,58 +559,177 @@ export default function AddFoodScreen({ navigation, route }: any) {
         title={picked?.name}
         caption={picked ? `${picked.calories} kcal per ${picked.serving}` : undefined}
       >
-        {picked && (
-          <View style={styles.qtyBody}>
-            <View style={styles.qtyRow}>
-              <PressableScale
-                onPress={() => setQty((q) => Math.max(0.5, Math.round((q - 0.5) * 2) / 2))}
-                style={[styles.qtyBtn, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
-                accessibilityLabel="Decrease quantity"
-              >
-                <Minus size={18} color={fam.accent} />
-              </PressableScale>
-              <View style={styles.qtyMid}>
-                <Typography style={styles.qtyVal}>{qty}</Typography>
-                <Typography style={styles.qtyUnit}>× {picked.serving}</Typography>
-              </View>
-              <PressableScale
-                onPress={() => setQty((q) => Math.min(20, Math.round((q + 0.5) * 2) / 2))}
-                style={[styles.qtyBtn, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
-                accessibilityLabel="Increase quantity"
-              >
-                <Plus size={18} color={fam.accent} />
-              </PressableScale>
+        {picked && parsed && (() => {
+          const pieces = Math.round(qty * parsed.count);
+          const setPieces = (n: number) =>
+            setQty(Math.max(1, Math.min(99, n)) / parsed.count);
+          // e.g. 6-piece base → 1 / 3 / 6 / 9 / 12 quick picks.
+          const pieceChips = Array.from(
+            new Set([1, ...[0.5, 1, 1.5, 2].map((m) => Math.round(parsed.count * m))]),
+          ).filter((n) => n >= 1).sort((a, b) => a - b).slice(0, 5);
+          const weightChips = parsed.baseWeight
+            ? Array.from(new Set([0.5, 1, 1.5, 2].map((m) => Math.round(parsed.baseWeight! * m))))
+            : [];
+          const grams = parseFloat(gramsDraft);
+          const stepGrams = (d: number) =>
+            setGramsDraft(String(Math.max(5, Math.min(2000, (Number.isFinite(grams) ? grams : parsed.baseWeight ?? 0) + d))));
+
+          return (
+            <View style={styles.qtyBody}>
+              {parsed.mode === 'pieces' && (
+                <>
+                  <View style={styles.qtyRow}>
+                    <PressableScale
+                      onPress={() => setPieces(pieces - 1)}
+                      style={[styles.qtyBtn, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
+                      accessibilityLabel={`Decrease to ${pieces - 1}`}
+                    >
+                      <Minus size={18} color={fam.accent} />
+                    </PressableScale>
+                    <View style={styles.qtyMid}>
+                      <Typography style={styles.qtyVal}>{pieces}</Typography>
+                      <Typography style={styles.qtyUnit}>{unitLabel(pieces, parsed.unit)}</Typography>
+                    </View>
+                    <PressableScale
+                      onPress={() => setPieces(pieces + 1)}
+                      style={[styles.qtyBtn, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
+                      accessibilityLabel={`Increase to ${pieces + 1}`}
+                    >
+                      <Plus size={18} color={fam.accent} />
+                    </PressableScale>
+                  </View>
+                  <View style={styles.qtyQuickRow}>
+                    {pieceChips.map((n) => {
+                      const active = pieces === n;
+                      return (
+                        <PressableScale
+                          key={n}
+                          onPress={() => setPieces(n)}
+                          style={[
+                            styles.qtyQuick,
+                            active && { backgroundColor: withAlpha(fam.accent, 'tint'), borderColor: withAlpha(fam.accent, 'strong') },
+                          ]}
+                        >
+                          <Typography style={[styles.qtyQuickTxt, active && { color: fam.accent }]}>
+                            {n}
+                          </Typography>
+                        </PressableScale>
+                      );
+                    })}
+                  </View>
+                </>
+              )}
+
+              {parsed.mode === 'weight' && (
+                <>
+                  <View style={styles.qtyRow}>
+                    <PressableScale
+                      onPress={() => stepGrams(-10)}
+                      style={[styles.qtyBtn, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
+                      accessibilityLabel={`Decrease by 10 ${parsed.weightUnit}`}
+                    >
+                      <Minus size={18} color={fam.accent} />
+                    </PressableScale>
+                    <View style={styles.qtyMid}>
+                      <View style={styles.weightInputRow}>
+                        <TextInput
+                          value={gramsDraft}
+                          onChangeText={setGramsDraft}
+                          keyboardType="numeric"
+                          style={styles.weightInput}
+                          selectTextOnFocus
+                          accessibilityLabel={`Amount in ${parsed.weightUnit}`}
+                        />
+                        <Typography style={styles.qtyUnit}>{parsed.weightUnit}</Typography>
+                      </View>
+                    </View>
+                    <PressableScale
+                      onPress={() => stepGrams(10)}
+                      style={[styles.qtyBtn, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
+                      accessibilityLabel={`Increase by 10 ${parsed.weightUnit}`}
+                    >
+                      <Plus size={18} color={fam.accent} />
+                    </PressableScale>
+                  </View>
+                  <View style={styles.qtyQuickRow}>
+                    {weightChips.map((g) => {
+                      const active = grams === g;
+                      return (
+                        <PressableScale
+                          key={g}
+                          onPress={() => setGramsDraft(String(g))}
+                          style={[
+                            styles.qtyQuick,
+                            active && { backgroundColor: withAlpha(fam.accent, 'tint'), borderColor: withAlpha(fam.accent, 'strong') },
+                          ]}
+                        >
+                          <Typography style={[styles.qtyQuickTxt, active && { color: fam.accent }]}>
+                            {g} {parsed.weightUnit}
+                          </Typography>
+                        </PressableScale>
+                      );
+                    })}
+                  </View>
+                </>
+              )}
+
+              {parsed.mode === 'servings' && (
+                <>
+                  <View style={styles.qtyRow}>
+                    <PressableScale
+                      onPress={() => setQty((q) => Math.max(0.5, Math.round((q - 0.5) * 2) / 2))}
+                      style={[styles.qtyBtn, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
+                      accessibilityLabel="Decrease quantity"
+                    >
+                      <Minus size={18} color={fam.accent} />
+                    </PressableScale>
+                    <View style={styles.qtyMid}>
+                      <Typography style={styles.qtyVal}>{qty}</Typography>
+                      <Typography style={styles.qtyUnit}>× {picked.serving}</Typography>
+                    </View>
+                    <PressableScale
+                      onPress={() => setQty((q) => Math.min(20, Math.round((q + 0.5) * 2) / 2))}
+                      style={[styles.qtyBtn, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
+                      accessibilityLabel="Increase quantity"
+                    >
+                      <Plus size={18} color={fam.accent} />
+                    </PressableScale>
+                  </View>
+                  <View style={styles.qtyQuickRow}>
+                    {[0.5, 1, 1.5, 2, 3].map((q) => {
+                      const active = qty === q;
+                      return (
+                        <PressableScale
+                          key={q}
+                          onPress={() => setQty(q)}
+                          style={[
+                            styles.qtyQuick,
+                            active && { backgroundColor: withAlpha(fam.accent, 'tint'), borderColor: withAlpha(fam.accent, 'strong') },
+                          ]}
+                        >
+                          <Typography style={[styles.qtyQuickTxt, active && { color: fam.accent }]}>
+                            {q}×
+                          </Typography>
+                        </PressableScale>
+                      );
+                    })}
+                  </View>
+                </>
+              )}
+
+              <Typography style={styles.qtyMacros}>
+                P {Math.round(picked.protein * effMult)} g · C {Math.round(picked.carbs * effMult)} g · F {Math.round(picked.fat * effMult)} g
+              </Typography>
+              <Button
+                title={effMult > 0 ? `Add · ${Math.round(picked.calories * effMult)} kcal` : 'Enter an amount'}
+                family="health"
+                fullWidth
+                disabled={!(effMult > 0)}
+                onPress={addLibraryItem}
+              />
             </View>
-            <View style={styles.qtyQuickRow}>
-              {[0.5, 1, 1.5, 2, 3].map((q) => {
-                const active = qty === q;
-                return (
-                  <PressableScale
-                    key={q}
-                    onPress={() => setQty(q)}
-                    style={[
-                      styles.qtyQuick,
-                      active && { backgroundColor: withAlpha(fam.accent, 'tint'), borderColor: withAlpha(fam.accent, 'strong') },
-                    ]}
-                  >
-                    <Typography style={[styles.qtyQuickTxt, active && { color: fam.accent }]}>
-                      {q}×
-                    </Typography>
-                  </PressableScale>
-                );
-              })}
-            </View>
-            <Typography style={styles.qtyMacros}>
-              P {Math.round(picked.protein * qty)} g · C {Math.round(picked.carbs * qty)} g · F {Math.round(picked.fat * qty)} g
-            </Typography>
-            <Button
-              title={`Add · ${Math.round(picked.calories * qty)} kcal`}
-              family="health"
-              fullWidth
-              onPress={addLibraryItem}
-            />
-          </View>
-        )}
+          );
+        })()}
       </Sheet>
     </SafeAreaView>
   );
@@ -837,5 +994,20 @@ const styles = StyleSheet.create({
     ...theme.typography.micro,
     color: theme.colors.textSecondary,
     textAlign: 'center',
+  },
+  weightInputRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  weightInput: {
+    ...theme.typography.title,
+    color: theme.colors.text,
+    minWidth: 64,
+    textAlign: 'center',
+    paddingVertical: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
 });
