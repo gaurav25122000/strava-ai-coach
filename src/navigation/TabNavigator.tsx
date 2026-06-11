@@ -12,6 +12,7 @@ import { theme } from '../theme';
 import { Platform, View, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -66,60 +67,72 @@ function tabScreenListeners({ navigation, route }: { navigation: any; route: any
   };
 }
 
-// Render the active-state pill behind the icon. Each tab passes its own colour
-// through `tabBarIcon`, so the pill matches the tab's accent on press. The pill
-// springs with a brief over-shoot when it becomes focused, and the icon scales
-// 0.85 → 1.0 to give the active tab a sense of arrival.
-function ActivePill({ children, color, focused }: { children: React.ReactNode; color: string; focused: boolean }) {
-  const pillScale = useSharedValue(focused ? 1 : 0.9);
-  const iconScale = useSharedValue(focused ? 1 : 0.85);
+// Active tab = gradient pill with a glow on the family colour; inactive tabs
+// are quiet icons. The pill scales in with the app's spring signature so
+// switching tabs feels like the dock is alive, not a template.
+function DockItem({
+  color,
+  gradient,
+  focused,
+  children,
+}: {
+  color: string;
+  gradient: readonly [string, string];
+  focused: boolean;
+  children: React.ReactNode;
+}) {
+  const scale = useSharedValue(focused ? 1 : 0.92);
 
   useEffect(() => {
-    // Settle on the shared motion token so the tab bar shares the app's spring
-    // signature; the first sequence step bumps stiffness for a brief overshoot.
     if (focused) {
-      pillScale.value = withSequence(
-        withSpring(1.08, { ...theme.motion.spring, damping: 12, stiffness: 320 }),
+      scale.value = withSequence(
+        withSpring(1.06, { ...theme.motion.spring, damping: 12, stiffness: 320 }),
         withSpring(1, theme.motion.spring),
       );
-      iconScale.value = withSpring(1, theme.motion.spring);
     } else {
-      pillScale.value = withSpring(0.9, theme.motion.spring);
-      iconScale.value = withSpring(0.85, theme.motion.spring);
+      scale.value = withSpring(0.92, theme.motion.spring);
     }
-  }, [focused, pillScale, iconScale]);
+  }, [focused, scale]);
 
-  const pillStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: pillScale.value }],
-  }));
-  const iconStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: iconScale.value }],
+  const animStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
   }));
 
+  if (!focused) {
+    return <Animated.View style={[dockStyles.idle, animStyle]}>{children}</Animated.View>;
+  }
   return (
-    <Animated.View
-      style={[
-        {
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 56,
-          height: 32,
-          borderRadius: 16,
-          backgroundColor: focused ? color + '22' : 'transparent',
-        },
-        pillStyle,
-      ]}
-    >
-      <Animated.View style={iconStyle}>{children}</Animated.View>
+    <Animated.View style={animStyle}>
+      <LinearGradient
+        colors={gradient as [string, string]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[dockStyles.pill, theme.shadows.glow(color)]}
+      >
+        {children}
+      </LinearGradient>
     </Animated.View>
   );
 }
 
+const dockStyles = StyleSheet.create({
+  idle: {
+    width: 44,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pill: {
+    width: 48,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
+
 export default function TabNavigator() {
   const insets = useSafeAreaInsets();
-  // Safe-area-driven: 54pt of content + whatever the device's home indicator
-  // / gesture bar needs. The old hardcoded 88/64 misfit edge-to-edge Androids.
-  const bottomPad = Math.max(insets.bottom, 10);
 
   return (
     <Tab.Navigator
@@ -127,20 +140,27 @@ export default function TabNavigator() {
         headerShown: false,
         lazy: true,
         tabBarBackground: () => <TabBarBackground />,
+        // Floating dock: detached, rounded, blurred — content scrolls under it.
         tabBarStyle: {
+          position: 'absolute',
+          left: 14,
+          right: 14,
+          bottom: Math.max(insets.bottom, 12),
+          height: 60,
+          borderRadius: 30,
+          overflow: 'hidden',
           backgroundColor: 'transparent',
+          borderWidth: 1,
+          borderColor: theme.colors.divider,
           borderTopColor: theme.colors.divider,
-          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopWidth: 1,
           elevation: 0,
-          height: 54 + bottomPad,
-          paddingBottom: bottomPad,
-          paddingTop: 8,
+          paddingBottom: 0,
+          paddingTop: 0,
         },
+        tabBarShowLabel: false,
         tabBarInactiveTintColor: theme.colors.textSecondary,
-        // System font at 10px keeps all six labels on one line — Sora + 11px
-        // was wide enough to clip "Activities". Allow shrink as a safety net.
-        tabBarLabelStyle: { fontWeight: '700', fontSize: 10, marginTop: 2 },
-        tabBarItemStyle: { paddingHorizontal: 0 },
+        tabBarItemStyle: { paddingHorizontal: 0, height: 60, justifyContent: 'center' },
         tabBarHideOnKeyboard: true,
       }}
       screenListeners={tabScreenListeners}
@@ -152,9 +172,9 @@ export default function TabNavigator() {
           tabBarActiveTintColor: TAB_COLORS.Overview,
           tabBarAccessibilityLabel: "Overview tab",
           tabBarIcon: ({ color, size, focused }) => (
-            <ActivePill color={TAB_COLORS.Overview} focused={focused}>
-              <Home color={color} size={size - 1} />
-            </ActivePill>
+            <DockItem color={TAB_COLORS.Overview} gradient={theme.colors.gradients.activity} focused={focused}>
+              <Home color={focused ? theme.colors.onAccent : color} size={size - 2} />
+            </DockItem>
           ),
         }}
       />
@@ -165,9 +185,9 @@ export default function TabNavigator() {
           tabBarActiveTintColor: TAB_COLORS.Activities,
           tabBarAccessibilityLabel: "Activities tab",
           tabBarIcon: ({ color, size, focused }) => (
-            <ActivePill color={TAB_COLORS.Activities} focused={focused}>
-              <List color={color} size={size - 1} />
-            </ActivePill>
+            <DockItem color={TAB_COLORS.Activities} gradient={theme.colors.gradients.health} focused={focused}>
+              <List color={focused ? theme.colors.onAccent : color} size={size - 2} />
+            </DockItem>
           ),
         }}
       />
@@ -178,9 +198,9 @@ export default function TabNavigator() {
           tabBarActiveTintColor: TAB_COLORS.Insights,
           tabBarAccessibilityLabel: "Insights tab",
           tabBarIcon: ({ color, size, focused }) => (
-            <ActivePill color={TAB_COLORS.Insights} focused={focused}>
-              <BarChart2 color={color} size={size - 1} />
-            </ActivePill>
+            <DockItem color={TAB_COLORS.Insights} gradient={theme.colors.gradients.progress} focused={focused}>
+              <BarChart2 color={focused ? theme.colors.onAccent : color} size={size - 2} />
+            </DockItem>
           ),
         }}
       />
@@ -191,9 +211,9 @@ export default function TabNavigator() {
           tabBarActiveTintColor: TAB_COLORS.Goals,
           tabBarAccessibilityLabel: "Goals tab",
           tabBarIcon: ({ color, size, focused }) => (
-            <ActivePill color={TAB_COLORS.Goals} focused={focused}>
-              <Target color={color} size={size - 1} />
-            </ActivePill>
+            <DockItem color={TAB_COLORS.Goals} gradient={theme.colors.gradients.plan} focused={focused}>
+              <Target color={focused ? theme.colors.onAccent : color} size={size - 2} />
+            </DockItem>
           ),
         }}
       />
@@ -204,9 +224,9 @@ export default function TabNavigator() {
           tabBarActiveTintColor: TAB_COLORS.Chat,
           tabBarAccessibilityLabel: "Coach chat tab",
           tabBarIcon: ({ color, size, focused }) => (
-            <ActivePill color={TAB_COLORS.Chat} focused={focused}>
-              <MessageCircle color={color} size={size - 1} />
-            </ActivePill>
+            <DockItem color={TAB_COLORS.Chat} gradient={theme.colors.gradients.social} focused={focused}>
+              <MessageCircle color={focused ? theme.colors.onAccent : color} size={size - 2} />
+            </DockItem>
           ),
         }}
       />
@@ -217,9 +237,9 @@ export default function TabNavigator() {
           tabBarActiveTintColor: TAB_COLORS.Profile,
           tabBarAccessibilityLabel: "Profile tab",
           tabBarIcon: ({ color, size, focused }) => (
-            <ActivePill color={TAB_COLORS.Profile} focused={focused}>
-              <User color={color} size={size - 1} />
-            </ActivePill>
+            <DockItem color={TAB_COLORS.Profile} gradient={theme.colors.gradients.recovery} focused={focused}>
+              <User color={focused ? theme.colors.onAccent : color} size={size - 2} />
+            </DockItem>
           ),
         }}
       />

@@ -9,7 +9,7 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   FadeInDown,
   FadeInRight,
@@ -293,6 +293,9 @@ export default function ChatScreen() {
   const [confirmClear, setConfirmClear] = useState(false);
   const listRef = useRef<FlatList>(null);
   const tabBarHeight = useBottomTabBarHeight();
+  const insets = useSafeAreaInsets();
+  // The dock floats (absolute) — everything must clear height + its margin.
+  const dockClearance = 60 + Math.max(insets.bottom, 12) + 8;
 
   const suggestions = useSmartSuggestions();
   const greetingContext = useGreetingContext();
@@ -501,7 +504,7 @@ export default function ChatScreen() {
         )}
 
         {/* Floating input pill */}
-        <View style={styles.inputWrap}>
+        <View style={[styles.inputWrap, { paddingBottom: dockClearance }]}>
           <View style={styles.inputBar}>
             <TextInput
               style={styles.input}
@@ -676,7 +679,7 @@ const styles = StyleSheet.create({
   },
 
   // Floating input
-  inputWrap: { paddingHorizontal: 12, paddingBottom: 10, paddingTop: 4 },
+  inputWrap: { paddingHorizontal: 12, paddingTop: 4 },
   inputBar: {
     flexDirection: 'row',
     alignItems: 'flex-end',

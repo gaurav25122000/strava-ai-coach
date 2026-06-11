@@ -592,7 +592,7 @@ export default function ActivitiesScreen() {
               </View>
             );
           }}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40, paddingTop: 0 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 130, paddingTop: 0 }}
           showsVerticalScrollIndicator={false}
           stickySectionHeadersEnabled={false}
           refreshControl={

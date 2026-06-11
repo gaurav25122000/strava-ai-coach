@@ -1122,7 +1122,7 @@ export default function InsightsScreen() {
 
 const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background },
-  scroll: { padding: 16, paddingBottom: 40 },
+  scroll: { padding: 16, paddingBottom: 130 },
 
   header: {
     flexDirection: 'row',

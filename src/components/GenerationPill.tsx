@@ -50,7 +50,7 @@ export function GenerationPill() {
   if (!gen) return null;
 
   const fam = familyStyle('plan');
-  const tabBarH = 54 + Math.max(insets.bottom, 10);
+  const tabBarH = 60 + Math.max(insets.bottom, 12);
 
   return (
     <Animated.View

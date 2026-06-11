@@ -31,7 +31,7 @@ export const styles = StyleSheet.create({
     backgroundColor: theme.colors.background,
   },
   scrollContent: {
-    paddingBottom: theme.spacing.xxl,
+    paddingBottom: 130,
   },
   heroHeader: {
     flexDirection: 'row',
