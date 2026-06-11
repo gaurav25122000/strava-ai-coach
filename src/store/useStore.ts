@@ -248,6 +248,8 @@ interface Shoe {
   name: string;
   brand: string;
   distance: number; // km
+  /** Per-shoe lifespan in km; consumers default to 600 when unset. */
+  lifespanKm?: number;
 }
 
 interface Injury {
@@ -255,6 +257,8 @@ interface Injury {
   type: string;
   date: string;
   severity: 'Low' | 'Medium' | 'High';
+  /** ISO timestamp when marked resolved. Active lists filter !resolvedAt. */
+  resolvedAt?: string;
 }
 
 export interface Milestone {
@@ -458,6 +462,8 @@ interface AppState {
   addShoe: (shoe: Shoe) => void;
   setShoes: (shoes: Shoe[]) => void;
   addInjury: (injury: Injury) => void;
+  updateInjury: (injury: Injury) => void;
+  removeInjury: (id: string) => void;
   setMilestones: (milestones: Milestone[]) => void;
   setBestEfforts: (efforts: Record<number, BestEffort>) => void;
   setWeeklyDigest: (digest: WeeklyDigest) => void;
@@ -627,6 +633,12 @@ export const useStore = create<AppState>()(
       addShoe: (shoe) => set((state) => ({ shoes: [...state.shoes, shoe] })),
       setShoes: (shoes) => set({ shoes }),
       addInjury: (injury) => set((state) => ({ injuries: [...state.injuries, injury] })),
+      updateInjury: (injury) => set((state) => ({
+        injuries: state.injuries.map(i => i.id === injury.id ? injury : i),
+      })),
+      removeInjury: (id) => set((state) => ({
+        injuries: state.injuries.filter(i => i.id !== id),
+      })),
       setActivityZones: (activityId, zones) => set((state) => ({
         activities: state.activities.map((a) =>
           a.id === activityId ? { ...a, zones } : a,

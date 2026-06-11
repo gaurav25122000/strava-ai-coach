@@ -117,7 +117,11 @@ export const StravaService = {
     
     // Check if token is expired (adding 5 min buffer)
     if (Date.now() / 1000 >= expiresAt - 300) {
-      const { stravaClientId, stravaClientSecret } = useStore.getState().settings;
+      const { stravaClientId, stravaClientSecret: settingsSecret } = useStore.getState().settings;
+      // Settings copy (legacy installs), then SecureStore (where Settings now
+      // writes secrets).
+      const stravaClientSecret =
+        settingsSecret || (await secureSettingsStorage.getSecret('stravaClientSecret')) || '';
       if (!stravaClientId || !stravaClientSecret) return;
 
       try {

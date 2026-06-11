@@ -1,34 +1,31 @@
-import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, TextInput, Linking as RNLinking } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, View, StyleSheet, ScrollView, TextInput, Platform, Linking as RNLinking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withRepeat,
-  withTiming,
-  Easing,
-  cancelAnimation,
-} from 'react-native-reanimated';
-import { theme } from '../theme';
+import * as Haptics from 'expo-haptics';
+import { theme, withAlpha } from '../theme';
 import { Typography } from '../components/Typography';
 import { WidgetCard } from '../components/WidgetCard';
 import { PressableScale } from '../components/PressableScale';
 import { Toggle } from '../components/Toggle';
+import { Button } from '../components/Button';
+import { Sheet } from '../components/Sheet';
 import { StaggerItem } from '../components/Stagger';
 import { SegmentedControl } from '../components/SheetUI';
-import { useStore } from '../store/useStore';
+import { useStore, secureSettingsStorage } from '../store/useStore';
 import { familyStyle, WidgetFamily } from '../utils/widgetFamilies';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import { StravaService } from '../services/strava';
-import { computeAllProgress } from '../services/goalProgress';
+import { performStravaSync } from '../services/syncRunner';
+import { NotificationService } from '../services/notifications';
 import axios from 'axios';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import {
   LucideIcon,
   Activity as ActivityIcon,
+  Bell,
   Bot,
   Link2,
   Unplug,
@@ -43,12 +40,17 @@ import {
   RefreshCw,
   Sparkles,
   ChevronRight,
+  Check,
 } from 'lucide-react-native';
 import { Icon } from '../components/Icon';
 
-// App version surfaced in the About row.
+// App version surfaced in the About row (single place it appears).
 const APP_VERSION = '1.0.0';
 const REPO_URL = 'https://github.com/';
+
+const successHaptic = () => {
+  if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+};
 
 // ----- Row primitive ---------------------------------------------------------
 // One settings row. The right slot is anything — switch, value text, chevron,
@@ -67,7 +69,7 @@ interface SettingsRowProps {
 
 function SettingsRow({ icon, family, label, caption, right, onPress, disabled, isLast }: SettingsRowProps) {
   const inner = (
-    <View style={[rowStyles.row, !isLast && rowStyles.rowDivider, disabled && { opacity: 0.5 }]}>
+    <View style={[rowStyles.row, !isLast && rowStyles.rowDivider, disabled && { opacity: theme.opacity.disabled }]}>
       <Icon icon={icon} family={family} variant="pill" size="md" />
       <View style={rowStyles.labelWrap}>
         <Typography style={rowStyles.label}>{label}</Typography>
@@ -105,38 +107,68 @@ const rowStyles = StyleSheet.create({
   rightWrap: { marginLeft: 8 },
 });
 
-// ----- Spinning sync icon ----------------------------------------------------
-// On-brand loading state for the Strava CTA — keeps the RefreshCw glyph and
-// rotates it continuously instead of swapping in the OS ActivityIndicator.
-function SpinningRefresh() {
-  const rotation = useSharedValue(0);
-  useEffect(() => {
-    rotation.value = withRepeat(withTiming(360, { duration: 900, easing: Easing.linear }), -1, false);
-    return () => cancelAnimation(rotation);
-  }, [rotation]);
-  const style = useAnimatedStyle(() => ({ transform: [{ rotate: `${rotation.value}deg` }] }));
-  return (
-    <Animated.View style={style}>
-      <Icon icon={RefreshCw} variant="plain" size="sm" color="#fff" />
-    </Animated.View>
-  );
-}
-
 // ----- Screen ----------------------------------------------------------------
 export default function SettingsScreen() {
-  const { settings, updateSettings, setActivities, setLifetimeStats, setToast, setLastSyncedAt } = useStore();
+  const settings = useStore(s => s.settings);
+  const updateSettings = useStore(s => s.updateSettings);
+  const setActivities = useStore(s => s.setActivities);
+  const setAthleteStats = useStore(s => s.setAthleteStats);
+  const setLifetimeStats = useStore(s => s.setLifetimeStats);
+  const setToast = useStore(s => s.setToast);
+
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [fullSyncing, setFullSyncing] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [notifGranted, setNotifGranted] = useState(false);
+
+  // Secrets live in SecureStore; settings only carries legacy plaintext copies
+  // until the first secure write clears them. Read order: secure → settings.
+  const [clientSecret, setClientSecret] = useState('');
+  const [llmKey, setLlmKey] = useState('');
 
   useEffect(() => {
     StravaService.initialize().then(() => {
       setIsAuthenticated(StravaService.isAuthenticated());
     });
+    let alive = true;
+    (async () => {
+      const s = useStore.getState().settings;
+      const [storedSecret, storedKey] = await Promise.all([
+        secureSettingsStorage.getSecret('stravaClientSecret'),
+        secureSettingsStorage.getSecret('llmApiKey'),
+      ]);
+      if (!alive) return;
+      setClientSecret(storedSecret || s.stravaClientSecret);
+      setLlmKey(storedKey || s.llmApiKey);
+      try {
+        setNotifGranted(await NotificationService.hasPermission());
+      } catch {
+        // expo-notifications can throw on web — leave as not granted.
+      }
+    })();
+    return () => { alive = false; };
   }, []);
+
+  // Write the secret to SecureStore and clear any plaintext copy that the old
+  // settings blob still carries.
+  const persistSecret = useCallback(async (key: 'stravaClientSecret' | 'llmApiKey', value: string) => {
+    try {
+      await secureSettingsStorage.setSecret(key, value);
+      if (useStore.getState().settings[key]) {
+        updateSettings({ [key]: '' } as any);
+      }
+    } catch (e) {
+      console.warn('Failed to persist secret:', e);
+    }
+  }, [updateSettings]);
 
   const REDIRECT_URI = 'aicoachapp://localhost';
 
   const handleStravaConnect = async () => {
+    // Make sure the secret is in SecureStore before the OAuth round-trip.
+    await persistSecret('stravaClientSecret', clientSecret);
+
     const authUrl =
       `https://www.strava.com/oauth/mobile/authorize` +
       `?client_id=${settings.stravaClientId}` +
@@ -162,7 +194,7 @@ export default function SettingsScreen() {
     try {
       const res = await axios.post('https://www.strava.com/oauth/token', {
         client_id: settings.stravaClientId,
-        client_secret: settings.stravaClientSecret,
+        client_secret: clientSecret,
         code,
         grant_type: 'authorization_code',
       });
@@ -178,33 +210,55 @@ export default function SettingsScreen() {
     }
   };
 
+  const runSync = async (fullResync: boolean) => {
+    const result = await performStravaSync(fullResync ? { fullResync: true } : { force: true });
+
+    try {
+      const res = await StravaService.fetchAthleteStats();
+      setAthleteStats(res);
+      setLifetimeStats(res.stats);
+    } catch (statsErr) {
+      console.warn('Could not fetch lifetime stats:', statsErr);
+    }
+
+    successHaptic();
+    setToast({
+      title: 'Success',
+      message: result ? `Synced ${result.synced} activities from Strava!` : 'Already up to date.',
+      type: 'success',
+    });
+  };
+
+  const handleSyncError = async (e: any) => {
+    if (e.response?.status === 401 || e.message === 'Not authenticated with Strava') {
+      await StravaService.disconnect();
+      setIsAuthenticated(false);
+      setToast({ title: 'Session Expired', message: 'Please reconnect your Strava account.', type: 'error' });
+    } else {
+      setToast({ title: 'Error', message: 'Failed to sync activities', type: 'error' });
+    }
+  };
+
   const syncStrava = async () => {
     setSyncing(true);
     try {
-      const activities = await StravaService.syncActivities();
-      setActivities(activities);
-      setLastSyncedAt(new Date().toISOString());
-      const { goals: latestGoals, setGoals } = useStore.getState();
-      setGoals(computeAllProgress(latestGoals, activities));
-
-      try {
-        const stats = await StravaService.fetchAthleteStats();
-        setLifetimeStats(stats);
-      } catch (statsErr) {
-        console.warn('Could not fetch lifetime stats:', statsErr);
-      }
-
-      setToast({ title: 'Success', message: `Synced ${activities.length} activities from Strava!`, type: 'success' });
+      await runSync(false);
     } catch (e: any) {
-      if (e.response?.status === 401 || e.message === 'Not authenticated with Strava') {
-        await StravaService.disconnect();
-        setIsAuthenticated(false);
-        setToast({ title: 'Session Expired', message: 'Please reconnect your Strava account.', type: 'error' });
-      } else {
-        setToast({ title: 'Error', message: 'Failed to sync activities', type: 'error' });
-      }
+      await handleSyncError(e);
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleFullResync = async () => {
+    if (fullSyncing || syncing) return;
+    setFullSyncing(true);
+    try {
+      await runSync(true);
+    } catch (e: any) {
+      await handleSyncError(e);
+    } finally {
+      setFullSyncing(false);
     }
   };
 
@@ -212,17 +266,39 @@ export default function SettingsScreen() {
     await StravaService.disconnect();
     setIsAuthenticated(false);
     setActivities([]);
-    setLifetimeStats(null);
-    setToast({ title: 'Disconnected', message: 'Strava account disconnected', type: 'error' });
+    setAthleteStats(null);
+    setConfirmDisconnect(false);
+    successHaptic();
+    setToast({ title: 'Disconnected', message: 'Strava account disconnected', type: 'success' });
+  };
+
+  const handleEnableNotifications = async () => {
+    try {
+      const granted = await NotificationService.requestPermission();
+      setNotifGranted(granted);
+      if (granted) {
+        successHaptic();
+        setToast({ title: 'Notifications on', message: 'Workout reminders and recaps are enabled.', type: 'success' });
+      } else {
+        setToast({ title: 'Permission needed', message: 'Enable notifications in system settings.', type: 'error' });
+      }
+    } catch {
+      setToast({ title: 'Error', message: 'Could not request notification permission.', type: 'error' });
+    }
   };
 
   const handleExport = async () => {
     try {
-      const activities = useStore.getState().activities;
+      const { activities, settings: latestSettings } = useStore.getState();
+      // Privacy zones: routes (polylines) reveal start/end locations — strip
+      // them from the export when the toggle is on.
+      const exportable = latestSettings.privacyZones
+        ? activities.map(({ polyline, ...rest }) => rest)
+        : activities;
       const documentDirectory = FileSystem.documentDirectory;
       if (!documentDirectory) throw new Error('No document directory');
       const fileUri = documentDirectory + 'activities.json';
-      await FileSystem.writeAsStringAsync(fileUri, JSON.stringify(activities, null, 2));
+      await FileSystem.writeAsStringAsync(fileUri, JSON.stringify(exportable, null, 2));
 
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(fileUri);
@@ -236,7 +312,6 @@ export default function SettingsScreen() {
 
   const healthFam = familyStyle('health');
   const recordsFam = familyStyle('records');
-  const socialFam = familyStyle('social');
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -280,47 +355,52 @@ export default function SettingsScreen() {
               <Typography style={styles.label}>Client Secret</Typography>
               <TextInput
                 style={styles.input}
-                value={settings.stravaClientSecret}
-                onChangeText={(text) => updateSettings({ stravaClientSecret: text })}
+                value={clientSecret}
+                onChangeText={setClientSecret}
+                onEndEditing={() => persistSecret('stravaClientSecret', clientSecret)}
                 placeholder="Enter Strava Client Secret"
                 placeholderTextColor={theme.colors.textSecondary}
                 secureTextEntry
                 autoCapitalize="none"
               />
+              <Typography style={styles.secureNote}>Stored securely on this device</Typography>
             </View>
 
-            <PressableScale
-              onPress={() => isAuthenticated ? syncStrava() : handleStravaConnect()}
-              disabled={!settings.stravaClientId || !settings.stravaClientSecret || syncing}
+            <Button
+              title={syncing ? 'Syncing…' : isAuthenticated ? 'Sync Activities' : 'Connect Strava'}
+              icon={isAuthenticated ? RefreshCw : Link2}
+              loading={syncing}
+              disabled={!settings.stravaClientId || !clientSecret || fullSyncing}
+              fullWidth
+              onPress={() => (isAuthenticated ? syncStrava() : handleStravaConnect())}
               style={{ marginTop: 8 }}
-            >
-              <LinearGradient
-                colors={isAuthenticated ? ['#10b981', '#059669'] : ['#FC4C02', '#F97316']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={[styles.cta, theme.shadows.glow(isAuthenticated ? '#10b981' : '#FC4C02')]}
-              >
-                {syncing ? (
-                  <SpinningRefresh />
-                ) : isAuthenticated ? (
-                  <Icon icon={RefreshCw} variant="plain" size="sm" color="#fff" />
-                ) : (
-                  <Icon icon={Link2} variant="plain" size="sm" color="#fff" />
-                )}
-                <Typography style={styles.ctaText}>
-                  {syncing ? 'Syncing…' : isAuthenticated ? 'Sync Activities' : 'Connect Strava'}
-                </Typography>
-              </LinearGradient>
-            </PressableScale>
+            />
 
             {isAuthenticated && (
-              <PressableScale
-                style={styles.disconnectBtn}
-                onPress={handleDisconnect}
-              >
-                <Icon icon={Unplug} variant="plain" size="sm" color={theme.colors.error} />
-                <Typography style={styles.disconnectText}>Disconnect Strava</Typography>
-              </PressableScale>
+              <>
+                <View style={{ marginTop: 6 }}>
+                  <SettingsRow
+                    icon={RefreshCw}
+                    family="plan"
+                    label="Full Re-sync"
+                    caption="Re-download your entire history (picks up deletions)"
+                    onPress={handleFullResync}
+                    disabled={fullSyncing || syncing}
+                    isLast
+                    right={fullSyncing
+                      ? <ActivityIndicator size="small" color={familyStyle('plan').accent} />
+                      : undefined}
+                  />
+                </View>
+                <Button
+                  title="Disconnect Strava"
+                  variant="destructive"
+                  icon={Unplug}
+                  fullWidth
+                  onPress={() => setConfirmDisconnect(true)}
+                  style={{ marginTop: 6 }}
+                />
+              </>
             )}
           </WidgetCard>
         </StaggerItem>
@@ -345,11 +425,13 @@ export default function SettingsScreen() {
                     ]}
                     onPress={() => updateSettings({ coachPersonality: personality })}
                     accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
                     accessibilityLabel={personality}
                   >
                     <Typography style={[styles.optionCardText, active && { color: healthFam.accent, fontWeight: '800' }]}>
                       {personality}
                     </Typography>
+                    {active && <Icon icon={Check} variant="plain" size="sm" color={healthFam.accent} />}
                   </PressableScale>
                 );
               })}
@@ -384,8 +466,9 @@ export default function SettingsScreen() {
                 <Icon icon={KeyRound} variant="plain" size="sm" color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
                 <TextInput
                   style={styles.apiKeyInput}
-                  value={settings.llmApiKey}
-                  onChangeText={(text) => updateSettings({ llmApiKey: text })}
+                  value={llmKey}
+                  onChangeText={setLlmKey}
+                  onEndEditing={() => persistSecret('llmApiKey', llmKey)}
                   placeholder={`Enter ${settings.llmProvider} API Key`}
                   placeholderTextColor={theme.colors.textSecondary}
                   secureTextEntry
@@ -441,14 +524,38 @@ export default function SettingsScreen() {
           </WidgetCard>
         </StaggerItem>
 
-        {/* ---------- Privacy ---------- */}
+        {/* ---------- Notifications ---------- */}
         <StaggerItem index={4}>
+          <WidgetCard family="progress" title="Notifications" icon={Bell} caption="Reminders & recaps">
+            <SettingsRow
+              icon={Bell}
+              family="progress"
+              label="Enable notifications"
+              caption={notifGranted
+                ? 'Workout reminders, streaks and weekly recaps are on'
+                : 'Workout reminders, streak alerts, weekly recaps'}
+              onPress={notifGranted ? undefined : handleEnableNotifications}
+              isLast
+              right={notifGranted
+                ? (
+                  <View style={styles.grantedPill}>
+                    <Icon icon={Check} variant="plain" size="xs" color={theme.colors.success} />
+                    <Typography style={styles.grantedPillText}>Enabled</Typography>
+                  </View>
+                )
+                : <Button title="Enable" size="sm" variant="secondary" family="progress" onPress={handleEnableNotifications} />}
+            />
+          </WidgetCard>
+        </StaggerItem>
+
+        {/* ---------- Privacy ---------- */}
+        <StaggerItem index={5}>
           <WidgetCard family="records" title="Privacy" icon={Shield} caption="Your data, your control">
             <SettingsRow
               icon={Shield}
               family="records"
               label="Privacy Zones"
-              caption="Hide start/end locations on export"
+              caption="Hide routes & locations on export"
               right={
                 <Toggle
                   value={settings.privacyZones}
@@ -470,14 +577,13 @@ export default function SettingsScreen() {
         </StaggerItem>
 
         {/* ---------- About ---------- */}
-        <StaggerItem index={5}>
+        <StaggerItem index={6}>
           <WidgetCard family="social" title="About" icon={Info} caption="App info">
             <SettingsRow
               icon={ActivityIcon}
               family="social"
               label="Strava AI Coach"
               caption={`Version ${APP_VERSION}`}
-              right={<Typography style={styles.versionPill}>v{APP_VERSION}</Typography>}
             />
             <SettingsRow
               icon={Code2}
@@ -491,9 +597,30 @@ export default function SettingsScreen() {
           </WidgetCard>
         </StaggerItem>
 
-        <Typography style={styles.footer}>Strava AI Coach · v{APP_VERSION}</Typography>
-
       </ScrollView>
+
+      {/* ---------- Disconnect confirm ---------- */}
+      <Sheet
+        visible={confirmDisconnect}
+        onClose={() => setConfirmDisconnect(false)}
+        title="Disconnect Strava?"
+        caption="Removes your access token and clears synced activities from this device."
+      >
+        <Button
+          title="Disconnect"
+          variant="destructive"
+          icon={Unplug}
+          fullWidth
+          onPress={handleDisconnect}
+        />
+        <View style={{ height: 10 }} />
+        <Button
+          title="Cancel"
+          variant="ghost"
+          fullWidth
+          onPress={() => setConfirmDisconnect(false)}
+        />
+      </Sheet>
     </SafeAreaView>
   );
 }
@@ -509,8 +636,8 @@ const styles = StyleSheet.create({
   heroHeader: {
     paddingHorizontal: 20, paddingTop: 14, paddingBottom: 22, marginBottom: 16,
   },
-  heroTitle: { fontSize: 24, fontFamily: theme.fonts.display, color: '#fff' },
-  heroSub: { fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 4 },
+  heroTitle: { fontSize: 24, fontFamily: theme.fonts.display, color: theme.colors.onAccent },
+  heroSub: { fontSize: 12, color: withAlpha(theme.colors.onAccent, 'heavy'), marginTop: 4 },
 
   infoBox: {
     backgroundColor: theme.colors.surfaceMuted,
@@ -518,7 +645,7 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.md,
     marginBottom: theme.spacing.md,
     borderLeftWidth: 3,
-    borderLeftColor: theme.colors.primary + '88',
+    borderLeftColor: withAlpha(theme.colors.primary, 'heavy'),
   },
   infoText: { fontSize: 12, color: theme.colors.textSecondary, lineHeight: 20 },
 
@@ -527,19 +654,20 @@ const styles = StyleSheet.create({
   input: {
     backgroundColor: theme.colors.background,
     borderWidth: 1,
-    borderColor: theme.colors.border + '88',
+    borderColor: withAlpha(theme.colors.border, 'heavy'),
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     color: theme.colors.text,
     fontSize: 14,
   },
+  secureNote: { fontSize: 10, color: theme.colors.textSecondary, marginTop: 5 },
   apiKeyWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: theme.colors.background,
     borderWidth: 1,
-    borderColor: theme.colors.border + '88',
+    borderColor: withAlpha(theme.colors.border, 'heavy'),
     borderRadius: 10,
     paddingHorizontal: 12,
   },
@@ -554,8 +682,9 @@ const styles = StyleSheet.create({
   // doesn't stretch the whole row to the screen edge.
   segmentWrap: { width: 150 },
 
-  // Single option-card style for the multi-line personality picker.
+  // Single option-card style for the multi-line personality chip group.
   optionCard: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingVertical: 12, paddingHorizontal: 14,
     borderRadius: 10,
     borderWidth: 1, borderColor: theme.colors.border,
@@ -563,38 +692,11 @@ const styles = StyleSheet.create({
   },
   optionCardText: { fontSize: 13, color: theme.colors.text, fontWeight: '600' },
 
-  cta: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 12, borderRadius: 12, gap: 8,
+  grantedPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999,
+    backgroundColor: withAlpha(theme.colors.success, 'tint'),
+    borderWidth: 1, borderColor: withAlpha(theme.colors.success, 'strong'),
   },
-  ctaText: { color: '#fff', fontWeight: '800', fontSize: 14 },
-
-  disconnectBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 10, marginTop: 10, borderRadius: 10,
-    borderWidth: 1, borderColor: theme.colors.error + '55',
-    backgroundColor: theme.colors.error + '11',
-    gap: 6,
-  },
-  disconnectText: { color: theme.colors.error, fontWeight: '700', fontSize: 13 },
-
-  versionPill: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: theme.colors.textSecondary,
-    backgroundColor: theme.colors.surfaceMuted,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-
-  footer: {
-    textAlign: 'center',
-    fontSize: 11,
-    color: theme.colors.textSecondary,
-    marginTop: 8,
-    marginBottom: 24,
-    letterSpacing: 0.3,
-  },
+  grantedPillText: { fontSize: 11, fontWeight: '700', color: theme.colors.success },
 });

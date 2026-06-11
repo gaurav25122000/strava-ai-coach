@@ -10,7 +10,7 @@ import { familyStyle, WIDGET_FAMILY, WIDGET_TITLES } from '../utils/widgetFamili
 import { useStore } from '../store/useStore';
 import { EmptyHint } from './common';
 
-// Default shoe lifespan, until per-shoe lifespan setting ships.
+// Default shoe lifespan when the pair has no per-shoe lifespan set.
 const SHOE_LIFESPAN_KM = 600;
 // Past this share of the lifespan the ring switches to the warning palette.
 const WEAR_WARN_RATIO = 0.8;
@@ -39,7 +39,8 @@ export const ShoeTrackerWidget = memo(function ShoeTrackerWidget() {
         />
       ) : (
         topShoes.map((shoe) => {
-          const pct = Math.min(shoe.distance / SHOE_LIFESPAN_KM, 1);
+          const lifespanKm = shoe.lifespanKm ?? SHOE_LIFESPAN_KM;
+          const pct = Math.min(shoe.distance / lifespanKm, 1);
           const isWarn = pct >= WEAR_WARN_RATIO;
           const ringColor = isWarn ? theme.colors.error : familyStyle('activity').accent;
           return (
@@ -57,7 +58,7 @@ export const ShoeTrackerWidget = memo(function ShoeTrackerWidget() {
                   </Typography>
                 ) : null}
                 <Typography style={styles.shoeMileage}>
-                  {Math.round(shoe.distance)} / {SHOE_LIFESPAN_KM} km
+                  {Math.round(shoe.distance)} / {lifespanKm} km
                 </Typography>
               </View>
               <DonutRing

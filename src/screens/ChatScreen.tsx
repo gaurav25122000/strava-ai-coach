@@ -1,30 +1,43 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
   TextInput,
-  TouchableOpacity,
   FlatList,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import ReAnimated, { FadeInDown, FadeInRight, FadeInLeft, FadeOut } from 'react-native-reanimated';
+import Animated, {
+  FadeInDown,
+  FadeInRight,
+  FadeInLeft,
+  FadeOut,
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withTiming,
+  interpolate,
+  cancelAnimation,
+  Easing,
+  SharedValue,
+} from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import Markdown from 'react-native-markdown-display';
 import { Send, Bot, RefreshCw, Sparkles } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { Icon } from '../components/Icon';
+import { Button } from '../components/Button';
+import { Sheet } from '../components/Sheet';
 import { useStore } from '../store/useStore';
 import { AIService, ChatMessage } from '../services/ai';
-import { theme } from '../theme';
+import { theme, withAlpha } from '../theme';
 import { secureSettingsStorage } from '../store/useStore';
 import { familyStyle } from '../utils/widgetFamilies';
 import { PressableScale } from '../components/PressableScale';
-import { SkeletonChatMessage } from '../components/SkeletonPresets';
 
 const SUGGESTIONS = [
   'How should I pace my long run this weekend?',
@@ -34,27 +47,23 @@ const SUGGESTIONS = [
   'Explain my training load this week.',
 ];
 
-// Compact chips shown above the input bar once a conversation is in progress.
+// Compact chips shown above the input bar once the coach has replied.
 const FOLLOW_UP_CHIPS = [
   'Why?',
   'Give me a plan',
   'Show example workout',
 ];
 
-const DOT_COLORS = ['#f97316', '#ec4899', '#8b5cf6'];
-
 // Family used across the chat surface — chat is "social" in our taxonomy.
 const SOCIAL = familyStyle('social');
 
-// ChatMessage with a local timestamp + stable id. We don't mutate the AIService
-// type so network payloads remain unchanged; ts/id are purely UI-side.
-type UIMessage = ChatMessage & { ts: number; id: string };
+const DOT_COLORS = [theme.colors.primary, SOCIAL.accent, theme.colors.accent];
 
-let messageSeq = 0;
-const nextMessageId = (role: ChatMessage['role']) => `${role}-${Date.now()}-${messageSeq++}`;
+// Shape of one persisted transcript entry in store.coachChat.
+type CoachChatMsg = { role: 'user' | 'assistant'; text: string; at: string };
 
-function formatTime(ts: number) {
-  const d = new Date(ts);
+function formatTime(at: string) {
+  const d = new Date(at);
   const h = d.getHours();
   const m = d.getMinutes();
   const hh = ((h + 11) % 12) + 1;
@@ -74,70 +83,50 @@ function CoachAvatar({ size = 28 }: { size?: number }) {
         { width: size, height: size, borderRadius: size / 2 },
       ]}
     >
-      <Bot size={Math.round(size * 0.55)} color="#fff" />
+      <Bot size={Math.round(size * 0.55)} color={theme.colors.onAccent} />
     </LinearGradient>
   );
 }
 
+// One looping 0→1 progress drives all three dots; each dot reads it at a
+// staggered phase offset so the wave ripples left to right.
+function useDotStyle(progress: SharedValue<number>, index: number) {
+  return useAnimatedStyle(() => {
+    const phase = (progress.value + 1 - index * 0.16) % 1;
+    return {
+      opacity: interpolate(phase, [0, 0.3, 0.6, 1], [0.4, 1, 0.4, 0.4]),
+      transform: [{ translateY: interpolate(phase, [0, 0.3, 0.6, 1], [0, -6, 0, 0]) }],
+    };
+  });
+}
+
 function ThinkingDots() {
-  const anims = useRef(DOT_COLORS.map(() => new Animated.Value(0))).current;
+  const progress = useSharedValue(0);
 
   useEffect(() => {
-    const animations = anims.map((anim, i) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(i * 160),
-          Animated.timing(anim, { toValue: 1, duration: 380, useNativeDriver: true }),
-          Animated.timing(anim, { toValue: 0, duration: 380, useNativeDriver: true }),
-          Animated.delay((DOT_COLORS.length - i - 1) * 160),
-        ])
-      )
+    progress.value = withRepeat(
+      withTiming(1, { duration: 1000, easing: Easing.linear }),
+      -1,
+      false,
     );
-    animations.forEach(a => a.start());
-    return () => animations.forEach(a => a.stop());
-  }, []);
+    return () => cancelAnimation(progress);
+  }, [progress]);
+
+  const dotStyles = [useDotStyle(progress, 0), useDotStyle(progress, 1), useDotStyle(progress, 2)];
 
   return (
     <View style={styles.typingRow}>
       <CoachAvatar size={28} />
       <View style={styles.typingBubble}>
-        {anims.map((anim, i) => (
+        {dotStyles.map((style, i) => (
           <Animated.View
             key={i}
-            style={[
-              styles.dot,
-              { backgroundColor: DOT_COLORS[i] },
-              {
-                transform: [{
-                  translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }),
-                }],
-                opacity: anim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.4, 1, 0.4] }),
-              },
-            ]}
+            style={[styles.dot, { backgroundColor: DOT_COLORS[i] }, style]}
           />
         ))}
       </View>
     </View>
   );
-}
-
-// Blinking caret shown at the tail of the assistant bubble while its text is
-// still being revealed word-by-word. Pure opacity pulse on the native driver.
-function StreamingCaret() {
-  const blink = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(blink, { toValue: 0, duration: 420, useNativeDriver: true }),
-        Animated.timing(blink, { toValue: 1, duration: 420, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, []);
-
-  return <Animated.View style={[styles.caret, { opacity: blink }]} />;
 }
 
 const markdownStyles = StyleSheet.create({
@@ -152,15 +141,15 @@ const markdownStyles = StyleSheet.create({
   list_item: { flexDirection: 'row', marginBottom: 4 },
   bullet_list_icon: { color: SOCIAL.accent, fontSize: 14, marginRight: 6, marginTop: 2 },
   code_inline: {
-    backgroundColor: '#ffffff15',
+    backgroundColor: withAlpha(theme.colors.text, 'soft'),
     borderRadius: 4,
     paddingHorizontal: 5,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    fontSize: 12,
-    color: '#ec4899',
+    fontSize: theme.typography.caption.fontSize,
+    color: SOCIAL.accent,
   },
   fence: {
-    backgroundColor: '#0f0f1a',
+    backgroundColor: theme.colors.surfaceMuted,
     borderRadius: 8,
     padding: 12,
     marginVertical: 6,
@@ -169,8 +158,8 @@ const markdownStyles = StyleSheet.create({
   },
   code_block: {
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    fontSize: 12,
-    color: '#a5f3fc',
+    fontSize: theme.typography.caption.fontSize,
+    color: familyStyle('recovery').accent,
   },
   blockquote: {
     backgroundColor: SOCIAL.tint,
@@ -193,30 +182,30 @@ const markdownStyles = StyleSheet.create({
     padding: 8,
     fontWeight: '700',
     color: SOCIAL.accent,
-    fontSize: 12,
+    fontSize: theme.typography.caption.fontSize,
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
   },
   td: {
     padding: 8,
     color: theme.colors.text,
-    fontSize: 12,
+    fontSize: theme.typography.caption.fontSize,
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
   },
   tr: { borderBottomWidth: 1, borderBottomColor: theme.colors.border, flexDirection: 'row' },
-  link: { color: '#6366f1', textDecorationLine: 'underline' },
+  link: { color: theme.colors.info, textDecorationLine: 'underline' },
   paragraph: { marginVertical: 3 },
 });
 
-// One chat row — extracted so the renderItem stays tiny and so styling for
-// the user-vs-coach split lives in a single place.
-function MessageBubble({ message, streaming = false }: { message: UIMessage; streaming?: boolean }) {
+// One chat row — memoised so appending a message doesn't re-render the whole
+// transcript. The coach reply lands as a single bubble with FadeInDown.
+const MessageBubble = React.memo(function MessageBubble({ message }: { message: CoachChatMsg }) {
   const isUser = message.role === 'user';
-  const Enter = isUser ? FadeInRight : FadeInLeft;
+  const Enter = isUser ? FadeInRight : FadeInDown;
 
   return (
-    <ReAnimated.View
+    <Animated.View
       entering={Enter.duration(280).springify().damping(18)}
       style={[styles.bubbleWrap, isUser ? styles.bubbleWrapUser : styles.bubbleWrapBot]}
     >
@@ -237,112 +226,111 @@ function MessageBubble({ message, streaming = false }: { message: UIMessage; str
           </LinearGradient>
         ) : (
           <View style={[styles.bubble, styles.bubbleBot, { borderLeftColor: SOCIAL.accent }]}>
-            <Markdown style={markdownStyles}>{streaming && !message.text ? '…' : message.text}</Markdown>
-            {streaming && <StreamingCaret />}
+            <Markdown style={markdownStyles}>{message.text}</Markdown>
           </View>
         )}
-        {!streaming && (
-          <Text style={[styles.timestamp, isUser ? styles.timestampUser : styles.timestampBot]}>
-            {formatTime(message.ts)}
-          </Text>
-        )}
+        <Text style={[styles.timestamp, isUser ? styles.timestampUser : styles.timestampBot]}>
+          {formatTime(message.at)}
+        </Text>
       </View>
-    </ReAnimated.View>
+    </Animated.View>
   );
-}
+});
 
 export default function ChatScreen() {
-  const { settings, userProfile, activities } = useStore();
-  const [messages, setMessages] = useState<UIMessage[]>([]);
+  const settings = useStore(s => s.settings);
+  const userProfile = useStore(s => s.userProfile);
+  const activities = useStore(s => s.activities);
+  const goals = useStore(s => s.goals);
+  const bestEfforts = useStore(s => s.bestEfforts);
+  const messages = useStore(s => s.coachChat);
+  const setCoachChat = useStore(s => s.setCoachChat);
+
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // id of the assistant message currently being revealed word-by-word.
-  const [streamingId, setStreamingId] = useState<string | null>(null);
+  // The message a failed send should retry with (also restored to the input).
+  const [failedText, setFailedText] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const listRef = useRef<FlatList>(null);
-  const streamTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tabBarHeight = useBottomTabBarHeight();
 
-  // Clear any in-flight reveal interval on unmount.
-  useEffect(() => () => { if (streamTimer.current) clearInterval(streamTimer.current); }, []);
-
-  // The AI service returns the full reply at once, so we fake the "watch the
-  // coach write" moment: append an empty assistant bubble, then reveal the
-  // reply word-by-word into it. The bot skeleton drops on the first token.
-  const streamReply = useCallback((fullText: string) => {
-    const words = fullText.split(/(\s+)/); // keep whitespace tokens for spacing
-    const id = nextMessageId('assistant');
-    setStreamingId(id);
-    setLoading(false); // drop the thinking-dots/skeleton footer
-    setMessages(prev => [...prev, { role: 'assistant', text: '', ts: Date.now(), id }]);
-
-    // Reveal a scaled number of tokens per tick so the whole reply lands in
-    // ~REVEAL_MS regardless of length — a short reply types out word-by-word,
-    // a long one streams several words per frame. Bounds both the perceived
-    // wait and the number of list re-renders.
-    const REVEAL_MS = 1100;
-    const TICK_MS = 16;
-    const step = Math.max(1, Math.ceil(words.length / (REVEAL_MS / TICK_MS)));
-    let i = 0;
-    streamTimer.current = setInterval(() => {
-      i = Math.min(words.length, i + step);
-      const partial = words.slice(0, i).join('');
-      setMessages(prev =>
-        prev.map(m => (m.id === id ? { ...m, text: partial } : m))
-      );
-      listRef.current?.scrollToEnd({ animated: false });
-      if (i >= words.length) {
-        if (streamTimer.current) clearInterval(streamTimer.current);
-        streamTimer.current = null;
-        setStreamingId(null);
-        if (Platform.OS !== 'web') {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
-        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
-      }
-    }, TICK_MS);
-  }, []);
+  // The coach service injects today's prescription + adherence when it gets a
+  // structured goal — pass the first non-simple one.
+  const coachGoal = useMemo(() => goals.find(g => !g.isSimple), [goals]);
 
   const send = useCallback(async (text: string) => {
-    if (!text.trim() || loading || streamingId) return;
+    const trimmed = text.trim();
+    if (!trimmed || loading) return;
     setError(null);
+    setFailedText(null);
 
     const apiKey = settings.llmApiKey || (await secureSettingsStorage.getSecret('llmApiKey')) || '';
-    if (!apiKey) { setError('Add your API key in Settings first.'); return; }
+    if (!apiKey) {
+      setError('Add your API key in Settings first.');
+      setFailedText(trimmed);
+      return;
+    }
 
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    const userMsg: UIMessage = { role: 'user', text: text.trim(), ts: Date.now(), id: nextMessageId('user') };
-    const next = [...messages, userMsg];
-    setMessages(next);
+    const next: CoachChatMsg[] = [
+      ...useStore.getState().coachChat,
+      { role: 'user', text: trimmed, at: new Date().toISOString() },
+    ];
+    setCoachChat(next);
     setInput('');
     setLoading(true);
 
     try {
       // The AI service expects ChatMessage (role + text) — strip the local
-      // ui-only fields before sending so payload semantics are unchanged.
-      const payload: ChatMessage[] = next.map(({ role, text }) => ({ role, text }));
+      // timestamp before sending so payload semantics are unchanged.
+      const payload: ChatMessage[] = next.map(({ role, text: t }) => ({ role, text: t }));
       const reply = await AIService.chatWithCoach(
-        payload, settings.llmProvider, apiKey,
-        settings.coachPersonality, userProfile, activities
+        payload,
+        settings.llmProvider,
+        apiKey,
+        settings.coachPersonality,
+        userProfile,
+        activities,
+        coachGoal,
+        { bestEfforts, unit: settings.unit },
       );
-      streamReply(reply);
+      setCoachChat([
+        ...useStore.getState().coachChat,
+        { role: 'assistant', text: reply, at: new Date().toISOString() },
+      ]);
+      if (Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
     } catch (e: any) {
+      // Pull the failed user turn back out of the transcript and into the
+      // input so retrying doesn't double-send it.
+      const cur = useStore.getState().coachChat;
+      const last = cur[cur.length - 1];
+      if (last && last.role === 'user' && last.text === trimmed) {
+        setCoachChat(cur.slice(0, -1));
+      }
+      setInput(trimmed);
+      setFailedText(trimmed);
       setError(e?.response?.data?.error?.message || e?.message || 'Request failed.');
+    } finally {
       setLoading(false);
-      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
     }
-  }, [messages, loading, streamingId, settings, userProfile, activities, streamReply]);
+  }, [loading, settings, userProfile, activities, coachGoal, bestEfforts, setCoachChat]);
 
-  const clear = () => {
-    if (streamTimer.current) { clearInterval(streamTimer.current); streamTimer.current = null; }
-    setStreamingId(null);
-    setMessages([]);
+  const clear = useCallback(() => {
+    setConfirmClear(false);
+    setCoachChat([]);
     setError(null);
-  };
+    setFailedText(null);
+  }, [setCoachChat]);
 
-  const renderItem = ({ item }: { item: UIMessage }) => (
-    <MessageBubble message={item} streaming={item.id === streamingId} />
-  );
+  const renderItem = ({ item }: { item: CoachChatMsg }) => <MessageBubble message={item} />;
+
+  const lastMessage = messages[messages.length - 1];
+  const showFollowUps = !loading && lastMessage?.role === 'assistant';
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -368,42 +356,43 @@ export default function ChatScreen() {
           </View>
         </View>
         {messages.length > 0 && (
-          <TouchableOpacity
-            onPress={clear}
+          <PressableScale
+            onPress={() => setConfirmClear(true)}
             style={styles.clearBtn}
-            activeOpacity={0.7}
+            hitSlop={theme.hitSlop}
             accessibilityRole="button"
             accessibilityLabel="Clear conversation"
           >
-            <Icon icon={RefreshCw} variant="plain" size="sm" color="rgba(255,255,255,0.85)" />
-          </TouchableOpacity>
+            <Icon icon={RefreshCw} variant="plain" size="sm" color={theme.colors.onAccent} />
+          </PressableScale>
         )}
       </LinearGradient>
 
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
+        style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? tabBarHeight : 0}
       >
         {/* Message list */}
         {messages.length === 0 ? (
           <ScrollView contentContainerStyle={styles.emptyContainer} showsVerticalScrollIndicator={false}>
-            <ReAnimated.View entering={FadeInDown.duration(400)} style={styles.emptyHero}>
+            <Animated.View entering={FadeInDown.duration(400)} style={styles.emptyHero}>
               <LinearGradient
                 colors={SOCIAL.gradient}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={styles.emptyIconBg}
               >
-                <Sparkles size={36} color="#fff" />
+                <Sparkles size={36} color={theme.colors.onAccent} />
               </LinearGradient>
               <Text style={styles.emptyTitle}>Hi, I'm your coach</Text>
               <Text style={styles.emptySub}>
                 Ask about your plans, recovery, pacing, or anything running-related.
               </Text>
-            </ReAnimated.View>
+            </Animated.View>
             <Text style={styles.suggestLabel}>Starter prompts</Text>
             {SUGGESTIONS.slice(0, 3).map((s, i) => (
-              <ReAnimated.View key={i} entering={FadeInDown.delay(400 + i * 55).springify()}>
+              <Animated.View key={i} entering={FadeInDown.delay(400 + i * 55).springify()}>
                 <PressableScale
                   style={styles.suggestChip}
                   onPress={() => send(s)}
@@ -413,11 +402,11 @@ export default function ChatScreen() {
                   <View style={[styles.suggestAccent, { backgroundColor: SOCIAL.accent }]} />
                   <Text style={styles.suggestText}>{s}</Text>
                 </PressableScale>
-              </ReAnimated.View>
+              </Animated.View>
             ))}
             <Text style={[styles.suggestLabel, { marginTop: 16 }]}>More ideas</Text>
             {SUGGESTIONS.slice(3).map((s, i) => (
-              <ReAnimated.View key={i} entering={FadeInDown.delay(400 + (3 + i) * 55).springify()}>
+              <Animated.View key={i} entering={FadeInDown.delay(400 + (3 + i) * 55).springify()}>
                 <PressableScale
                   style={styles.suggestChip}
                   onPress={() => send(s)}
@@ -427,7 +416,7 @@ export default function ChatScreen() {
                   <View style={[styles.suggestAccent, { backgroundColor: SOCIAL.accent }]} />
                   <Text style={styles.suggestText}>{s}</Text>
                 </PressableScale>
-              </ReAnimated.View>
+              </Animated.View>
             ))}
           </ScrollView>
         ) : (
@@ -435,30 +424,37 @@ export default function ChatScreen() {
             ref={listRef}
             data={messages}
             renderItem={renderItem}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item, index) => `${item.at}-${index}`}
             contentContainerStyle={styles.list}
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
             showsVerticalScrollIndicator={false}
             ListFooterComponent={
               loading ? (
-                <ReAnimated.View entering={FadeInLeft.duration(280)} exiting={FadeOut.duration(180)}>
+                <Animated.View entering={FadeInLeft.duration(280)} exiting={FadeOut.duration(180)}>
                   <ThinkingDots />
-                  <SkeletonChatMessage side="bot" />
-                </ReAnimated.View>
+                </Animated.View>
               ) : null
             }
           />
         )}
 
-        {/* Error */}
+        {/* Error — retryable: the failed message is back in the input */}
         {error && (
           <View style={styles.errorBanner}>
             <Text style={styles.errorText}>{error}</Text>
+            {failedText != null && (
+              <Button
+                title="Tap to retry"
+                variant="secondary"
+                size="sm"
+                onPress={() => send(input.trim() ? input : failedText)}
+              />
+            )}
           </View>
         )}
 
-        {/* Quick-reply chips — shown above the input bar once chatting */}
-        {messages.length > 0 && !loading && !streamingId && (
+        {/* Quick-reply chips — shown above the input bar after a coach reply */}
+        {showFollowUps && (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -467,7 +463,7 @@ export default function ChatScreen() {
             {FOLLOW_UP_CHIPS.map((chip) => (
               <PressableScale
                 key={chip}
-                style={[styles.quickChip, { backgroundColor: SOCIAL.tint, borderColor: SOCIAL.accent + '55' }]}
+                style={[styles.quickChip, { backgroundColor: SOCIAL.tint, borderColor: withAlpha(SOCIAL.accent, 'strong') }]}
                 onPress={() => send(chip)}
                 accessibilityRole="button"
                 accessibilityLabel={chip}
@@ -490,7 +486,7 @@ export default function ChatScreen() {
             maxLength={600}
             returnKeyType="default"
           />
-          {(!input.trim() || loading || streamingId) ? (
+          {(!input.trim() || loading) ? (
             <View
               style={[styles.sendBtn, styles.sendBtnDisabled]}
               accessibilityRole="button"
@@ -512,18 +508,32 @@ export default function ChatScreen() {
                 end={{ x: 1, y: 1 }}
                 style={[styles.sendBtn, theme.shadows.glow(SOCIAL.accent)]}
               >
-                <Icon icon={Send} variant="plain" size="md" color="#fff" />
+                <Icon icon={Send} variant="plain" size="md" color={theme.colors.onAccent} />
               </LinearGradient>
             </PressableScale>
           )}
         </View>
       </KeyboardAvoidingView>
+
+      {/* Clear-chat confirmation */}
+      <Sheet
+        visible={confirmClear}
+        onClose={() => setConfirmClear(false)}
+        title="Clear chat?"
+        caption="This deletes your whole conversation with the coach."
+      >
+        <View style={styles.confirmActions}>
+          <Button title="Clear conversation" variant="destructive" fullWidth onPress={clear} />
+          <Button title="Cancel" variant="ghost" fullWidth onPress={() => setConfirmClear(false)} />
+        </View>
+      </Sheet>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background },
+  flex: { flex: 1 },
 
   // Header
   header: {
@@ -538,15 +548,15 @@ const styles = StyleSheet.create({
     padding: 2,
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.28)',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderColor: withAlpha(theme.colors.onAccent, 'medium'),
+    backgroundColor: withAlpha(theme.colors.onAccent, 'soft'),
   },
   coachAvatar: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   headerTextWrap: { flex: 1 },
-  headerTitle: { fontSize: theme.typography.subtitle.fontSize, fontFamily: theme.fonts.bold, color: '#fff', letterSpacing: -0.2 },
+  headerTitle: { fontSize: theme.typography.subtitle.fontSize, fontFamily: theme.fonts.bold, color: theme.colors.onAccent, letterSpacing: -0.2 },
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -554,18 +564,18 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: withAlpha(theme.colors.onAccent, 'tint'),
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.22)',
+    borderColor: withAlpha(theme.colors.onAccent, 'medium'),
     marginTop: 4,
     maxWidth: '100%',
   },
   statusDot: {
     width: 6, height: 6, borderRadius: 3,
-    backgroundColor: '#34D399',
+    backgroundColor: theme.colors.success,
   },
-  statusText: { fontSize: 11, color: '#fff', fontWeight: theme.typography.caption.fontWeight, letterSpacing: 0.2 },
+  statusText: { fontSize: theme.typography.label.fontSize, color: theme.colors.onAccent, fontWeight: theme.typography.caption.fontWeight, letterSpacing: 0.2 },
   clearBtn: { padding: 8 },
 
   // Empty state
@@ -579,7 +589,7 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: theme.typography.title.fontSize, fontFamily: theme.fonts.display, color: theme.colors.text, marginBottom: 8, letterSpacing: -0.3 },
   emptySub: { fontSize: theme.typography.body.fontSize, color: theme.colors.textSecondary, textAlign: 'center', lineHeight: 21 },
-  suggestLabel: { fontSize: 11, color: theme.colors.textSecondary, marginBottom: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
+  suggestLabel: { fontSize: theme.typography.label.fontSize, color: theme.colors.textSecondary, marginBottom: 10, fontWeight: theme.typography.label.fontWeight, letterSpacing: 1, textTransform: 'uppercase' },
   suggestChip: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: theme.colors.surfaceElevated,
@@ -588,7 +598,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    borderColor: theme.colors.divider,
     ...theme.shadows.sm,
   },
   suggestAccent: { width: 3, height: 22, borderRadius: 2, marginRight: 10 },
@@ -609,20 +619,12 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.surfaceElevated,
     borderBottomLeftRadius: 4,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    borderColor: theme.colors.divider,
     borderLeftWidth: 3,
     ...theme.shadows.sm,
   },
-  // Blinking cursor shown beneath the streamed markdown while the reply writes.
-  caret: {
-    width: 8,
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: SOCIAL.accent,
-    marginTop: 2,
-  },
-  bubbleUserText: { color: '#fff', fontSize: theme.typography.body.fontSize, lineHeight: 22, fontWeight: theme.typography.body.fontWeight },
-  timestamp: { fontSize: 10, color: theme.colors.textSecondary, marginTop: 4, letterSpacing: 0.3 },
+  bubbleUserText: { color: theme.colors.onAccent, fontSize: theme.typography.body.fontSize, lineHeight: 22, fontWeight: theme.typography.body.fontWeight },
+  timestamp: { fontSize: theme.typography.micro.fontSize, color: theme.colors.textSecondary, marginTop: 4, letterSpacing: 0.3 },
   timestampUser: { marginRight: 4 },
   timestampBot: { marginLeft: 4 },
 
@@ -640,11 +642,13 @@ const styles = StyleSheet.create({
   // Error
   errorBanner: {
     marginHorizontal: 16, marginBottom: 8,
-    backgroundColor: '#ef44441a',
+    backgroundColor: withAlpha(theme.colors.error, 'soft'),
     borderRadius: 10, padding: 10,
-    borderWidth: 1, borderColor: '#ef444440',
+    borderWidth: 1, borderColor: withAlpha(theme.colors.error, 'medium'),
+    gap: 8,
+    alignItems: 'flex-start',
   },
-  errorText: { color: theme.colors.error, fontSize: 13 },
+  errorText: { color: theme.colors.error, fontSize: theme.typography.footnote.fontSize },
 
   // Quick-reply chips
   quickRow: {
@@ -655,13 +659,13 @@ const styles = StyleSheet.create({
   quickChip: {
     paddingHorizontal: 14,
     paddingVertical: 9,
-    borderRadius: 999,
+    borderRadius: theme.borderRadius.full,
     borderWidth: 1,
     marginRight: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  quickChipText: { fontSize: 13, fontWeight: '700', lineHeight: 18 },
+  quickChipText: { fontSize: theme.typography.footnote.fontSize, fontWeight: '700', lineHeight: 18 },
 
   // Input
   inputBar: {
@@ -676,7 +680,7 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    backgroundColor: '#ffffff0d',
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -692,4 +696,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   sendBtnDisabled: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border },
+
+  // Clear-chat confirm sheet
+  confirmActions: { gap: 10, paddingTop: 4 },
 });
