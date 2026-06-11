@@ -48,7 +48,9 @@ export const RacePredictorWidget = memo(function RacePredictorWidget() {
               style={[styles.row, i === result.predictions.length - 1 && { borderBottomWidth: 0 }]}
             >
               <View style={[styles.distPill, { backgroundColor: withAlpha(accent, 'tint') }]}>
-                <Typography style={[styles.distTxt, { color: accent }]}>{p.label}</Typography>
+                <Typography style={[styles.distTxt, { color: accent }]} numberOfLines={1}>
+                  {p.label}
+                </Typography>
               </View>
               <View style={{ flex: 1 }}>
                 <Typography style={styles.time}>{formatRaceTime(p.seconds)}</Typography>
@@ -77,8 +79,9 @@ const styles = StyleSheet.create({
     borderBottomColor: theme.colors.divider,
   },
   distPill: {
-    width: 58,
+    minWidth: 58,
     paddingVertical: 7,
+    paddingHorizontal: 10,
     borderRadius: 10,
     alignItems: 'center',
   },

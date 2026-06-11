@@ -14,9 +14,7 @@
       "resizeMode": "contain",
       "backgroundColor": "#1A1A24"
     },
-    "runtimeVersion": {
-      "policy": "sdkVersion"
-    },
+    "runtimeVersion": "1.0.0",
     "updates": {
       "url": "https://u.expo.dev/17d358db-beb5-4cd4-a9b6-3e0397e4244b"
     },

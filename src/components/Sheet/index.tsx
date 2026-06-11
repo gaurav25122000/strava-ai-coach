@@ -1,12 +1,22 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  BottomSheetBackdrop,
-  BottomSheetBackdropProps,
-  BottomSheetModal,
-  BottomSheetScrollView,
-  BottomSheetView,
-} from '@gorhom/bottom-sheet';
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { theme } from '../../theme';
@@ -29,11 +39,15 @@ interface SheetProps {
   children: React.ReactNode;
 }
 
+const DISMISS_DRAG = 120;
+const DISMISS_VELOCITY = 800;
+const EXIT_MS = 220;
+
 /**
  * App-wide bottom sheet: content-adaptive height (never a fixed 88% takeover),
- * physical spring, fading backdrop, body drag-to-dismiss. Built on
- * @gorhom/bottom-sheet modal + dynamic sizing; requires the
- * BottomSheetModalProvider mounted in App.tsx.
+ * physical spring, fading backdrop, drag-to-dismiss. Implemented on the core
+ * RN Modal + reanimated — @gorhom/bottom-sheet 5.2.x silently fails to present
+ * under reanimated 4 / Fabric, so we own the whole behavior here.
  */
 export function Sheet({
   visible,
@@ -44,88 +58,176 @@ export function Sheet({
   maxHeightFraction = 0.9,
   children,
 }: SheetProps) {
-  const ref = useRef<BottomSheetModal>(null);
   const insets = useSafeAreaInsets();
   const { height: windowH } = useWindowDimensions();
 
-  useEffect(() => {
-    if (visible) {
-      ref.current?.present();
-      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } else {
-      ref.current?.dismiss();
-    }
-  }, [visible]);
+  // The Modal stays mounted through the exit animation, then unmounts.
+  const [mounted, setMounted] = useState(visible);
+  const closing = useRef(false);
 
-  const handleDismiss = useCallback(() => {
-    if (Platform.OS !== 'web') Haptics.selectionAsync();
+  const ty = useSharedValue(windowH);
+  const backdrop = useSharedValue(0);
+  const measuredH = useRef(windowH);
+
+  const finishClose = useCallback(() => {
+    setMounted(false);
+    closing.current = false;
     onClose();
   }, [onClose]);
 
-  const renderBackdrop = useCallback(
-    (props: BottomSheetBackdropProps) => (
-      <BottomSheetBackdrop
-        {...props}
-        appearsOnIndex={0}
-        disappearsOnIndex={-1}
-        opacity={0.62}
-        pressBehavior="close"
-      />
-    ),
-    [],
+  // Single exit path for backdrop tap, drag, Android back, and visible=false.
+  const startClose = useCallback(() => {
+    if (closing.current) return;
+    closing.current = true;
+    if (Platform.OS !== 'web') Haptics.selectionAsync();
+    backdrop.value = withTiming(0, { duration: EXIT_MS });
+    ty.value = withTiming(measuredH.current, { duration: EXIT_MS }, (done) => {
+      if (done) runOnJS(finishClose)();
+    });
+  }, [backdrop, ty, finishClose]);
+
+  useEffect(() => {
+    if (visible) {
+      closing.current = false;
+      ty.value = windowH;
+      backdrop.value = 0;
+      setMounted(true);
+      if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } else if (mounted && !closing.current) {
+      startClose();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  // Slide in once the panel knows its height; re-measure keeps drag-dismiss
+  // distance honest when content changes while open.
+  const onPanelLayout = useCallback(
+    (e: { nativeEvent: { layout: { height: number } } }) => {
+      measuredH.current = e.nativeEvent.layout.height;
+      if (!closing.current && visible) {
+        ty.value = Math.min(ty.value, measuredH.current);
+        ty.value = withSpring(0, theme.motion.spring);
+        backdrop.value = withTiming(1, { duration: theme.motion.base });
+      }
+    },
+    [backdrop, ty, visible],
   );
 
-  const header = useMemo(() => {
-    if (!title) return null;
-    return (
-      <View style={styles.header}>
-        <Typography style={styles.title}>{title}</Typography>
-        {caption ? <Typography style={styles.caption}>{caption}</Typography> : null}
-      </View>
-    );
-  }, [title, caption]);
+  const pan = Gesture.Pan()
+    .onUpdate((e) => {
+      // Follow the finger down; gentle resistance upward.
+      ty.value = e.translationY > 0 ? e.translationY : e.translationY / 12;
+    })
+    .onEnd((e) => {
+      if (e.translationY > DISMISS_DRAG || e.velocityY > DISMISS_VELOCITY) {
+        runOnJS(startClose)();
+      } else {
+        ty.value = withSpring(0, theme.motion.spring);
+      }
+    });
 
-  const Body = scrollable ? BottomSheetScrollView : BottomSheetView;
+  const panelStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: ty.value }],
+  }));
+  // scrim token already carries its own alpha; backdrop.value just fades it.
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: backdrop.value,
+  }));
+
+  if (!mounted) return null;
+
+  const header = (
+    <View>
+      <View style={styles.grabberRow}>
+        <View style={styles.grabber} />
+      </View>
+      {title ? (
+        <View style={styles.header}>
+          <Typography style={styles.title}>{title}</Typography>
+          {caption ? <Typography style={styles.caption}>{caption}</Typography> : null}
+        </View>
+      ) : null}
+    </View>
+  );
+
+  const bottomPad = { paddingBottom: insets.bottom + 16 };
 
   return (
-    <BottomSheetModal
-      ref={ref}
-      enableDynamicSizing
-      maxDynamicContentSize={windowH * maxHeightFraction}
-      enablePanDownToClose
-      onDismiss={handleDismiss}
-      backdropComponent={renderBackdrop}
-      backgroundStyle={styles.background}
-      handleIndicatorStyle={styles.grabber}
-      keyboardBlurBehavior="restore"
-      android_keyboardInputMode="adjustResize"
-    >
-      <Body
-        style={styles.body}
-        {...(scrollable ? { contentContainerStyle: { paddingBottom: insets.bottom + 16 } } : {})}
-      >
-        {header}
-        {scrollable ? children : <View style={{ paddingBottom: insets.bottom + 16 }}>{children}</View>}
-      </Body>
-    </BottomSheetModal>
+    <Modal transparent statusBarTranslucent visible animationType="none" onRequestClose={startClose}>
+      <View style={styles.root}>
+        <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, backdropStyle]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={startClose} accessibilityLabel="Close sheet" />
+        </Animated.View>
+
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.avoider}
+          pointerEvents="box-none"
+        >
+          <Animated.View
+            style={[styles.panel, { maxHeight: windowH * maxHeightFraction }, panelStyle]}
+            onLayout={onPanelLayout}
+          >
+            {scrollable ? (
+              <>
+                <GestureDetector gesture={pan}>{header}</GestureDetector>
+                <ScrollView
+                  style={styles.body}
+                  contentContainerStyle={bottomPad}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                >
+                  {children}
+                </ScrollView>
+              </>
+            ) : (
+              <GestureDetector gesture={pan}>
+                <View>
+                  {header}
+                  <View style={[styles.body, bottomPad]}>{children}</View>
+                </View>
+              </GestureDetector>
+            )}
+          </Animated.View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  background: {
+  root: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  backdrop: {
+    backgroundColor: theme.colors.scrim,
+  },
+  avoider: {
+    justifyContent: 'flex-end',
+  },
+  panel: {
     backgroundColor: theme.colors.surfaceElevated,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
+    overflow: 'hidden',
+  },
+  grabberRow: {
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingBottom: 6,
   },
   grabber: {
     backgroundColor: theme.colors.border,
     width: 40,
     height: 4,
+    borderRadius: 2,
   },
   body: {
     paddingHorizontal: 20,
   },
   header: {
+    paddingHorizontal: 20,
     paddingTop: 4,
     paddingBottom: 14,
   },

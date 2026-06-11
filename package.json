@@ -12,7 +12,6 @@
   "dependencies": {
     "@expo-google-fonts/sora": "^0.4.2",
     "@expo/metro-runtime": "~6.1.2",
-    "@gorhom/bottom-sheet": "^5.2.14",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/datetimepicker": "8.4.4",
     "@react-navigation/bottom-tabs": "^7.15.11",
@@ -78,7 +77,7 @@
       "./jest.setup.js"
     ],
     "transformIgnorePatterns": [
-      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|native-base|react-native-svg|victory-native|@shopify/react-native-skia|@gorhom/bottom-sheet|react-native-reanimated|react-native-gesture-handler|lucide-react-native|react-native-worklets|d3-.*|internmap))"
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|native-base|react-native-svg|victory-native|@shopify/react-native-skia|react-native-reanimated|react-native-gesture-handler|lucide-react-native|react-native-worklets|d3-.*|internmap))"
     ]
   }
 }

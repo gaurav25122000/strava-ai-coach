@@ -29,7 +29,7 @@ export const ShoeTrackerWidget = memo(function ShoeTrackerWidget() {
       family={WIDGET_FAMILY.ShoeTracker}
       title={WIDGET_TITLES.ShoeTracker}
       icon={Footprints}
-      onPress={() => navigation.navigate('GearHealth')}
+      onPress={() => navigation.navigate('Profile', { screen: 'GearHealth' })}
     >
       {topShoes.length === 0 ? (
         <EmptyHint

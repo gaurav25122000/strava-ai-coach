@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { StackActions } from '@react-navigation/native';
 import { Home, BarChart2, Target, MessageCircle, User, List } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import OverviewScreen from '../screens/OverviewScreen';
@@ -53,10 +54,20 @@ const TAB_COLORS = {
 
 // Soft tactile click on tab change — but only when actually switching tabs.
 // Re-tapping the already-focused tab is a no-op, so the buzz would be noise.
-function tabPressHaptic({ navigation }: { navigation: { isFocused: () => boolean } }) {
+function tabScreenListeners({ navigation, route }: { navigation: any; route: any }) {
   return {
     tabPress: () => {
       if (Platform.OS !== 'web' && !navigation.isFocused()) Haptics.selectionAsync();
+    },
+    // Reset nested stacks when leaving their tab so a detail screen pushed
+    // cross-tab (e.g. from a dashboard widget) doesn't park the tab on it.
+    // bottom-tabs' popToTopOnBlur only fires after its transition animation
+    // reports finished, which is unreliable — dispatch the pop directly.
+    blur: () => {
+      const target = navigation.getState().routes.find((r: any) => r.key === route.key);
+      if (target?.state?.type === 'stack' && target.state.routes.length > 1) {
+        navigation.dispatch({ ...StackActions.popToTop(), target: target.state.key });
+      }
     },
   };
 }
@@ -138,7 +149,7 @@ export default function TabNavigator() {
         tabBarItemStyle: { paddingHorizontal: 0 },
         tabBarHideOnKeyboard: true,
       }}
-      screenListeners={tabPressHaptic}
+      screenListeners={tabScreenListeners}
     >
       <Tab.Screen
         name="Overview"
