@@ -1,22 +1,39 @@
 import { StyleSheet } from 'react-native';
-import { theme } from '../../theme';
+import { theme, withAlpha } from '../../theme';
 
 export const styles = StyleSheet.create({
   wrap: {
-    marginTop: theme.spacing.lg,
+    marginTop: theme.spacing.md,
     padding: theme.spacing.md,
     borderRadius: theme.borderRadius.md,
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: theme.colors.divider,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 8,
     marginBottom: 12,
   },
-  headerCopy: { flex: 1, paddingRight: 8 },
+  headerCopy: { flex: 1, alignItems: 'center' },
+  weekLabel: { color: theme.colors.text },
+  weekRange: {
+    ...theme.typography.micro,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  arrowBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  arrowBtnDisabled: { opacity: theme.opacity.disabled },
   syncBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -28,7 +45,7 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
   },
-  syncBtnLabel: { fontSize: 12, fontWeight: '700', color: theme.colors.text },
+  syncBtnLabel: { ...theme.typography.caption, color: theme.colors.text },
   row: { flexDirection: 'row', gap: 6 },
   chipCell: { flex: 1 },
   chip: {
@@ -38,10 +55,11 @@ export const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 2,
     borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.02)',
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
     borderWidth: 1.5,
   },
-  chipLabel: { fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary },
+  chipMissed: { opacity: 0.55 },
+  chipLabel: { ...theme.typography.caption, color: theme.colors.textSecondary },
   chipDot: {
     width: 22,
     height: 22,
@@ -50,5 +68,15 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     marginVertical: 4,
   },
-  chipKind: { fontSize: 9, fontWeight: '700', color: theme.colors.textSecondary },
+  chipKind: { ...theme.typography.micro, fontSize: 9, color: theme.colors.textSecondary },
+  summaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.divider,
+  },
+  summaryText: { ...theme.typography.footnote, color: theme.colors.textSecondary },
 });

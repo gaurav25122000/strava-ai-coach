@@ -1,25 +1,28 @@
 import { StyleSheet } from 'react-native';
-import { theme } from '../theme';
+import { theme, withAlpha } from '../theme';
+
+const recordsAccent = theme.colors.families.records.accent;
+const socialAccent = theme.colors.families.social.accent;
 
 export const goalMarkdownStyles = StyleSheet.create({
   body: { color: theme.colors.text, fontSize: 13, lineHeight: 20 },
   heading1: { color: theme.colors.text, fontSize: 16, fontWeight: '700', marginBottom: 4, marginTop: 6 },
   heading2: { color: theme.colors.text, fontSize: 14, fontWeight: '700', marginBottom: 3, marginTop: 4 },
-  heading3: { color: '#f97316', fontSize: 13, fontWeight: '700', marginBottom: 2, marginTop: 3 },
+  heading3: { color: theme.colors.primary, fontSize: 13, fontWeight: '700', marginBottom: 2, marginTop: 3 },
   strong: { fontWeight: '700', color: theme.colors.text },
   em: { fontStyle: 'italic', color: theme.colors.textSecondary },
   bullet_list: { marginVertical: 4 },
   ordered_list: { marginVertical: 4 },
-  code_inline: { backgroundColor: '#ffffff15', borderRadius: 4, paddingHorizontal: 4, color: '#ec4899', fontSize: 12 },
-  fence: { backgroundColor: '#0f0f1a', borderRadius: 8, padding: 10, marginVertical: 4, borderWidth: 1, borderColor: theme.colors.border },
+  code_inline: { backgroundColor: withAlpha(theme.colors.text, 'soft'), borderRadius: 4, paddingHorizontal: 4, color: socialAccent, fontSize: 12 },
+  fence: { backgroundColor: theme.colors.surfaceMuted, borderRadius: 8, padding: 10, marginVertical: 4, borderWidth: 1, borderColor: theme.colors.border },
   table: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6, marginVertical: 6, overflow: 'hidden' },
-  thead: { backgroundColor: '#f973160f' },
-  th: { padding: 6, fontWeight: '700', color: '#f97316', fontSize: 11, borderRightWidth: 1, borderRightColor: theme.colors.border },
+  thead: { backgroundColor: withAlpha(theme.colors.primary, 'faint') },
+  th: { padding: 6, fontWeight: '700', color: theme.colors.primary, fontSize: 11, borderRightWidth: 1, borderRightColor: theme.colors.border },
   td: { padding: 6, color: theme.colors.text, fontSize: 11, borderRightWidth: 1, borderRightColor: theme.colors.border },
   tr: { borderBottomWidth: 1, borderBottomColor: theme.colors.border, flexDirection: 'row' },
   paragraph: { marginVertical: 2 },
-  link: { color: '#6366f1' },
-  blockquote: { backgroundColor: '#f9731610', borderLeftWidth: 3, borderLeftColor: '#f97316', paddingLeft: 8, marginVertical: 4, borderRadius: 4 },
+  link: { color: theme.colors.info },
+  blockquote: { backgroundColor: withAlpha(theme.colors.primary, 'faint'), borderLeftWidth: 3, borderLeftColor: theme.colors.primary, paddingLeft: 8, marginVertical: 4, borderRadius: 4 },
 });
 
 export const styles = StyleSheet.create({
@@ -30,9 +33,6 @@ export const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: theme.spacing.xxl,
   },
-  header: {
-    marginBottom: theme.spacing.lg,
-  },
   heroHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -42,15 +42,16 @@ export const styles = StyleSheet.create({
     paddingBottom: 20,
     marginBottom: 16,
   },
-  heroTitle: { fontSize: 24, fontWeight: '900', color: '#fff' },
-  heroSub: { fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 4 },
+  heroTitle: { fontSize: 24, fontFamily: theme.fonts.display, color: theme.colors.onAccent },
+  heroSub: { fontSize: 12, color: withAlpha(theme.colors.onAccent, 'heavy'), marginTop: 4 },
   heroAddBtn: {
     width: 48, height: 48, borderRadius: 24,
-    backgroundColor: 'rgba(255,255,255,0.22)',
+    backgroundColor: withAlpha(theme.colors.onAccent, 'tint'),
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)',
+    borderWidth: 1, borderColor: withAlpha(theme.colors.onAccent, 'medium'),
     ...theme.shadows.md,
   },
+
   emptyState: {
     alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: 24, paddingVertical: 48,
@@ -63,40 +64,31 @@ export const styles = StyleSheet.create({
   emptyIconWrap: {
     width: 76, height: 76, borderRadius: 38,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: theme.colors.primary + '18',
-    borderWidth: 1, borderColor: theme.colors.primary + '44',
+    backgroundColor: withAlpha(theme.colors.primary, 'soft'),
+    borderWidth: 1, borderColor: withAlpha(theme.colors.primary, 'medium'),
     marginBottom: 14,
   },
-  emptyTitle: { fontSize: 18, fontWeight: '900', color: theme.colors.text, letterSpacing: -0.3 },
-  emptySub: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 6, textAlign: 'center', lineHeight: 18, maxWidth: 280 },
-  emptyCtaBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 18, paddingVertical: 11, borderRadius: 14,
-  },
-  addButton: {
-    backgroundColor: theme.colors.primary,
-    flexDirection: 'row',
-    alignSelf: 'flex-start',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.xl,
-  },
+  emptyTitle: { ...theme.typography.heading, color: theme.colors.text },
+  emptySub: { ...theme.typography.footnote, color: theme.colors.textSecondary, marginTop: 6, textAlign: 'center', maxWidth: 280 },
+
   goalCard: {
     padding: theme.spacing.lg,
     marginBottom: theme.spacing.lg,
     marginHorizontal: theme.spacing.md,
   },
+
+  // ── Card header ──
   goalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: theme.spacing.lg,
+    marginBottom: theme.spacing.md,
   },
   goalTitleRow: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    paddingRight: 8,
   },
   actionButtons: {
     flexDirection: 'row',
@@ -104,30 +96,127 @@ export const styles = StyleSheet.create({
   },
   iconButton: {
     padding: 6,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
     borderRadius: theme.borderRadius.sm,
   },
-  statsRow: {
+  daysChip: {
     flexDirection: 'row',
-    marginBottom: theme.spacing.xl,
-    gap: 16,
+    alignItems: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.families.plan.tint,
+    borderWidth: 1,
+    borderColor: withAlpha(theme.colors.families.plan.accent, 'strong'),
+    marginTop: 6,
   },
-  statBox: {
-    flex: 1,
+  daysChipText: { ...theme.typography.label, color: theme.colors.families.plan.accent },
+
+  // ── TODAY block ──
+  todayCard: {
+    padding: theme.spacing.md,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surfaceMuted,
+    borderWidth: 1,
   },
+  todayHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  todayEyebrow: { ...theme.typography.label, color: theme.colors.textSecondary, textTransform: 'uppercase' },
+  kindChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: theme.borderRadius.full,
+    borderWidth: 1,
+  },
+  kindChipText: { ...theme.typography.label, textTransform: 'uppercase' },
+  todayTitle: { ...theme.typography.subtitle, color: theme.colors.text },
+  todayDesc: { ...theme.typography.footnote, color: theme.colors.textSecondary, marginTop: 3 },
+  todayPillsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  todayPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+  },
+  todayPillText: { ...theme.typography.caption },
+  restNote: {
+    marginTop: 8,
+    padding: 10,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: withAlpha(theme.colors.info, 'soft'),
+    borderLeftWidth: 2,
+    borderLeftColor: theme.colors.info,
+  },
+  todayActions: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  todayStateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    padding: 10,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
+  },
+  todayStateText: { ...theme.typography.footnote, flex: 1 },
+
+  // ── Phase stepper ──
+  stepperRow: { flexDirection: 'row', gap: 8, paddingVertical: 2 },
+  stepperPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    height: 30,
+    borderRadius: theme.borderRadius.full,
+    borderWidth: 1.5,
+    overflow: 'hidden',
+  },
+  stepperPillDone: { borderColor: withAlpha(theme.colors.success, 'strong') },
+  stepperPillActive: { borderColor: 'transparent' },
+  stepperPillFuture: { borderColor: theme.colors.border },
+  stepperPillText: { ...theme.typography.caption },
+
+  // ── Progress row ──
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.md,
+    marginTop: theme.spacing.md,
+  },
+  progressBars: { flex: 1, gap: 10 },
+  progressCaption: { ...theme.typography.footnote, color: theme.colors.textSecondary },
+  barLabelRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
+  barLabel: { ...theme.typography.caption, color: theme.colors.textSecondary },
+  barValue: { ...theme.typography.caption, color: theme.colors.text },
+  progressDialPct: { ...theme.typography.numericSm, color: theme.colors.text },
+  progressDialCaption: { ...theme.typography.micro, color: theme.colors.textSecondary, letterSpacing: 1.2, marginTop: 2 },
+
+  // ── Legacy AI goals without phases ──
   phaseBox: {
     backgroundColor: theme.colors.families.plan.tint,
     padding: theme.spacing.md,
     borderRadius: theme.borderRadius.md,
     borderLeftWidth: 3,
     borderLeftColor: theme.colors.families.plan.accent,
+    marginTop: theme.spacing.md,
+  },
+  workoutBox: {
+    marginTop: theme.spacing.md,
+    padding: theme.spacing.md,
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
+    borderRadius: theme.borderRadius.md,
+    borderLeftWidth: 2,
+    borderLeftColor: recordsAccent,
   },
 
   // ── Simple-goal gradient card ──
   simpleCard: {
     borderRadius: theme.borderRadius.md,
     padding: theme.spacing.md,
-    marginTop: theme.spacing.md,
+    marginTop: theme.spacing.xs,
   },
   simpleHeaderRow: {
     flexDirection: 'row',
@@ -137,67 +226,59 @@ export const styles = StyleSheet.create({
   },
   simpleHeaderLabel: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   simpleHeaderText: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 11,
-    fontFamily: theme.fonts.bold,
+    color: withAlpha(theme.colors.onAccent, 'heavy'),
+    ...theme.typography.label,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
   simpleNumberRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: theme.spacing.xs },
   simpleNumber: {
     fontSize: 44,
     fontFamily: theme.fonts.display,
-    color: '#fff',
+    color: theme.colors.onAccent,
     lineHeight: 48,
     letterSpacing: -1,
     fontVariant: ['tabular-nums'],
     padding: 0,
   },
-  simpleNumberUnit: { color: 'rgba(255,255,255,0.7)', fontSize: 16, marginBottom: 6, marginLeft: 6 },
+  simpleNumberUnit: { color: withAlpha(theme.colors.onAccent, 'heavy'), fontSize: 16, marginBottom: 6, marginLeft: 6 },
   simpleCaptionRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: theme.spacing.md },
-  simpleCaption: { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
-  simpleCaptionDone: { color: '#bbf7d0' },
-  progressSection: {
-    marginBottom: theme.spacing.lg,
-  },
-  progressRow: {
+  simpleCaption: { color: withAlpha(theme.colors.onAccent, 'heavy'), fontSize: 12 },
+  simpleCaptionDone: { color: theme.colors.onAccent },
+  historyRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.divider,
   },
-  workoutBox: {
-    marginTop: theme.spacing.md,
-    padding: theme.spacing.md,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: theme.borderRadius.md,
-    borderLeftWidth: 2,
-    borderLeftColor: '#FBBF24',
-  },
-  inputGroup: {
-    marginBottom: theme.spacing.lg,
-  },
-  input: {
+
+  // ── Generating overlay ──
+  genOverlay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
     backgroundColor: theme.colors.background,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.sm,
-    padding: theme.spacing.md,
-    color: theme.colors.text,
-    fontSize: 16,
   },
-  genOverlay: { flex: 1 },
-  genGradient: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
-  genIconWrap: { marginBottom: 36 },
-  genIconBg: { width: 110, height: 110, borderRadius: 55, alignItems: 'center', justifyContent: 'center', shadowColor: '#7c3aed', shadowOpacity: 0.8, shadowRadius: 24, shadowOffset: { width: 0, height: 0 } },
-  genTitle: { fontSize: 26, fontWeight: '700', textAlign: 'center', color: '#fff', marginBottom: 8 },
-  genSubtitle: { fontSize: 13, textAlign: 'center', color: 'rgba(255,255,255,0.45)', marginBottom: 40 },
-  genMessage: { fontSize: 15, textAlign: 'center', color: 'rgba(255,255,255,0.85)', marginBottom: 32, minHeight: 22 },
-  genDotsRow: { flexDirection: 'row', gap: 10, marginBottom: 48 },
-  genDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: theme.colors.primary },
-  genHint: { fontSize: 12, textAlign: 'center', color: 'rgba(255,255,255,0.25)' },
+  genIconBg: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    marginBottom: 36,
+    ...theme.shadows.glow(theme.colors.families.plan.accent),
+  },
+  genTitle: { ...theme.typography.title, textAlign: 'center', color: theme.colors.text, marginBottom: 8 },
+  genMessage: { ...theme.typography.body, textAlign: 'center', color: theme.colors.textSecondary, marginTop: 24, minHeight: 22 },
+  genHint: { ...theme.typography.caption, textAlign: 'center', color: withAlpha(theme.colors.text, 'strong'), marginTop: 32 },
+
+  // ── Chat ──
   chatBubbleUser: {
     alignSelf: 'flex-end',
-    backgroundColor: theme.colors.primary + '33',
+    backgroundColor: withAlpha(theme.colors.primary, 'medium'),
     borderRadius: 12,
     borderBottomRightRadius: 2,
     paddingHorizontal: 12,
@@ -216,80 +297,39 @@ export const styles = StyleSheet.create({
     borderColor: theme.colors.border,
   },
   chatBubbleText: { fontSize: 13, color: theme.colors.text, lineHeight: 19 },
-  inputBar: {
+
+  // ── Plan diff sheet ──
+  diffPhaseBox: {
+    padding: theme.spacing.md,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
+    borderWidth: 1,
+    borderColor: theme.colors.divider,
+    marginBottom: 10,
+  },
+  diffPhaseName: { ...theme.typography.subtitle, color: theme.colors.text },
+  diffMetaRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
+  diffMetaLabel: { ...theme.typography.caption, color: theme.colors.textSecondary },
+  diffOld: { ...theme.typography.footnote, color: theme.colors.textSecondary, textDecorationLine: 'line-through' },
+  diffNew: { ...theme.typography.footnote, color: theme.colors.families.plan.accent },
+  diffUnchanged: { ...theme.typography.footnote, color: theme.colors.text },
+  diffHighlight: {
+    marginTop: 12,
+    padding: 10,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.families.plan.tint,
+    borderLeftWidth: 2,
+    borderLeftColor: theme.colors.families.plan.accent,
+  },
+
+  // ── Phase detail sheet ──
+  phaseMetaRow: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.divider,
   },
-  chatInput: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: theme.colors.text,
-    fontSize: 14,
-    maxHeight: 100,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  sendBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: theme.colors.accent,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  sendBtnDisabled: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border },
-
-  // ── AI goal header (DAYS OUT + progress dial) — strip itself lives in <WeekStrip /> ──
-  phasePillRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: theme.spacing.xs, marginBottom: theme.spacing.sm },
-  phasePill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999,
-    borderWidth: 1,
-  },
-  phasePillDot: { width: 6, height: 6, borderRadius: 3 },
-  phasePillLabel: { fontSize: 11, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase' },
-  phaseFraction: { fontSize: 11, color: theme.colors.textSecondary, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' },
-
-  daysOutRow: { flexDirection: 'row', alignItems: 'center', marginTop: theme.spacing.xs, marginBottom: theme.spacing.md },
-  daysOutNumber: { fontSize: 56, fontWeight: '900', color: theme.colors.text, letterSpacing: -2, lineHeight: 60 },
-  daysOutCaption: { fontSize: 13, color: theme.colors.textSecondary, fontWeight: '600', marginTop: 2 },
-  daysOutDate: { color: theme.colors.text, fontWeight: '800' },
-  daysOutSubRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
-  daysOutSub: { fontSize: 11, color: theme.colors.textSecondary, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase' },
-  progressDial: {
-    width: 84, height: 84, borderRadius: 42,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 2, borderColor: theme.colors.primary,
-  },
-  progressDialWrap: { alignItems: 'center', justifyContent: 'center' },
-  progressDialPct: { fontSize: 20, fontWeight: '900', color: theme.colors.text, letterSpacing: -0.5 },
-  progressDialCaption: {
-    fontSize: 9, fontWeight: '800', color: theme.colors.textSecondary,
-    letterSpacing: 1.2, marginTop: 2,
-  },
-
-  // Today's workout inset card (renders below WeekStrip)
-  todayInset: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    marginTop: theme.spacing.md,
-    padding: 12, borderRadius: 14,
-    backgroundColor: theme.colors.surfaceMuted,
-    borderWidth: 1,
-  },
-  todayIconPill: {
-    width: 38, height: 38, borderRadius: 12,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1,
-  },
-  todayLabel: { fontSize: 10, color: theme.colors.textSecondary, fontWeight: '800', letterSpacing: 0.8 },
-  todayTitle: { fontSize: 14, fontWeight: '800', color: theme.colors.text, marginTop: 2 },
-  todayChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
-  todayChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
-    borderWidth: 1,
-  },
-  todayChipText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.2 },
+  phaseMetaLabel: { ...theme.typography.footnote, color: theme.colors.textSecondary },
+  phaseMetaValue: { ...theme.typography.footnote, color: theme.colors.text },
 });

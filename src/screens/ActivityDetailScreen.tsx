@@ -7,19 +7,20 @@ import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Circle, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
-import { LineChart } from 'react-native-gifted-charts';
-import { theme } from '../theme';
+import { theme, withAlpha } from '../theme';
 import { Typography } from '../components/Typography';
 import { StaggerItem } from '../components/Stagger';
 import { PressableScale } from '../components/PressableScale';
 import { AnimatedNumber } from '../components/AnimatedNumber';
 import { WidgetCard } from '../components/WidgetCard';
+import { ChartLine } from '../components/charts';
 import { SkeletonHero, SkeletonChart, SkeletonStatGrid } from '../components/SkeletonPresets';
-import { Activity, useStore, HRZone } from '../store/useStore';
+import { Activity, BestEffort, useStore } from '../store/useStore';
 import { StravaService } from '../services/strava';
 import { decodePolyline } from '../utils/polyline';
 import { familyStyle, WidgetFamily } from '../utils/widgetFamilies';
-import { chartBase, lineProps, pointerConfig } from '../utils/chartTheme';
+import { resolveHrZones, zoneOf, ZONE_LABELS, ResolvedZones } from '../utils/hrZones';
+import { formatPace as formatPaceMinKm } from '../utils/dates';
 import { sportIcon } from '../utils/sportIcon';
 import { Icon } from '../components/Icon';
 import {
@@ -35,15 +36,11 @@ import { format, parseISO } from 'date-fns';
 const { width } = Dimensions.get('window');
 const MAP_H = 320;
 const MAP_W = width;
-const CHART_W = width - 40;
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 function formatPace(speed: number): string {
   if (!speed) return '--';
-  const mPerK = 1000 / speed / 60;
-  const mins = Math.floor(mPerK);
-  const secs = Math.round((mPerK - mins) * 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
+  return formatPaceMinKm(1000 / speed / 60);
 }
 function secsToMMSS(secs: number): string {
   const m = Math.floor(secs / 60);
@@ -65,20 +62,14 @@ function formatRest(elapsed: number, moving: number): string {
   return `${m}m`;
 }
 
-const ZONE_COLORS = ['#22d3ee', '#22c55e', '#f59e0b', '#f97316', '#ef4444'];
-const ZONE_LABELS = ['Z1 Recovery', 'Z2 Aerobic', 'Z3 Tempo', 'Z4 Threshold', 'Z5 Max'];
-
-// Fallback boundaries (bpm) if Strava zones not yet fetched
-const FALLBACK_MINS = [0, 115, 135, 155, 170];
-
-function getZoneIndex(bpm: number, zones: HRZone[]): number {
-  const mins = zones.length >= 5 ? zones.map(z => z.min) : FALLBACK_MINS;
-  let z = 0;
-  for (let i = 0; i < mins.length; i++) {
-    if (bpm >= mins[i]) z = i;
-  }
-  return z;
-}
+// Z1..Z5 palette from theme tokens (cyan → green → amber → orange → red).
+const ZONE_COLORS = [
+  familyStyle('recovery').accent,
+  theme.colors.success,
+  theme.colors.warning,
+  theme.colors.primary,
+  theme.colors.error,
+];
 
 // Pick the right family for a given sport.
 function familyForType(type: string): WidgetFamily {
@@ -131,6 +122,29 @@ function projectRoute(
   return { d, points };
 }
 
+// ─── Colour helpers ───────────────────────────────────────────────────────────
+function hexToRgb(hex: string) {
+  const m = hex.replace('#', '');
+  return {
+    r: parseInt(m.slice(0, 2), 16),
+    g: parseInt(m.slice(2, 4), 16),
+    b: parseInt(m.slice(4, 6), 16),
+  };
+}
+
+/** Lerp two token hexes; returns rgb parts so callers can build rgba tints. */
+function mixHex(hexA: string, hexB: string, t: number) {
+  const a = hexToRgb(hexA);
+  const b = hexToRgb(hexB);
+  return {
+    r: Math.round(a.r + (b.r - a.r) * t),
+    g: Math.round(a.g + (b.g - a.g) * t),
+    b: Math.round(a.b + (b.b - a.b) * t),
+  };
+}
+
+const rgba = (c: { r: number; g: number; b: number }, a = 1) => `rgba(${c.r},${c.g},${c.b},${a})`;
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 // Primary stat tile — full-bleed grid cell, no card chrome. Big bold value,
@@ -152,7 +166,7 @@ function StatTile({
         end={{ x: 1, y: 1 }}
         style={[sc.statTileIcon, theme.shadows.glow(accent)]}
       >
-        <Icon size={16} color="#fff" />
+        <Icon size={16} color={theme.colors.onAccent} />
       </LinearGradient>
       <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 4, marginTop: 12 }}>
         {numericValue !== undefined ? (
@@ -174,10 +188,10 @@ function SecondaryChip({
   icon: LucideIcon; value: string; unit?: string; label: string; accent: string;
 }) {
   return (
-    <View style={[sc.secChip, { backgroundColor: accent + '14', borderColor: accent + '44' }]}>
+    <View style={[sc.secChip, { backgroundColor: withAlpha(accent, 'soft'), borderColor: withAlpha(accent, 'strong') }]}>
       <Icon size={12} color={accent} />
       <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 3 }}>
-        <Typography style={[sc.secChipVal, { color: '#fff' }]}>{value}</Typography>
+        <Typography style={[sc.secChipVal, { color: theme.colors.text }]}>{value}</Typography>
         {unit ? <Typography style={[sc.secChipUnit, { color: accent }]}>{unit}</Typography> : null}
       </View>
       <Typography style={[sc.secChipLbl, { color: accent }]}>{label}</Typography>
@@ -201,7 +215,7 @@ function MedalPill({
         end={{ x: 1, y: 1 }}
         style={sc.medalPill}
       >
-        <Icon size={12} color="#fff" />
+        <Icon size={12} color={theme.colors.onAccent} />
         <Typography style={sc.medalVal}>{value}</Typography>
         <Typography style={sc.medalLbl}>{label}</Typography>
       </LinearGradient>
@@ -211,7 +225,7 @@ function MedalPill({
 
 function Badge({ icon, label, color }: { icon: React.ReactNode; label: string; color: string }) {
   return (
-    <View style={[sc.badge, { backgroundColor: color + '18', borderColor: color + '55' }]}>
+    <View style={[sc.badge, { backgroundColor: withAlpha(color, 'soft'), borderColor: withAlpha(color, 'strong') }]}>
       {icon}
       <Typography style={[sc.badgeText, { color }]}>{label}</Typography>
     </View>
@@ -221,11 +235,13 @@ function Badge({ icon, label, color }: { icon: React.ReactNode; label: string; c
 // ─── HR Zones Bar Chart ───────────────────────────────────────────────────────
 function HRZonesChart({
   splits,
-  zones,
+  resolved,
   activityZones,
 }: {
   splits: any[];
-  zones: HRZone[];
+  /** Canonical athlete zones from resolveHrZones — the local fallback. */
+  resolved: ResolvedZones;
+  /** Strava's own per-activity time-in-zone buckets, when cached. */
   activityZones?: Array<{ min: number; max: number; time: number }> | null;
 }) {
   const usingStrava = Array.isArray(activityZones) && activityZones.length >= 5;
@@ -236,23 +252,19 @@ function HRZonesChart({
   } else {
     splits.forEach(s => {
       if (s.average_heartrate) {
-        const z = getZoneIndex(s.average_heartrate, zones);
-        zoneSecs[z] += s.moving_time || 0;
+        zoneSecs[zoneOf(s.average_heartrate, resolved) - 1] += s.moving_time || 0;
       }
     });
   }
 
   const total = zoneSecs.reduce((a, b) => a + b, 0) || 1;
 
-  const fallback = FALLBACK_MINS;
   const mins = usingStrava
     ? activityZones!.slice(0, 5).map(b => b.min)
-    : (zones.length >= 5 ? zones.map(z => z.min) : fallback);
+    : resolved.bounds;
   const maxes = usingStrava
-    ? activityZones!.slice(0, 5).map(b => b.max > 0 ? b.max : 999)
-    : (zones.length >= 5
-      ? zones.map((_, i) => zones[i + 1] ? zones[i + 1].min - 1 : 999)
-      : [114, 134, 154, 169, 999]);
+    ? activityZones!.slice(0, 5).map(b => (b.max > 0 ? b.max : 999))
+    : [resolved.bounds[1] - 1, resolved.bounds[2] - 1, resolved.bounds[3] - 1, resolved.bounds[4] - 1, 999];
 
   return (
     <View style={{ marginTop: 4 }}>
@@ -272,9 +284,9 @@ function HRZonesChart({
                 {secsToMMSS(secs)} ({Math.round(pct * 100)}%)
               </Typography>
             </View>
-            <View style={{ height: 14, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 7, overflow: 'hidden' }}>
+            <View style={{ height: 14, backgroundColor: withAlpha(theme.colors.text, 'faint'), borderRadius: 7, overflow: 'hidden' }}>
               <LinearGradient
-                colors={[c, c + 'CC']}
+                colors={[c, withAlpha(c, 'heavy')]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={{ width: `${pct * 100}%`, height: '100%', borderRadius: 7 }}
@@ -303,17 +315,6 @@ function SplitsVisual({
   const max = Math.max(...valid);
   const range = Math.max(max - min, 1);
 
-  function colorFor(pace: number): string {
-    if (!pace) return theme.colors.border;
-    const t = (pace - min) / range;
-    const a = hexToRgb(fam.accent);
-    const b = hexToRgb('#EF4444');
-    const r = Math.round(a.r + (b.r - a.r) * t);
-    const g = Math.round(a.g + (b.g - a.g) * t);
-    const bl = Math.round(a.b + (b.b - a.b) * t);
-    return `rgb(${r},${g},${bl})`;
-  }
-
   return (
     <View>
       {splits.slice(0, 30).map((s, i) => {
@@ -321,7 +322,7 @@ function SplitsVisual({
         if (!pace) {
           return (
             <PressableScale key={i} haptic="selection" style={sc.splitVizRow} accessibilityLabel={`Split ${i + 1}`}>
-              <View style={[sc.splitVizIdxBox, { backgroundColor: fam.tint, borderColor: fam.accent + '55' }]}>
+              <View style={[sc.splitVizIdxBox, { backgroundColor: fam.tint, borderColor: withAlpha(fam.accent, 'strong') }]}>
                 <Typography style={[sc.splitVizIdx, { color: fam.accent }]}>{i + 1}</Typography>
               </View>
               <Typography style={[sc.splitVizPace, { color: theme.colors.textSecondary }]}>--</Typography>
@@ -330,15 +331,16 @@ function SplitsVisual({
         }
         const t = (pace - min) / range;
         const widthPct = 35 + (1 - t) * 65;
-        const c = colorFor(pace);
+        const mix = mixHex(fam.accent, theme.colors.error, t);
+        const c = rgba(mix);
         return (
           <PressableScale key={i} haptic="selection" style={sc.splitVizRow} accessibilityLabel={`Split ${i + 1}, ${secsToMMSS(Math.round(pace))} per ${unit}`}>
-            <View style={[sc.splitVizIdxBox, { backgroundColor: fam.tint, borderColor: fam.accent + '55' }]}>
+            <View style={[sc.splitVizIdxBox, { backgroundColor: fam.tint, borderColor: withAlpha(fam.accent, 'strong') }]}>
               <Typography style={[sc.splitVizIdx, { color: fam.accent }]}>{i + 1}</Typography>
             </View>
             <View style={sc.splitVizBarWrap}>
               <LinearGradient
-                colors={[c, c + 'AA']}
+                colors={[c, rgba(mix, 0.67)]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
                 style={[sc.splitVizBar, { width: `${widthPct}%` }]}
@@ -350,7 +352,7 @@ function SplitsVisual({
               </Typography>
               {s.average_heartrate ? (
                 <View style={sc.splitVizHrChip}>
-                  <Icon icon={Heart} variant="plain" size="xs" color="#EF4444" />
+                  <Icon icon={Heart} variant="plain" size="xs" color={theme.colors.error} />
                   <Typography style={sc.splitVizHr}>{Math.round(s.average_heartrate)}</Typography>
                 </View>
               ) : null}
@@ -367,15 +369,6 @@ function SplitsVisual({
   );
 }
 
-function hexToRgb(hex: string) {
-  const m = hex.replace('#', '');
-  return {
-    r: parseInt(m.slice(0, 2), 16),
-    g: parseInt(m.slice(2, 4), 16),
-    b: parseInt(m.slice(4, 6), 16),
-  };
-}
-
 // ─── Best Efforts ─────────────────────────────────────────────────────────────
 function BestEffortsSection({ efforts }: { efforts: any[] }) {
   if (!efforts?.length) return null;
@@ -384,18 +377,19 @@ function BestEffortsSection({ efforts }: { efforts: any[] }) {
   };
   const shown = efforts.filter(e => DIST_LABELS[e.distance]);
   if (!shown.length) return null;
+  const recordsAccent = familyStyle('records').accent;
   return (
     <View>
       {shown.map((e, i) => {
         const isPR = e.pr_rank === 1;
         const MedalIcon = isPR ? Trophy : Star;
-        const medalColor = isPR ? '#FCD34D' : theme.colors.textSecondary;
+        const medalColor = isPR ? recordsAccent : theme.colors.textSecondary;
         const paceStr = e.elapsed_time && e.distance
           ? `${secsToMMSS(Math.round(e.elapsed_time / (e.distance / 1000)))} /km`
           : '';
         return (
           <PressableScale key={i} haptic="selection" style={sc.effortRow} accessibilityLabel={`${DIST_LABELS[e.distance]} best effort`}>
-            <View style={[sc.effortMedal, { backgroundColor: medalColor + '22', borderColor: medalColor + '66' }]}>
+            <View style={[sc.effortMedal, { backgroundColor: withAlpha(medalColor, 'tint'), borderColor: withAlpha(medalColor, 'strong') }]}>
               <Icon icon={MedalIcon} variant="plain" size="md" color={medalColor} />
             </View>
             <View style={{ flex: 1 }}>
@@ -406,8 +400,8 @@ function BestEffortsSection({ efforts }: { efforts: any[] }) {
             </View>
             <Typography style={sc.effortTime}>{secsToMMSS(e.elapsed_time)}</Typography>
             {isPR && (
-              <View style={[sc.deltaChip, { backgroundColor: '#10B98122', borderColor: '#10B98166' }]}>
-                <Typography style={[sc.deltaChipText, { color: '#10B981' }]}>PR</Typography>
+              <View style={[sc.deltaChip, { backgroundColor: withAlpha(theme.colors.secondary, 'tint'), borderColor: withAlpha(theme.colors.secondary, 'strong') }]}>
+                <Typography style={[sc.deltaChipText, { color: theme.colors.secondary }]}>PR</Typography>
               </View>
             )}
           </PressableScale>
@@ -447,7 +441,7 @@ function LapsTable({ laps, type }: { laps: any[]; type: string }) {
             <Typography style={[sc.splitCell, { flex: 0.8, color: theme.colors.textSecondary }]}>
               {l.distance ? (l.distance / 1000).toFixed(2) : '--'} km
             </Typography>
-            <Typography style={[sc.splitCell, { flex: 0.7, color: '#EF4444' }]}>
+            <Typography style={[sc.splitCell, { flex: 0.7, color: theme.colors.error }]}>
               {l.average_heartrate ? Math.round(l.average_heartrate) : '--'}
             </Typography>
             <Typography style={[sc.splitCell, { flex: 0.7, textAlign: 'right', color: theme.colors.textSecondary }]}>
@@ -460,15 +454,24 @@ function LapsTable({ laps, type }: { laps: any[]; type: string }) {
   );
 }
 
+// Best-effort distances we track as app-wide records.
+const RECORD_DISTANCES = [1000, 5000, 10000] as const;
+
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export function ActivityDetailScreen({ activity: act, onClose }: Props) {
-  const { hrZones, activities, setActivityZones } = useStore();
+  const hrZones = useStore(st => st.hrZones);
+  const activities = useStore(st => st.activities);
+  const userProfile = useStore(st => st.userProfile);
+  const setActivityZones = useStore(st => st.setActivityZones);
+  const enrichActivity = useStore(st => st.enrichActivity);
+  const setBestEfforts = useStore(st => st.setBestEfforts);
   const [detail, setDetail] = useState<any>(null);
   const [streams, setStreams] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fetchStatus, setFetchStatus] = useState<'idle' | 'ok' | 'error'>('idle');
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+  const [fromCache, setFromCache] = useState(false);
   const [splitUnit, setSplitUnit] = useState<'km' | 'mi'>('km');
   const scrollY = useMemo(() => new RNAnimated.Value(0), []);
   const spin = useMemo(() => new RNAnimated.Value(0), []);
@@ -478,6 +481,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
     [activities, act],
   );
   const activityHrZones = liveAct.zones?.find(z => z.type === 'heartrate')?.buckets ?? null;
+  const resolvedZones = useMemo(() => resolveHrZones(hrZones, userProfile), [hrZones, userProfile]);
 
   // Light tactile cue on landing — this screen is the most "rewarding" arrival.
   useEffect(() => {
@@ -503,16 +507,66 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
   }, [refreshing, loading, spin]);
   const spinDeg = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
-  const loadFromStrava = useCallback(async () => {
+  // Merge real best-effort chips into the app-wide records when a real time
+  // beats the stored (often estimated) one — shorter time wins per distance.
+  const mergeBestEfforts = useCallback((efforts: any[]) => {
+    if (!efforts?.length) return;
+    const current = useStore.getState().bestEfforts;
+    const updates: Record<number, BestEffort> = {};
+    for (const dist of RECORD_DISTANCES) {
+      const e = efforts.find(x => x.distance === dist && x.elapsed_time > 0);
+      if (!e) continue;
+      const existing = current[dist];
+      if (!existing || e.elapsed_time < existing.time) {
+        updates[dist] = {
+          distance: dist,
+          time: e.elapsed_time,
+          pace: (e.elapsed_time / 60) / (dist / 1000),
+          date: act.startDate,
+          activityName: act.name,
+        };
+      }
+    }
+    if (Object.keys(updates).length) setBestEfforts({ ...current, ...updates });
+  }, [act.startDate, act.name, setBestEfforts]);
+
+  const loadFromStrava = useCallback(async (opts?: { allowCacheSkip?: boolean }) => {
+    // Cache hit (real calories + polyline already enriched into the store row)
+    // → skip the detail fetch entirely so a revisit opens instantly. The nav
+    // refresh / pull-to-refresh always forces the full fetch.
+    const row = useStore.getState().activities.find(a => a.id === act.id);
+    const cacheHit = !!(row && row.calories != null && row.caloriesEstimated === false && row.polyline);
+    const skipDetail = !!opts?.allowCacheSkip && cacheHit;
+
     try {
       const [d, s] = await Promise.all([
-        StravaService.fetchActivityDetail(act.id),
-        StravaService.fetchActivityStreams(act.id),
+        skipDetail ? Promise.resolve(null) : StravaService.fetchActivityDetail(act.id),
+        StravaService.fetchActivityStreams(act.id, 'heartrate,altitude,time,distance'),
       ]);
       setDetail(d);
       setStreams(s);
       setFetchStatus('ok');
       setFetchedAt(new Date().toISOString());
+      setFromCache(skipDetail);
+
+      if (d) {
+        // Persist enrichment back to the store so the next open is a cache hit
+        // and list-level widgets get real calories / full polyline / gear.
+        const patch: Partial<Activity> = {};
+        if (d.calories != null) {
+          patch.calories = d.calories;
+          patch.caloriesEstimated = false;
+        }
+        const fullPolyline = d.map?.polyline || d.map?.summary_polyline;
+        if (fullPolyline) patch.polyline = fullPolyline;
+        if (d.gear_id) patch.gearId = d.gear_id;
+        if (d.device_watts != null) patch.deviceWatts = !!d.device_watts;
+        const watts = d.weighted_average_watts ?? d.average_watts;
+        if (watts) patch.averageWatts = watts;
+        if (Object.keys(patch).length) enrichActivity(act.id, patch);
+
+        mergeBestEfforts(d.best_efforts || []);
+      }
     } catch {
       setDetail(null);
       setFetchStatus('error');
@@ -538,12 +592,12 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
     } catch {
       // ignore — zones are optional
     }
-  }, [act.id, setActivityZones]);
+  }, [act.id, setActivityZones, enrichActivity, mergeBestEfforts]);
 
   useEffect(() => {
     setLoading(true);
     setFetchStatus('idle');
-    loadFromStrava();
+    loadFromStrava({ allowCacheSkip: true });
   }, [act.id, loadFromStrava]);
 
   const onRefresh = useCallback(() => {
@@ -578,13 +632,16 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
   const workoutType = detail?.workout_type;
   const workoutLabel = workoutType === 1 ? 'Race' : workoutType === 2 ? 'Long Run' : workoutType === 3 ? 'Workout' : null;
   const workoutIcon = workoutType === 1
-    ? <Icon icon={Flame} variant="plain" size="xs" color="#EF4444" />
+    ? <Icon icon={Flame} variant="plain" size="xs" color={theme.colors.error} />
     : workoutType === 2
-      ? <Icon icon={Footprints} variant="plain" size="xs" color="#3B82F6" />
+      ? <Icon icon={Footprints} variant="plain" size="xs" color={theme.colors.info} />
       : workoutType === 3
-        ? <Icon icon={Zap} variant="plain" size="xs" color="#F59E0B" />
+        ? <Icon icon={Zap} variant="plain" size="xs" color={theme.colors.warning} />
         : null;
-  const workoutColor = workoutType === 1 ? '#EF4444' : workoutType === 2 ? '#3B82F6' : workoutType === 3 ? '#F59E0B' : '#94A3B8';
+  const workoutColor = workoutType === 1 ? theme.colors.error
+    : workoutType === 2 ? theme.colors.info
+    : workoutType === 3 ? theme.colors.warning
+    : theme.colors.textSecondary;
 
   const isCommute = !!detail?.commute;
   const isManual = !!detail?.manual;
@@ -595,8 +652,8 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
   const photoCount = detail?.total_photo_count ?? detail?.photo_count ?? 0;
   const photoUrl = detail?.photos?.primary?.urls?.['600'] || detail?.photos?.primary?.urls?.['100'] || null;
 
-  const calories = detail?.calories ?? act.calories;
-  const avgWatts = detail?.average_watts ?? act.averageWatts;
+  const calories = detail?.calories ?? liveAct.calories;
+  const avgWatts = detail?.average_watts ?? liveAct.averageWatts;
   const weightedWatts = detail?.weighted_average_watts;
   const maxWatts = detail?.max_watts;
   const kilojoules = detail?.kilojoules;
@@ -618,18 +675,28 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
   const hasRest = act.elapsedTime > act.movingTime + 30;
   const restLabel = formatRest(act.elapsedTime, act.movingTime);
 
-  const polylineStr: string = detail?.map?.summary_polyline || detail?.map?.polyline || '';
+  // Prefer the full polyline from the detail payload, fall back to whatever
+  // the store row carries (full after enrichment, summary from list sync) so
+  // cache-hit opens still draw the route instantly.
+  const polylineStr: string = detail?.map?.polyline || detail?.map?.summary_polyline || liveAct.polyline || '';
   const coords = useMemo(() => decodePolyline(polylineStr), [polylineStr]);
   const projected = useMemo(() => projectRoute(coords, MAP_W, MAP_H, 24), [coords]);
 
+  // Streams arrive at ~1Hz — downsample to ~80 points and label each point
+  // with its distance (or elapsed time) so the scrub pill reads naturally.
   const hrChartData = useMemo(() => {
     const arr: number[] | undefined = streams?.heartrate?.data;
     if (!arr?.length) return [];
+    const dist: number[] | undefined = streams?.distance?.data;
+    const time: number[] | undefined = streams?.time?.data;
     const target = 80;
     const step = Math.max(1, Math.floor(arr.length / target));
-    const out: { value: number; label?: string }[] = [];
+    const out: { label: string; value: number }[] = [];
     for (let i = 0; i < arr.length; i += step) {
-      out.push({ value: arr[i] });
+      const label = dist?.[i] != null
+        ? `${(dist[i] / 1000).toFixed(1)} km`
+        : time?.[i] != null ? secsToMMSS(Math.round(time[i])) : `${i}`;
+      out.push({ label, value: arr[i] });
     }
     return out;
   }, [streams]);
@@ -637,11 +704,16 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
   const elevChartData = useMemo(() => {
     const arr: number[] | undefined = streams?.altitude?.data;
     if (!arr?.length) return [];
+    const dist: number[] | undefined = streams?.distance?.data;
+    const time: number[] | undefined = streams?.time?.data;
     const target = 80;
     const step = Math.max(1, Math.floor(arr.length / target));
-    const out: { value: number }[] = [];
+    const out: { label: string; value: number }[] = [];
     for (let i = 0; i < arr.length; i += step) {
-      out.push({ value: Math.round(arr[i]) });
+      const label = dist?.[i] != null
+        ? `${(dist[i] / 1000).toFixed(1)} km`
+        : time?.[i] != null ? secsToMMSS(Math.round(time[i])) : `${i}`;
+      out.push({ label, value: Math.round(arr[i]) });
     }
     return out;
   }, [streams]);
@@ -691,6 +763,9 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
   let stagger = 0;
   const next = () => stagger++;
 
+  const recordsAccent = familyStyle('records').accent;
+  const socialAccent = familyStyle('social').accent;
+
   // ─── Pre-compute primary stat tiles so we always render 2x3 grid ────────
   const primaryStats: Array<{ icon: LucideIcon; value: string; unit?: string; label: string; accent: string; gradient: [string, string]; numericValue?: number; decimals?: number }> = [
     {
@@ -711,21 +786,21 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
       numericValue: isRide ? avgSpeedKmh : undefined,
       decimals: 1,
       label: isRide ? 'AVG SPEED' : 'AVG PACE',
-      accent: '#FCD34D', gradient: theme.colors.gradients.records,
+      accent: recordsAccent, gradient: theme.colors.gradients.records,
     },
     {
       icon: Heart,
       value: act.averageHeartRate ? `${Math.round(act.averageHeartRate)}` : '--',
       numericValue: act.averageHeartRate ? Math.round(act.averageHeartRate) : undefined,
       unit: act.averageHeartRate ? 'BPM' : undefined,
-      label: 'AVG HR', accent: '#EF4444', gradient: theme.colors.gradients.health,
+      label: 'AVG HR', accent: theme.colors.error, gradient: theme.colors.gradients.health,
     },
     {
       icon: Flame,
       value: calories ? `${Math.round(calories)}` : '--',
       numericValue: calories ? Math.round(calories) : undefined,
       unit: calories ? 'KCAL' : undefined,
-      label: 'CALORIES', accent: '#EF4444', gradient: theme.colors.gradients.health,
+      label: 'CALORIES', accent: theme.colors.error, gradient: theme.colors.gradients.health,
     },
     {
       icon: Mountain,
@@ -737,18 +812,18 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
 
   // ─── Secondary chips list ───────────────────────────────────────────────
   const secondaryChips: Array<{ icon: LucideIcon; value: string; unit?: string; label: string; accent: string; show: boolean }> = [
-    { icon: Pause, value: restLabel, label: 'PAUSED', accent: '#94A3B8', show: hasRest },
-    { icon: Gauge, value: maxSpeedKmh.toFixed(1), unit: 'KM/H', label: 'MAX SPEED', accent: '#10B981', show: maxSpeedKmh > 0 },
-    { icon: Heart, value: act.maxHeartRate ? `${Math.round(act.maxHeartRate)}` : '', unit: 'BPM', label: 'MAX HR', accent: '#F97316', show: !!act.maxHeartRate },
+    { icon: Pause, value: restLabel, label: 'PAUSED', accent: theme.colors.textSecondary, show: hasRest },
+    { icon: Gauge, value: maxSpeedKmh.toFixed(1), unit: 'KM/H', label: 'MAX SPEED', accent: theme.colors.secondary, show: maxSpeedKmh > 0 },
+    { icon: Heart, value: act.maxHeartRate ? `${Math.round(act.maxHeartRate)}` : '', unit: 'BPM', label: 'MAX HR', accent: theme.colors.primary, show: !!act.maxHeartRate },
     {
       icon: Footprints,
       value: act.averageCadence ? `${Math.round(act.averageCadence * (act.type === 'Run' ? 2 : 1))}` : '',
-      unit: 'SPM', label: 'CADENCE', accent: '#10B981', show: !!act.averageCadence,
+      unit: 'SPM', label: 'CADENCE', accent: theme.colors.secondary, show: !!act.averageCadence,
     },
-    { icon: Zap, value: avgWatts ? `${Math.round(avgWatts)}` : '', unit: 'W', label: 'AVG POWER', accent: '#F97316', show: !!avgWatts },
-    { icon: Flame, value: act.sufferScore != null ? `${act.sufferScore}` : '', label: 'SUFFER', accent: '#EC4899', show: act.sufferScore != null },
-    { icon: Flame, value: kilojoules ? `${Math.round(kilojoules)}` : '', unit: 'KJ', label: 'ENERGY', accent: '#F97316', show: !!kilojoules },
-    { icon: Thermometer, value: deviceTemp != null ? `${deviceTemp}°C` : '', label: 'SENSOR TEMP', accent: '#FB923C', show: deviceTemp != null },
+    { icon: Zap, value: avgWatts ? `${Math.round(avgWatts)}` : '', unit: 'W', label: 'AVG POWER', accent: theme.colors.primary, show: !!avgWatts },
+    { icon: Flame, value: act.sufferScore != null ? `${act.sufferScore}` : '', label: 'SUFFER', accent: socialAccent, show: act.sufferScore != null },
+    { icon: Flame, value: kilojoules ? `${Math.round(kilojoules)}` : '', unit: 'KJ', label: 'ENERGY', accent: theme.colors.primary, show: !!kilojoules },
+    { icon: Thermometer, value: deviceTemp != null ? `${deviceTemp}°C` : '', label: 'SENSOR TEMP', accent: theme.colors.gradients.primary[1], show: deviceTemp != null },
   ];
   const visibleSecondary = secondaryChips.filter(c => c.show);
 
@@ -757,7 +832,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
       {/* Sticky nav — fades in on scroll */}
       <RNAnimated.View style={[sc.navBar, { opacity: navOpacity }]} pointerEvents="none">
         <LinearGradient
-          colors={['rgba(15,16,24,0.92)', 'rgba(15,16,24,0.78)']}
+          colors={[theme.colors.background, withAlpha(theme.colors.background, 'heavy')]}
           style={StyleSheet.absoluteFillObject}
         />
       </RNAnimated.View>
@@ -771,7 +846,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
             accessibilityLabel="Go back"
             hitSlop={6}
           >
-            <Icon icon={ArrowLeft} variant="plain" size="md" color="#fff" />
+            <Icon icon={ArrowLeft} variant="plain" size="md" color={theme.colors.text} />
           </TouchableOpacity>
           <RNAnimated.View style={{ opacity: navTitleOpacity, flex: 1 }} pointerEvents="none">
             <Typography style={sc.navTitle} numberOfLines={1}>
@@ -793,7 +868,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
                 icon={RefreshCw}
                 variant="plain"
                 size="md"
-                color={refreshing || loading ? 'rgba(255,255,255,0.4)' : '#fff'}
+                color={refreshing || loading ? withAlpha(theme.colors.text, 'strong') : theme.colors.text}
               />
             </RNAnimated.View>
           </TouchableOpacity>
@@ -860,16 +935,16 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
                   cx={projected.points[0].x}
                   cy={projected.points[0].y}
                   r={6}
-                  fill="#10B981"
-                  stroke="#fff"
+                  fill={theme.colors.secondary}
+                  stroke={theme.colors.onAccent}
                   strokeWidth={2}
                 />
                 <Circle
                   cx={projected.points[projected.points.length - 1].x}
                   cy={projected.points[projected.points.length - 1].y}
                   r={6}
-                  fill="#EF4444"
-                  stroke="#fff"
+                  fill={theme.colors.error}
+                  stroke={theme.colors.onAccent}
                   strokeWidth={2}
                 />
               </Svg>
@@ -884,7 +959,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
               {/* No-GPS hero (treadmill / manual): centred low-opacity sport
                   glyph so the fallback reads as intentional, not broken. */}
               <View style={{ opacity: 0.18 }}>
-                {sportIcon(act.type, 120, '#fff')}
+                {sportIcon(act.type, 120, theme.colors.onAccent)}
               </View>
             </LinearGradient>
           )}
@@ -892,7 +967,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
 
           {/* Strong dark overlay bottom-up */}
           <LinearGradient
-            colors={['transparent', 'rgba(0,0,0,0.4)', 'rgba(0,0,0,0.95)']}
+            colors={['transparent', theme.colors.scrim, theme.colors.background]}
             locations={[0, 0.55, 1]}
             style={sc.heroOverlay}
             pointerEvents="none"
@@ -908,28 +983,28 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
                 end={{ x: 1, y: 1 }}
                 style={[sc.sportPillBig, theme.shadows.glow(fam.accent)]}
               >
-                {sportIcon(act.type, 14, '#fff')}
+                {sportIcon(act.type, 14, theme.colors.onAccent)}
                 <Typography style={sc.sportPillBigText}>{act.type.toUpperCase()}</Typography>
               </LinearGradient>
 
               {/* Top-right medal counts compact */}
               <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
                 {prCount > 0 && (
-                  <View style={[sc.medalCount, { backgroundColor: 'rgba(252,211,77,0.18)', borderColor: 'rgba(252,211,77,0.55)' }]}>
-                    <Icon icon={Trophy} variant="plain" size="xs" color="#FCD34D" />
-                    <Typography style={[sc.medalCountText, { color: '#FCD34D' }]}>{prCount}</Typography>
+                  <View style={[sc.medalCount, { backgroundColor: withAlpha(recordsAccent, 'tint'), borderColor: withAlpha(recordsAccent, 'strong') }]}>
+                    <Icon icon={Trophy} variant="plain" size="xs" color={recordsAccent} />
+                    <Typography style={[sc.medalCountText, { color: recordsAccent }]}>{prCount}</Typography>
                   </View>
                 )}
                 {achievements > 0 && (
-                  <View style={[sc.medalCount, { backgroundColor: 'rgba(249,115,22,0.18)', borderColor: 'rgba(249,115,22,0.55)' }]}>
-                    <Icon icon={Award} variant="plain" size="xs" color="#F97316" />
-                    <Typography style={[sc.medalCountText, { color: '#F97316' }]}>{achievements}</Typography>
+                  <View style={[sc.medalCount, { backgroundColor: withAlpha(theme.colors.primary, 'tint'), borderColor: withAlpha(theme.colors.primary, 'strong') }]}>
+                    <Icon icon={Award} variant="plain" size="xs" color={theme.colors.primary} />
+                    <Typography style={[sc.medalCountText, { color: theme.colors.primary }]}>{achievements}</Typography>
                   </View>
                 )}
                 {kudos > 0 && (
-                  <View style={[sc.medalCount, { backgroundColor: 'rgba(236,72,153,0.18)', borderColor: 'rgba(236,72,153,0.55)' }]}>
-                    <Icon icon={ThumbsUp} variant="plain" size="xs" color="#EC4899" />
-                    <Typography style={[sc.medalCountText, { color: '#EC4899' }]}>{kudos}</Typography>
+                  <View style={[sc.medalCount, { backgroundColor: withAlpha(socialAccent, 'tint'), borderColor: withAlpha(socialAccent, 'strong') }]}>
+                    <Icon icon={ThumbsUp} variant="plain" size="xs" color={socialAccent} />
+                    <Typography style={[sc.medalCountText, { color: socialAccent }]}>{kudos}</Typography>
                   </View>
                 )}
               </View>
@@ -944,9 +1019,9 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
             <View style={sc.heroDateRow}>
               {locationName ? (
                 <>
-                  <Icon icon={MapPin} variant="plain" size="xs" color="rgba(255,255,255,0.85)" />
+                  <Icon icon={MapPin} variant="plain" size="xs" color={withAlpha(theme.colors.onAccent, 'heavy')} />
                   <Typography style={sc.heroDate}>{locationName.toUpperCase()}</Typography>
-                  <View style={[sc.metaDot, { backgroundColor: 'rgba(255,255,255,0.4)' }]} />
+                  <View style={[sc.metaDot, { backgroundColor: withAlpha(theme.colors.onAccent, 'strong') }]} />
                 </>
               ) : null}
               <Typography style={sc.heroDate}>
@@ -960,11 +1035,11 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
         {(workoutLabel || isCommute || isManual || isPrivate || isTrainer || athleteCount > 1) && (
           <View style={sc.badgeRow}>
             {workoutLabel && <Badge icon={workoutIcon} label={workoutLabel} color={workoutColor} />}
-            {athleteCount > 1 && <Badge icon={<Icon icon={Users} variant="plain" size="xs" color="#A78BFA" />} label={`Group (${athleteCount})`} color="#A78BFA" />}
-            {isCommute && <Badge icon={<Icon icon={Briefcase} variant="plain" size="xs" color="#60A5FA" />} label="Commute" color="#60A5FA" />}
-            {isTrainer && <Badge icon={<Icon icon={Cog} variant="plain" size="xs" color="#FBBF24" />} label="Trainer" color="#FBBF24" />}
-            {isManual && <Badge icon={<Icon icon={Edit3} variant="plain" size="xs" color="#F87171" />} label="Manual entry" color="#F87171" />}
-            {isPrivate && <Badge icon={<Icon icon={Lock} variant="plain" size="xs" color="#9CA3AF" />} label="Private" color="#9CA3AF" />}
+            {athleteCount > 1 && <Badge icon={<Icon icon={Users} variant="plain" size="xs" color={theme.colors.gradients.accent[1]} />} label={`Group (${athleteCount})`} color={theme.colors.gradients.accent[1]} />}
+            {isCommute && <Badge icon={<Icon icon={Briefcase} variant="plain" size="xs" color={theme.colors.info} />} label="Commute" color={theme.colors.info} />}
+            {isTrainer && <Badge icon={<Icon icon={Cog} variant="plain" size="xs" color={theme.colors.warning} />} label="Trainer" color={theme.colors.warning} />}
+            {isManual && <Badge icon={<Icon icon={Edit3} variant="plain" size="xs" color={theme.colors.gradients.danger[1]} />} label="Manual entry" color={theme.colors.gradients.danger[1]} />}
+            {isPrivate && <Badge icon={<Icon icon={Lock} variant="plain" size="xs" color={theme.colors.textSecondary} />} label="Private" color={theme.colors.textSecondary} />}
           </View>
         )}
 
@@ -1053,8 +1128,8 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
         )}
 
         {/* Strava sync status pill — shows whether detail/streams were
-            fetched, when, or that it failed. Refresh from the nav button
-            or pull-to-refresh. */}
+            fetched, when, that we opened straight from cache, or that the
+            fetch failed. Refresh from the nav button or pull-to-refresh. */}
         {!loading && fetchStatus !== 'idle' && (
           <View style={sc.syncStatusRow}>
             <View
@@ -1062,9 +1137,9 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
                 sc.syncStatusPill,
                 {
                   backgroundColor:
-                    fetchStatus === 'ok' ? '#10B98122' : '#EF444422',
+                    fetchStatus === 'ok' ? withAlpha(theme.colors.success, 'tint') : withAlpha(theme.colors.error, 'tint'),
                   borderColor:
-                    fetchStatus === 'ok' ? '#10B98166' : '#EF444466',
+                    fetchStatus === 'ok' ? withAlpha(theme.colors.success, 'strong') : withAlpha(theme.colors.error, 'strong'),
                 },
               ]}
             >
@@ -1072,16 +1147,18 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
                 icon={fetchStatus === 'ok' ? CheckCircle2 : AlertCircle}
                 variant="plain"
                 size="xs"
-                color={fetchStatus === 'ok' ? '#10B981' : '#EF4444'}
+                color={fetchStatus === 'ok' ? theme.colors.success : theme.colors.error}
               />
               <Typography
                 style={[
                   sc.syncStatusText,
-                  { color: fetchStatus === 'ok' ? '#10B981' : '#EF4444' },
+                  { color: fetchStatus === 'ok' ? theme.colors.success : theme.colors.error },
                 ]}
               >
                 {fetchStatus === 'ok'
-                  ? `Strava details synced${fetchedAt ? ` · ${format(parseISO(fetchedAt), 'h:mm a')}` : ''}`
+                  ? fromCache
+                    ? 'Opened from cache — refresh for splits & laps'
+                    : `Strava details synced${fetchedAt ? ` · ${format(parseISO(fetchedAt), 'h:mm a')}` : ''}`
                   : 'Strava sync failed — tap refresh to retry'}
               </Typography>
             </View>
@@ -1120,34 +1197,20 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
             <WidgetCard
               family="health"
               title="Heart Rate"
-              caption={act.averageHeartRate ? `Avg ${Math.round(act.averageHeartRate)} bpm` : undefined}
+              caption={[
+                act.averageHeartRate ? `Avg ${Math.round(act.averageHeartRate)} bpm` : null,
+                act.maxHeartRate ? `Max ${Math.round(act.maxHeartRate)} bpm` : null,
+              ].filter(Boolean).join(' · ') || undefined}
               icon={Heart}
             >
-              <View style={{ overflow: 'hidden', marginTop: 4 }}>
-                <LineChart
-                  {...lineProps('health')}
-                  thickness={4}
-                  data={hrChartData}
-                  height={180}
-                  width={CHART_W}
-                  initialSpacing={4}
-                  endSpacing={4}
-                  spacing={Math.max(CHART_W / hrChartData.length, 3)}
-                  maxValue={Math.ceil(Math.max(...hrChartData.map(d => d.value)) * 1.1)}
-                  pointerConfig={pointerConfig('bpm', 'health')}
-                  showReferenceLine1={!!act.maxHeartRate}
-                  referenceLine1Position={act.maxHeartRate}
-                  referenceLine1Config={{
-                    color: '#EF4444',
-                    dashWidth: 4,
-                    dashGap: 4,
-                    thickness: 1.5,
-                    labelText: 'MAX',
-                    labelTextStyle: { color: '#EF4444', fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
-                  }}
-                  {...chartBase({ family: 'health' })}
-                />
-              </View>
+              <ChartLine
+                data={hrChartData}
+                height={180}
+                family="health"
+                scrub
+                fromZero={false}
+                formatValue={(v) => `${Math.round(v)} bpm`}
+              />
             </WidgetCard>
           </StaggerItem>
         )}
@@ -1162,22 +1225,22 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
             >
               <View style={{ flexDirection: 'row', gap: 14, marginBottom: 18 }}>
                 <View style={sc.hrStat}>
-                  <Typography style={[sc.hrStatVal, { color: '#EF4444' }]}>{Math.round(act.averageHeartRate)}</Typography>
+                  <Typography style={[sc.hrStatVal, { color: theme.colors.error }]}>{Math.round(act.averageHeartRate)}</Typography>
                   <Typography style={sc.hrStatUnit}>BPM</Typography>
                   <Typography style={sc.hrStatLbl}>AVG</Typography>
                 </View>
                 {act.maxHeartRate ? (
                   <View style={sc.hrStat}>
-                    <Typography style={[sc.hrStatVal, { color: '#F97316' }]}>{Math.round(act.maxHeartRate)}</Typography>
+                    <Typography style={[sc.hrStatVal, { color: theme.colors.primary }]}>{Math.round(act.maxHeartRate)}</Typography>
                     <Typography style={sc.hrStatUnit}>BPM</Typography>
                     <Typography style={sc.hrStatLbl}>PEAK</Typography>
                   </View>
                 ) : null}
               </View>
-              <HRZonesChart splits={splits} zones={hrZones} activityZones={activityHrZones} />
+              <HRZonesChart splits={splits} resolved={resolvedZones} activityZones={activityHrZones} />
               {activityHrZones && (
                 <View style={sc.liveStravaPill}>
-                  <Icon icon={Zap} variant="plain" size="xs" color="#FB923C" />
+                  <Icon icon={Zap} variant="plain" size="xs" color={theme.colors.gradients.primary[1]} />
                   <Typography style={sc.liveStravaText}>LIVE FROM STRAVA</Typography>
                 </View>
               )}
@@ -1196,34 +1259,25 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
                 : undefined}
               icon={Mountain}
             >
-              <View style={{ overflow: 'hidden', marginTop: 4 }}>
-                <LineChart
-                  {...lineProps('activity')}
-                  thickness={4}
-                  startOpacity={0.7}
-                  endOpacity={0.05}
-                  data={elevChartData}
-                  height={180}
-                  width={CHART_W}
-                  initialSpacing={4}
-                  endSpacing={4}
-                  spacing={Math.max(CHART_W / elevChartData.length, 3)}
-                  maxValue={Math.ceil(Math.max(...elevChartData.map(d => d.value)) * 1.05)}
-                  pointerConfig={pointerConfig('m', 'activity')}
-                  {...chartBase({ family: 'activity' })}
-                />
-              </View>
+              <ChartLine
+                data={elevChartData}
+                height={180}
+                family="activity"
+                scrub
+                fromZero={false}
+                formatValue={(v) => `${Math.round(v)} m`}
+              />
               {elevHigh != null && elevLow != null && (
                 <View style={sc.elevChipRow}>
-                  <View style={[sc.elevChip, { backgroundColor: '#F59E0B22', borderColor: '#F59E0B66' }]}>
-                    <Typography style={[sc.elevChipVal, { color: '#F59E0B' }]}>{Math.round(elevHigh)}m</Typography>
+                  <View style={[sc.elevChip, { backgroundColor: withAlpha(theme.colors.warning, 'tint'), borderColor: withAlpha(theme.colors.warning, 'strong') }]}>
+                    <Typography style={[sc.elevChipVal, { color: theme.colors.warning }]}>{Math.round(elevHigh)}m</Typography>
                     <Typography style={sc.elevChipLbl}>PEAK</Typography>
                   </View>
-                  <View style={[sc.elevChip, { backgroundColor: '#10B98122', borderColor: '#10B98166' }]}>
-                    <Typography style={[sc.elevChipVal, { color: '#10B981' }]}>{Math.round(elevLow)}m</Typography>
+                  <View style={[sc.elevChip, { backgroundColor: withAlpha(theme.colors.secondary, 'tint'), borderColor: withAlpha(theme.colors.secondary, 'strong') }]}>
+                    <Typography style={[sc.elevChipVal, { color: theme.colors.secondary }]}>{Math.round(elevLow)}m</Typography>
                     <Typography style={sc.elevChipLbl}>LOW</Typography>
                   </View>
-                  <View style={[sc.elevChip, { backgroundColor: fam.accent + '22', borderColor: fam.accent + '66' }]}>
+                  <View style={[sc.elevChip, { backgroundColor: withAlpha(fam.accent, 'tint'), borderColor: withAlpha(fam.accent, 'strong') }]}>
                     <Typography style={[sc.elevChipVal, { color: fam.accent }]}>{Math.round((elevHigh ?? 0) - (elevLow ?? 0))}m</Typography>
                     <Typography style={sc.elevChipLbl}>NET GAIN</Typography>
                   </View>
@@ -1239,11 +1293,11 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
             <WidgetCard family="activity" title="Elevation" icon={Mountain}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
                 <View style={sc.miniStat}>
-                  <Typography style={[sc.miniStatVal, { color: '#F59E0B' }]}>{Math.round(elevHigh)}m</Typography>
+                  <Typography style={[sc.miniStatVal, { color: theme.colors.warning }]}>{Math.round(elevHigh)}m</Typography>
                   <Typography style={sc.miniStatLbl}>Peak</Typography>
                 </View>
                 <View style={sc.miniStat}>
-                  <Typography style={[sc.miniStatVal, { color: '#10B981' }]}>{Math.round(elevLow)}m</Typography>
+                  <Typography style={[sc.miniStatVal, { color: theme.colors.secondary }]}>{Math.round(elevLow)}m</Typography>
                   <Typography style={sc.miniStatLbl}>Lowest</Typography>
                 </View>
                 <View style={sc.miniStat}>
@@ -1329,25 +1383,25 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
               <View style={sc.miniStatGrid}>
                 {avgWatts ? (
                   <View style={sc.miniStat}>
-                    <Typography style={[sc.miniStatVal, { color: '#F97316' }]}>{Math.round(avgWatts)} W</Typography>
+                    <Typography style={[sc.miniStatVal, { color: theme.colors.primary }]}>{Math.round(avgWatts)} W</Typography>
                     <Typography style={sc.miniStatLbl}>Avg Power</Typography>
                   </View>
                 ) : null}
                 {weightedWatts ? (
                   <View style={sc.miniStat}>
-                    <Typography style={[sc.miniStatVal, { color: '#F59E0B' }]}>{Math.round(weightedWatts)} W</Typography>
+                    <Typography style={[sc.miniStatVal, { color: theme.colors.warning }]}>{Math.round(weightedWatts)} W</Typography>
                     <Typography style={sc.miniStatLbl}>Weighted (NP)</Typography>
                   </View>
                 ) : null}
                 {maxWatts ? (
                   <View style={sc.miniStat}>
-                    <Typography style={[sc.miniStatVal, { color: '#EF4444' }]}>{Math.round(maxWatts)} W</Typography>
+                    <Typography style={[sc.miniStatVal, { color: theme.colors.error }]}>{Math.round(maxWatts)} W</Typography>
                     <Typography style={sc.miniStatLbl}>Peak Power</Typography>
                   </View>
                 ) : null}
                 {kilojoules ? (
                   <View style={sc.miniStat}>
-                    <Typography style={[sc.miniStatVal, { color: '#10B981' }]}>{Math.round(kilojoules)} kJ</Typography>
+                    <Typography style={[sc.miniStatVal, { color: theme.colors.secondary }]}>{Math.round(kilojoules)} kJ</Typography>
                     <Typography style={sc.miniStatLbl}>Total Work</Typography>
                   </View>
                 ) : null}
@@ -1362,19 +1416,19 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
             <WidgetCard family="recovery" title="Effort & Exertion" icon={Flame}>
               <View style={{ flexDirection: 'row', gap: 12 }}>
                 {act.sufferScore != null && (
-                  <View style={[sc.effortBlock, { backgroundColor: '#EC489910' }]}>
-                    <AnimatedNumber value={act.sufferScore} style={{ fontSize: 32, fontWeight: '900', color: '#EC4899', letterSpacing: -0.8 }} />
+                  <View style={[sc.effortBlock, { backgroundColor: withAlpha(socialAccent, 'faint') }]}>
+                    <AnimatedNumber value={act.sufferScore} style={[sc.effortBlockVal, { color: socialAccent }]} />
                     <Typography style={sc.effortBlockLbl}>Relative Effort</Typography>
-                    <Typography style={[sc.effortBlockTag, { color: '#EC4899' }]}>
+                    <Typography style={[sc.effortBlockTag, { color: socialAccent }]}>
                       {act.sufferScore < 25 ? 'Easy' : act.sufferScore < 50 ? 'Moderate' : act.sufferScore < 75 ? 'Hard' : act.sufferScore < 100 ? 'Very Hard' : 'Maximum'}
                     </Typography>
                   </View>
                 )}
                 {perceivedExertion != null && (
-                  <View style={[sc.effortBlock, { backgroundColor: '#F9731610' }]}>
-                    <Typography style={{ fontSize: 32, fontWeight: '900', color: '#F97316', letterSpacing: -0.8 }}>{perceivedExertion}/10</Typography>
+                  <View style={[sc.effortBlock, { backgroundColor: withAlpha(theme.colors.primary, 'faint') }]}>
+                    <Typography style={[sc.effortBlockVal, { color: theme.colors.primary }]}>{perceivedExertion}/10</Typography>
                     <Typography style={sc.effortBlockLbl}>Perceived Exertion</Typography>
-                    <Typography style={[sc.effortBlockTag, { color: '#F97316' }]}>
+                    <Typography style={[sc.effortBlockTag, { color: theme.colors.primary }]}>
                       {perceivedExertion <= 3 ? 'Easy' : perceivedExertion <= 5 ? 'Moderate' : perceivedExertion <= 7 ? 'Hard' : perceivedExertion <= 9 ? 'Very Hard' : 'Max'}
                     </Typography>
                   </View>
@@ -1391,19 +1445,19 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
               <View style={sc.miniStatGrid}>
                 {weatherTemp != null && (
                   <View style={sc.miniStat}>
-                    <Typography style={[sc.miniStatVal, { color: '#0EA5E9' }]}>{weatherTemp}°C</Typography>
+                    <Typography style={[sc.miniStatVal, { color: familyStyle('progress').accent }]}>{weatherTemp}°C</Typography>
                     <Typography style={sc.miniStatLbl}>Temperature</Typography>
                   </View>
                 )}
                 {weatherHumidity != null && (
                   <View style={sc.miniStat}>
-                    <Typography style={[sc.miniStatVal, { color: '#10B981' }]}>{weatherHumidity}%</Typography>
+                    <Typography style={[sc.miniStatVal, { color: theme.colors.secondary }]}>{weatherHumidity}%</Typography>
                     <Typography style={sc.miniStatLbl}>Humidity</Typography>
                   </View>
                 )}
                 {weatherWindspeed != null && (
                   <View style={sc.miniStat}>
-                    <Typography style={[sc.miniStatVal, { color: '#6366F1' }]}>{Math.round(weatherWindspeed)} km/h</Typography>
+                    <Typography style={[sc.miniStatVal, { color: theme.colors.info }]}>{Math.round(weatherWindspeed)} km/h</Typography>
                     <Typography style={sc.miniStatLbl}>Wind</Typography>
                   </View>
                 )}
@@ -1424,36 +1478,36 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
             <WidgetCard family="social" title="Activity Stats" icon={Star}>
               <View style={sc.miniStatGrid}>
                 <View style={sc.miniStat}>
-                  <Icon icon={ThumbsUp} variant="plain" size="md" color="#EC4899" />
-                  <AnimatedNumber value={kudos} style={[sc.miniStatVal, { color: '#EC4899' }]} />
+                  <Icon icon={ThumbsUp} variant="plain" size="md" color={socialAccent} />
+                  <AnimatedNumber value={kudos} style={[sc.miniStatVal, { color: socialAccent }]} />
                   <Typography style={sc.miniStatLbl}>Kudos</Typography>
                 </View>
                 <View style={sc.miniStat}>
-                  <Icon icon={MessageCircle} variant="plain" size="md" color="#10B981" />
-                  <AnimatedNumber value={comments} style={[sc.miniStatVal, { color: '#10B981' }]} />
+                  <Icon icon={MessageCircle} variant="plain" size="md" color={theme.colors.secondary} />
+                  <AnimatedNumber value={comments} style={[sc.miniStatVal, { color: theme.colors.secondary }]} />
                   <Typography style={sc.miniStatLbl}>Comments</Typography>
                 </View>
                 <View style={sc.miniStat}>
-                  <Icon icon={Award} variant="plain" size="md" color="#F59E0B" />
-                  <AnimatedNumber value={achievements} style={[sc.miniStatVal, { color: '#F59E0B' }]} />
+                  <Icon icon={Award} variant="plain" size="md" color={theme.colors.warning} />
+                  <AnimatedNumber value={achievements} style={[sc.miniStatVal, { color: theme.colors.warning }]} />
                   <Typography style={sc.miniStatLbl}>Achievements</Typography>
                 </View>
                 <View style={sc.miniStat}>
-                  <Icon icon={Trophy} variant="plain" size="md" color="#EF4444" />
-                  <AnimatedNumber value={prCount} style={[sc.miniStatVal, { color: '#EF4444' }]} />
+                  <Icon icon={Trophy} variant="plain" size="md" color={theme.colors.error} />
+                  <AnimatedNumber value={prCount} style={[sc.miniStatVal, { color: theme.colors.error }]} />
                   <Typography style={sc.miniStatLbl}>PRs</Typography>
                 </View>
                 {photoCount > 0 && (
                   <View style={sc.miniStat}>
-                    <Icon icon={ImageIcon} variant="plain" size="md" color="#8B5CF6" />
-                    <AnimatedNumber value={photoCount} style={[sc.miniStatVal, { color: '#8B5CF6' }]} />
+                    <Icon icon={ImageIcon} variant="plain" size="md" color={theme.colors.accent} />
+                    <AnimatedNumber value={photoCount} style={[sc.miniStatVal, { color: theme.colors.accent }]} />
                     <Typography style={sc.miniStatLbl}>Photos</Typography>
                   </View>
                 )}
                 {athleteCount > 1 && (
                   <View style={sc.miniStat}>
-                    <Icon icon={Users} variant="plain" size="md" color="#A78BFA" />
-                    <AnimatedNumber value={athleteCount} style={[sc.miniStatVal, { color: '#A78BFA' }]} />
+                    <Icon icon={Users} variant="plain" size="md" color={theme.colors.gradients.accent[1]} />
+                    <AnimatedNumber value={athleteCount} style={[sc.miniStatVal, { color: theme.colors.gradients.accent[1] }]} />
                     <Typography style={sc.miniStatLbl}>Athletes</Typography>
                   </View>
                 )}
@@ -1472,7 +1526,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
               {rankPercentile != null && (
                 <View style={sc.percentileBar}>
                   <LinearGradient
-                    colors={['#10B981', fam.accent]}
+                    colors={[theme.colors.secondary, fam.accent]}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
                     style={[sc.percentileFill, { width: `${rankPercentile}%` }]}
@@ -1481,7 +1535,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
               )}
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
                 <Typography style={{ fontSize: 12, color: theme.colors.textSecondary, fontWeight: '600' }}>Slowest</Typography>
-                <Typography style={{ fontSize: 13, fontWeight: '900', color: '#10B981', letterSpacing: -0.2 }}>
+                <Typography style={{ fontSize: 13, fontWeight: '900', color: theme.colors.secondary, letterSpacing: -0.2 }}>
                   You: top {100 - (rankPercentile ?? 0)}%
                 </Typography>
                 <Typography style={{ fontSize: 12, color: theme.colors.textSecondary, fontWeight: '600' }}>Fastest</Typography>
@@ -1504,8 +1558,8 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
                         <Typography style={sc.segName} numberOfLines={1}>{seg.name}</Typography>
                         {isPR && <View style={sc.prBadge}><Typography style={sc.prText}>PR</Typography></View>}
                         {isTop10 && !isPR && (
-                          <View style={[sc.prBadge, { backgroundColor: '#6366F118' }]}>
-                            <Typography style={[sc.prText, { color: '#6366F1' }]}>Top 10</Typography>
+                          <View style={[sc.prBadge, { backgroundColor: withAlpha(theme.colors.accent, 'soft') }]}>
+                            <Typography style={[sc.prText, { color: theme.colors.accent }]}>Top 10</Typography>
                           </View>
                         )}
                       </View>
@@ -1569,7 +1623,7 @@ const sc = StyleSheet.create({
   // Sticky nav
   navBar: {
     position: 'absolute', left: 0, right: 0, top: 0, height: 100,
-    zIndex: 9, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)',
+    zIndex: 9, borderBottomWidth: 1, borderBottomColor: theme.colors.divider,
   },
   navSafeArea: {
     position: 'absolute', left: 0, right: 0, top: 0,
@@ -1581,10 +1635,10 @@ const sc = StyleSheet.create({
   },
   navBackBtn: {
     width: 44, height: 44, borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: theme.colors.scrim,
     alignItems: 'center', justifyContent: 'center',
   },
-  navTitle: { fontSize: 15, fontWeight: '900', color: '#fff', letterSpacing: -0.2 },
+  navTitle: { fontSize: 15, fontWeight: '900', color: theme.colors.text, letterSpacing: -0.2 },
 
   // ── Hero ───────────────────────────────────────────────────────────────
   heroWrap: { position: 'relative', backgroundColor: theme.colors.surfaceMuted },
@@ -1603,7 +1657,7 @@ const sc = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999,
   },
   sportPillBigText: {
-    fontSize: 11, fontWeight: '900', color: '#fff',
+    fontSize: 11, fontWeight: '900', color: theme.colors.onAccent,
     letterSpacing: 1.2,
   },
   medalCount: {
@@ -1617,9 +1671,9 @@ const sc = StyleSheet.create({
     position: 'absolute', left: 20, right: 20, bottom: 18,
   },
   heroName: {
-    fontSize: 30, color: '#fff', fontWeight: '900',
+    fontSize: 30, color: theme.colors.onAccent, fontWeight: '900',
     marginBottom: 8, letterSpacing: -0.8,
-    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowColor: theme.colors.scrim,
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 8,
   },
@@ -1628,7 +1682,7 @@ const sc = StyleSheet.create({
     flexWrap: 'wrap',
   },
   heroDate: {
-    fontSize: 13, color: 'rgba(255,255,255,0.85)', fontWeight: '700',
+    fontSize: 13, color: withAlpha(theme.colors.onAccent, 'heavy'), fontWeight: '700',
     letterSpacing: 1, textTransform: 'uppercase',
   },
   metaDot: { width: 3, height: 3, borderRadius: 1.5 },
@@ -1647,8 +1701,8 @@ const sc = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 9,
     borderRadius: 999,
   },
-  medalVal: { color: '#fff', fontSize: 15, fontWeight: '900', fontVariant: ['tabular-nums'] },
-  medalLbl: { color: 'rgba(255,255,255,0.95)', fontSize: 11, fontWeight: '800', letterSpacing: 0.4 },
+  medalVal: { color: theme.colors.onAccent, fontSize: 15, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  medalLbl: { color: withAlpha(theme.colors.onAccent, 'heavy'), fontSize: 11, fontWeight: '800', letterSpacing: 0.4 },
 
   // ── Primary stat grid (full-bleed, no card chrome) ─────────────────────
   primaryGrid: {
@@ -1662,11 +1716,11 @@ const sc = StyleSheet.create({
   },
   primaryGridCellRightDiv: {
     borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: 'rgba(255,255,255,0.08)',
+    borderRightColor: theme.colors.divider,
   },
   primaryGridCellBottomDiv: {
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255,255,255,0.08)',
+    borderBottomColor: theme.colors.divider,
   },
   statTile: { alignItems: 'flex-start', paddingHorizontal: 8 },
   statTileIcon: {
@@ -1674,7 +1728,7 @@ const sc = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   statTileVal: {
-    fontSize: 32, fontWeight: '900', color: '#fff',
+    fontSize: 32, fontWeight: '900', color: theme.colors.text,
     letterSpacing: -0.8, fontVariant: ['tabular-nums'],
     lineHeight: 34,
   },
@@ -1725,7 +1779,7 @@ const sc = StyleSheet.create({
   // HR Zones inner stats — big hero numbers
   hrStat: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
     borderRadius: 14, paddingVertical: 16, gap: 2,
   },
   hrStatVal: {
@@ -1739,10 +1793,10 @@ const sc = StyleSheet.create({
   },
 
   // Zone bars
-  zoneLabel: { fontSize: 13, color: '#fff', fontWeight: '800' },
+  zoneLabel: { fontSize: 13, color: theme.colors.text, fontWeight: '800' },
   zoneRange: { fontSize: 11, color: theme.colors.textSecondary, fontWeight: '600' },
   zoneTime: {
-    fontSize: 13, color: '#fff', fontWeight: '800',
+    fontSize: 13, color: theme.colors.text, fontWeight: '800',
     fontVariant: ['tabular-nums'],
   },
 
@@ -1751,12 +1805,12 @@ const sc = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
     gap: 5, paddingHorizontal: 10, paddingVertical: 5,
     borderRadius: 999,
-    backgroundColor: 'rgba(251,146,60,0.15)',
-    borderWidth: 1, borderColor: 'rgba(251,146,60,0.45)',
+    backgroundColor: withAlpha(theme.colors.gradients.primary[1], 'tint'),
+    borderWidth: 1, borderColor: withAlpha(theme.colors.gradients.primary[1], 'strong'),
     marginTop: 12,
   },
   liveStravaText: {
-    fontSize: 10, fontWeight: '900', color: '#FB923C',
+    fontSize: 10, fontWeight: '900', color: theme.colors.gradients.primary[1],
     letterSpacing: 1.1,
   },
 
@@ -1773,7 +1827,7 @@ const sc = StyleSheet.create({
   // Splits visual
   splitVizRow: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingVertical: 10, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.04)',
+    paddingVertical: 10, borderBottomWidth: 1, borderColor: theme.colors.divider,
   },
   splitVizIdxBox: {
     width: 36, height: 36, borderRadius: 10,
@@ -1785,7 +1839,7 @@ const sc = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   splitVizBarWrap: { flex: 1, height: 16, justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 8 },
+    backgroundColor: withAlpha(theme.colors.text, 'faint'), borderRadius: 8 },
   splitVizBar: { height: 16, borderRadius: 8 },
   splitVizMetrics: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   splitVizPace: {
@@ -1795,9 +1849,9 @@ const sc = StyleSheet.create({
   splitVizHrChip: {
     flexDirection: 'row', alignItems: 'center', gap: 3,
     paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6,
-    backgroundColor: 'rgba(239,68,68,0.12)',
+    backgroundColor: withAlpha(theme.colors.error, 'soft'),
   },
-  splitVizHr: { fontSize: 11, color: '#EF4444', fontWeight: '900', fontVariant: ['tabular-nums'] },
+  splitVizHr: { fontSize: 11, color: theme.colors.error, fontWeight: '900', fontVariant: ['tabular-nums'] },
   splitVizElev: {
     fontSize: 11, color: theme.colors.textSecondary, fontWeight: '800',
     fontVariant: ['tabular-nums'], minWidth: 36, textAlign: 'right',
@@ -1806,53 +1860,54 @@ const sc = StyleSheet.create({
   // Splits unit toggle
   unitToggle: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
     borderRadius: 9,
     padding: 3,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: theme.colors.divider,
   },
   unitOpt: { minWidth: 32, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, alignItems: 'center' },
-  unitOptActive: { backgroundColor: theme.colors.primary + '33', borderWidth: 1, borderColor: theme.colors.primary },
+  unitOptActive: { backgroundColor: withAlpha(theme.colors.primary, 'medium'), borderWidth: 1, borderColor: theme.colors.primary },
   unitOptText: { fontSize: 11, fontWeight: '800', color: theme.colors.textSecondary, letterSpacing: 0.8 },
   unitOptTextActive: { color: theme.colors.primary },
 
   // Laps / shared table chrome
   splitHeader: { flexDirection: 'row', paddingBottom: 8, borderBottomWidth: 1, borderColor: theme.colors.border, marginBottom: 4 },
   splitHCell: { fontSize: 10, fontWeight: '800', color: theme.colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1 },
-  splitRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.04)' },
+  splitRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderColor: theme.colors.divider },
   splitCell: { fontSize: 13, color: theme.colors.text, fontWeight: '600', fontVariant: ['tabular-nums'] },
 
   // Effort blocks
   effortBlock: { flex: 1, alignItems: 'center', padding: 14, borderRadius: 14 },
+  effortBlockVal: { fontSize: 32, fontWeight: '900', letterSpacing: -0.8 },
   effortBlockLbl: { fontSize: 11, color: theme.colors.textSecondary, marginTop: 4, fontWeight: '700' },
   effortBlockTag: { fontSize: 12, fontWeight: '900', marginTop: 6, letterSpacing: 0.5 },
 
   // Best efforts rows
   effortRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingVertical: 12, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.04)',
+    paddingVertical: 12, borderBottomWidth: 1, borderColor: theme.colors.divider,
   },
   effortMedal: {
     width: 32, height: 32, borderRadius: 10,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1,
   },
-  effortLabel: { fontSize: 15, fontWeight: '900', color: '#fff', letterSpacing: -0.2 },
+  effortLabel: { fontSize: 15, fontWeight: '900', color: theme.colors.text, letterSpacing: -0.2 },
   effortPace: { fontSize: 11, fontWeight: '700', color: theme.colors.textSecondary, marginTop: 2, fontVariant: ['tabular-nums'] },
-  effortTime: { fontSize: 16, fontWeight: '900', color: '#fff', fontVariant: ['tabular-nums'], letterSpacing: -0.3 },
+  effortTime: { fontSize: 16, fontWeight: '900', color: theme.colors.text, fontVariant: ['tabular-nums'], letterSpacing: -0.3 },
   deltaChip: {
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, borderWidth: 1,
   },
   deltaChipText: { fontSize: 10, fontWeight: '900', letterSpacing: 0.6 },
-  prBadge: { backgroundColor: '#FCD34D22', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 6 },
-  prText: { fontSize: 10, fontWeight: '900', color: '#FCD34D', letterSpacing: 0.4 },
+  prBadge: { backgroundColor: withAlpha(theme.colors.families.records.accent, 'tint'), borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 6 },
+  prText: { fontSize: 10, fontWeight: '900', color: theme.colors.families.records.accent, letterSpacing: 0.4 },
 
-  percentileBar: { height: 12, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 6, overflow: 'hidden' },
+  percentileBar: { height: 12, backgroundColor: withAlpha(theme.colors.text, 'soft'), borderRadius: 6, overflow: 'hidden' },
   percentileFill: { height: '100%', borderRadius: 6 },
 
   // Segments
-  segRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.04)' },
+  segRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: theme.colors.divider },
   segName: { fontSize: 14, fontWeight: '800', color: theme.colors.text, flex: 1 },
   segMeta: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 3, fontWeight: '600' },
   segTime: { fontSize: 14, fontWeight: '900', color: theme.colors.text, fontVariant: ['tabular-nums'] },

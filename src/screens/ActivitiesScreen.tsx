@@ -1,30 +1,34 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, StyleSheet, TouchableOpacity,
+  View, StyleSheet,
   TextInput, ScrollView, SectionList, RefreshControl, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { theme } from '../theme';
+import { theme, withAlpha } from '../theme';
 import { Typography } from '../components/Typography';
 import { Skeleton } from '../components/Skeleton';
 import { SkeletonHero, SkeletonActivityRow } from '../components/SkeletonPresets';
 import { AnimatedNumber } from '../components/AnimatedNumber';
 import { PressableScale } from '../components/PressableScale';
+import { Button } from '../components/Button';
+import { Sheet } from '../components/Sheet';
 import { useStore, Activity } from '../store/useStore';
 import { StravaService } from '../services/strava';
+import { performStravaSync } from '../services/syncRunner';
 import { familyStyle } from '../utils/widgetFamilies';
+import { formatPace as formatPaceMinKm, activityDayKey, mondayOf } from '../utils/dates';
 import { sportIcon } from '../utils/sportIcon';
 import { Icon } from '../components/Icon';
 import {
   Search, SlidersHorizontal, Activity as ActivityIcon,
-  Flame, Link as LinkIcon,
+  Flame, Link as LinkIcon, Check,
 } from 'lucide-react-native';
 import {
   format, parseISO, isToday, isYesterday, isThisWeek, isThisYear,
-  startOfMonth, isSameMonth, startOfWeek,
+  startOfMonth, isSameMonth,
 } from 'date-fns';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -36,13 +40,17 @@ type ActivitiesStackParamList = {
 
 const TYPES = ['All', 'Run', 'Ride', 'Walk', 'Workout'];
 
+type SortKey = 'date' | 'distance' | 'pace';
+const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
+  { key: 'date', label: 'Most recent' },
+  { key: 'distance', label: 'Longest distance' },
+  { key: 'pace', label: 'Fastest pace' },
+];
+
 // ─── Formatters ───────────────────────────────────────────────────────────────
 function formatPace(speed: number): string {
   if (!speed) return '--';
-  const mPerK = 1000 / speed / 60;
-  const mins = Math.floor(mPerK);
-  const secs = Math.round((mPerK - mins) * 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
+  return formatPaceMinKm(1000 / speed / 60);
 }
 function formatDuration(secs: number): string {
   const h = Math.floor(secs / 3600);
@@ -107,23 +115,30 @@ interface RowProps {
 function ActivityRow({ act, maxDistance, onPress, staggerIndex, animate }: RowProps) {
   const fam = familyStyle(familyForType(act.type));
   const km = act.distance / 1000;
-  const kmStr = km.toFixed(2);
   const distanceFrac = maxDistance > 0 ? Math.max(0.08, km / maxDistance) : 0.1;
   const rpe = act.sufferScore;
 
   const date = parseISO(act.startDate);
+  const dayDate = parseISO(activityDayKey(act));
   const timeStr = format(date, 'h:mm a');
 
-  // RPE colour interpolation: 0 → fam accent, 100 → red.
-  const rpeColor = rpe != null
+  // RPE colour interpolation: 0 → fam accent, 100 → error red. The lerp lands
+  // in rgb space, so derived tints are rgba (alpha suffixes only work on hex).
+  const rpeRgb = rpe != null
     ? (() => {
       const t = Math.min(1, Math.max(0, rpe / 100));
-      // Lerp accent → #EF4444
       const a = hexToRgb(fam.accent);
-      const b = hexToRgb('#EF4444');
-      return `rgb(${Math.round(a.r + (b.r - a.r) * t)},${Math.round(a.g + (b.g - a.g) * t)},${Math.round(a.b + (b.b - a.b) * t)})`;
+      const b = hexToRgb(theme.colors.error);
+      return {
+        r: Math.round(a.r + (b.r - a.r) * t),
+        g: Math.round(a.g + (b.g - a.g) * t),
+        b: Math.round(a.b + (b.b - a.b) * t),
+      };
     })()
     : null;
+  const rpeColor = rpeRgb ? `rgb(${rpeRgb.r},${rpeRgb.g},${rpeRgb.b})` : null;
+  const rpeBg = rpeRgb ? `rgba(${rpeRgb.r},${rpeRgb.g},${rpeRgb.b},0.13)` : undefined;
+  const rpeBorder = rpeRgb ? `rgba(${rpeRgb.r},${rpeRgb.g},${rpeRgb.b},0.53)` : undefined;
 
   const paceOrSpeed = act.type === 'Ride'
     ? `${(act.averageSpeed * 3.6).toFixed(1)}`
@@ -154,8 +169,8 @@ function ActivityRow({ act, maxDistance, onPress, staggerIndex, animate }: RowPr
           end={{ x: 1, y: 1 }}
           style={[s.sportPill, theme.shadows.glow(fam.accent)]}
         >
-          <View style={[s.sportPillInner, { borderColor: fam.accent + '88' }]}>
-            {sportIcon(act.type, 22, '#fff')}
+          <View style={[s.sportPillInner, { borderColor: withAlpha(fam.accent, 'heavy') }]}>
+            {sportIcon(act.type, 22, theme.colors.onAccent)}
           </View>
         </LinearGradient>
 
@@ -167,9 +182,9 @@ function ActivityRow({ act, maxDistance, onPress, staggerIndex, animate }: RowPr
 
           <View style={s.metaRow}>
             <Typography style={[s.metaChip, { color: fam.accent }]}>{act.type.toUpperCase()}</Typography>
-            <View style={[s.metaDot, { backgroundColor: theme.colors.textSecondary + '55' }]} />
-            <Typography style={s.metaChip}>{shortRelDate(date)}</Typography>
-            <View style={[s.metaDot, { backgroundColor: theme.colors.textSecondary + '55' }]} />
+            <View style={[s.metaDot, { backgroundColor: withAlpha(theme.colors.textSecondary, 'strong') }]} />
+            <Typography style={s.metaChip}>{shortRelDate(dayDate)}</Typography>
+            <View style={[s.metaDot, { backgroundColor: withAlpha(theme.colors.textSecondary, 'strong') }]} />
             <Typography style={s.metaChip}>{timeStr.toUpperCase()}</Typography>
           </View>
 
@@ -185,7 +200,7 @@ function ActivityRow({ act, maxDistance, onPress, staggerIndex, animate }: RowPr
             <MetricChip value={formatDuration(act.movingTime)} label="TIME" />
             <MetricChip value={paceOrSpeed} label={paceLabel} />
             {act.averageHeartRate ? (
-              <MetricChip value={`${Math.round(act.averageHeartRate)}`} label="BPM" color="#EF4444" />
+              <MetricChip value={`${Math.round(act.averageHeartRate)}`} label="BPM" color={theme.colors.error} />
             ) : null}
             {act.totalElevationGain > 0 ? (
               <MetricChip value={`${Math.round(act.totalElevationGain)}`} label="ELEV M" />
@@ -196,7 +211,7 @@ function ActivityRow({ act, maxDistance, onPress, staggerIndex, animate }: RowPr
         {/* Right: RPE pill + vertical distance bar */}
         <View style={s.rowRight}>
           {rpe != null && rpeColor ? (
-            <View style={[s.rpePill, { backgroundColor: rpeColor + '22', borderColor: rpeColor + '88' }]}>
+            <View style={[s.rpePill, { backgroundColor: rpeBg, borderColor: rpeBorder }]}>
               <Icon icon={Flame} variant="plain" size="xs" color={rpeColor} />
               <Typography style={[s.rpeText, { color: rpeColor }]}>{rpe}</Typography>
             </View>
@@ -251,23 +266,19 @@ function EmptyState({ onConnect }: { onConnect: () => void }) {
         end={{ x: 1, y: 1 }}
         style={[s.emptyIcon, theme.shadows.glow(fam.accent)]}
       >
-        <ActivityIcon color="#fff" size={56} />
+        <ActivityIcon color={theme.colors.onAccent} size={56} />
       </LinearGradient>
       <Typography style={s.emptyTitle}>No activities yet</Typography>
       <Typography style={s.emptySub}>
         Connect Strava to pull your runs, rides, and walks into one place.
       </Typography>
-      <TouchableOpacity onPress={onConnect} activeOpacity={0.85} style={s.emptyCta}>
-        <LinearGradient
-          colors={theme.colors.gradients.primary}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={s.emptyCtaInner}
-        >
-          <Icon icon={LinkIcon} variant="plain" size="sm" color="#fff" />
-          <Typography style={s.emptyCtaText}>Connect Strava</Typography>
-        </LinearGradient>
-      </TouchableOpacity>
+      <Button
+        title="Connect Strava"
+        icon={LinkIcon}
+        size="lg"
+        onPress={onConnect}
+        style={{ marginTop: 14 }}
+      />
     </View>
   );
 }
@@ -290,32 +301,25 @@ function LoadingSkeleton() {
 
 // ─── Screen ──────────────────────────────────────────────────────────────────
 export default function ActivitiesScreen() {
-  const { activities, setActivities, setToast, lastSyncedAt, setLastSyncedAt } = useStore();
+  const activities = useStore(st => st.activities);
+  const setToast = useStore(st => st.setToast);
+  const lastSyncedAt = useStore(st => st.lastSyncedAt);
   const navigation = useNavigation<Nav>();
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [filter, setFilter] = useState('All');
-  const [sort, setSort] = useState<'date' | 'distance' | 'pace'>('date');
+  const [sort, setSort] = useState<SortKey>('date');
   const [showSort, setShowSort] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-
-  // Rows we've already revealed. Keeps the entrance cascade a one-time event:
-  // scroll recycling, filter/search and refresh re-renders don't re-fire it.
-  // Reset when sort changes so the new ordering choreographs once.
-  const animatedIds = useRef<Set<string>>(new Set());
-  useEffect(() => { animatedIds.current = new Set(); }, [sort]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
-      await StravaService.initialize();
-      if (StravaService.isAuthenticated()) {
-        const prevCount = activities.length;
-        const fresh = await StravaService.syncActivities();
-        setActivities(fresh);
-        setLastSyncedAt(new Date().toISOString());
-        const added = fresh.length - prevCount;
+      const before = useStore.getState().activities.length;
+      const result = await performStravaSync({ force: true });
+      if (result) {
+        const added = useStore.getState().activities.length - before;
         if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setToast?.({
           title: added > 0 ? 'Synced' : 'Up to date',
@@ -328,7 +332,7 @@ export default function ActivitiesScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [activities.length, setActivities, setToast, setLastSyncedAt]);
+  }, [setToast]);
 
   const sorted = useMemo(() => {
     let list = [...activities];
@@ -350,6 +354,28 @@ export default function ActivitiesScreen() {
     [sorted],
   );
 
+  // Rows we've already revealed. Keeps the entrance cascade a one-time event:
+  // scroll recycling, filter/search and refresh re-renders don't re-fire it.
+  // Reset when sort changes so the new ordering choreographs once. The fresh
+  // set is computed once per data change here — renderItem stays side-effect
+  // free and stable.
+  const animatedIds = useRef<Set<string>>(new Set());
+  const prevSortRef = useRef(sort);
+  const newlyRevealed = useMemo(() => {
+    if (prevSortRef.current !== sort) {
+      prevSortRef.current = sort;
+      animatedIds.current.clear();
+    }
+    const fresh = new Set<string>();
+    for (const a of sorted) {
+      if (!animatedIds.current.has(a.id)) {
+        fresh.add(a.id);
+        animatedIds.current.add(a.id);
+      }
+    }
+    return fresh;
+  }, [sorted, sort]);
+
   // Build date-bucketed sections only when sorting by date.
   const sections = useMemo(() => {
     if (sort !== 'date') {
@@ -358,7 +384,7 @@ export default function ActivitiesScreen() {
     const now = new Date();
     const buckets = new Map<string, { title: string; data: Activity[]; order: number; count: number }>();
     for (const a of sorted) {
-      const d = parseISO(a.startDate);
+      const d = parseISO(activityDayKey(a));
       const title = bucketTitle(d, now);
       const order = isToday(d) ? Number.MAX_SAFE_INTEGER
                   : isYesterday(d) ? Number.MAX_SAFE_INTEGER - 1
@@ -374,7 +400,7 @@ export default function ActivitiesScreen() {
 
   // Week-to-date totals for hero pills.
   const weekStats = useMemo(() => {
-    const monStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+    const monStart = mondayOf(new Date());
     let km = 0;
     let secs = 0;
     let count = 0;
@@ -389,13 +415,25 @@ export default function ActivitiesScreen() {
     return { km, secs, count };
   }, [activities]);
 
-  function openDetail(act: Activity) {
+  const openDetail = useCallback((act: Activity) => {
     navigation.navigate('ActivityDetail', { activity: act });
-  }
+  }, [navigation]);
 
   function openSettings() {
     (navigation as any).getParent()?.navigate('Profile', { screen: 'Settings' });
   }
+
+  const renderItem = useCallback(({ item, index }: { item: Activity; index: number }) => (
+    // `index` from SectionList is local to the section, so the cascade
+    // restarts per date bucket and stays in the visible window.
+    <ActivityRow
+      act={item}
+      staggerIndex={index}
+      animate={newlyRevealed.has(item.id)}
+      maxDistance={maxDistance}
+      onPress={() => openDetail(item)}
+    />
+  ), [newlyRevealed, maxDistance, openDetail]);
 
   const isEmpty = !activities.length;
   const fam = familyStyle('activity');
@@ -438,9 +476,9 @@ export default function ActivitiesScreen() {
         </View>
 
         <View style={s.heroPillRow}>
-          <HeroPill value={+weekStats.km.toFixed(1)} label="KM THIS WEEK" accent="#FFFFFF" />
-          <HeroPill value={formatDuration(weekStats.secs)} label="TIME" accent="#FFFFFF" />
-          <HeroPill value={weekStats.count} label="ACTIVITIES" accent="#FFFFFF" />
+          <HeroPill value={+weekStats.km.toFixed(1)} label="KM THIS WEEK" accent={theme.colors.onAccent} />
+          <HeroPill value={formatDuration(weekStats.secs)} label="TIME" accent={theme.colors.onAccent} />
+          <HeroPill value={weekStats.count} label="ACTIVITIES" accent={theme.colors.onAccent} />
         </View>
       </LinearGradient>
     </View>
@@ -457,15 +495,15 @@ export default function ActivitiesScreen() {
       >
         {TYPES.map(t => {
           const active = filter === t;
-          const tfam = t === 'All'
-            ? { accent: theme.colors.primary, tint: theme.colors.primary + '22' }
-            : familyStyle(familyForType(t));
-          const chipColor = tfam.accent;
+          const chipColor = t === 'All'
+            ? theme.colors.primary
+            : familyStyle(familyForType(t)).accent;
           return (
             <PressableScale
               key={t}
               style={[
                 s.chip,
+                { borderColor: withAlpha(chipColor, 'strong') },
                 active && {
                   backgroundColor: chipColor,
                   borderColor: chipColor,
@@ -474,7 +512,7 @@ export default function ActivitiesScreen() {
               ]}
               onPress={() => setFilter(t)}
             >
-              <Typography style={[s.chipText, active && s.chipTextActive]}>
+              <Typography style={[s.chipText, { color: chipColor }, active && s.chipTextActive]}>
                 {t.toUpperCase()}
               </Typography>
             </PressableScale>
@@ -483,8 +521,8 @@ export default function ActivitiesScreen() {
       </ScrollView>
 
       <PressableScale
-        style={[s.toolBtn, showSort && { backgroundColor: fam.accent + '22', borderColor: fam.accent }]}
-        onPress={() => { setShowSort(v => !v); setShowSearch(false); }}
+        style={[s.toolBtn, showSort && { backgroundColor: withAlpha(fam.accent, 'tint'), borderColor: fam.accent }]}
+        onPress={() => setShowSort(true)}
       >
         <Icon
           icon={SlidersHorizontal}
@@ -494,8 +532,8 @@ export default function ActivitiesScreen() {
         />
       </PressableScale>
       <PressableScale
-        style={[s.toolBtn, showSearch && { backgroundColor: fam.accent + '22', borderColor: fam.accent }]}
-        onPress={() => { setShowSearch(v => !v); setShowSort(false); }}
+        style={[s.toolBtn, showSearch && { backgroundColor: withAlpha(fam.accent, 'tint'), borderColor: fam.accent }]}
+        onPress={() => setShowSearch(v => !v)}
       >
         <Icon
           icon={Search}
@@ -526,23 +564,6 @@ export default function ActivitiesScreen() {
         </View>
       )}
 
-      {/* Sort options */}
-      {showSort && (
-        <View style={s.sortRow}>
-          {(['date', 'distance', 'pace'] as const).map(opt => (
-            <PressableScale
-              key={opt}
-              style={[s.sortOpt, sort === opt && s.sortOptActive]}
-              onPress={() => { setSort(opt); setShowSort(false); }}
-            >
-              <Typography style={[s.sortOptText, sort === opt && s.sortOptTextActive]}>
-                {opt.charAt(0).toUpperCase() + opt.slice(1)}
-              </Typography>
-            </PressableScale>
-          ))}
-        </View>
-      )}
-
       {/* Body */}
       {isEmpty ? (
         showSkeleton ? <LoadingSkeleton /> : <EmptyState onConnect={openSettings} />
@@ -557,21 +578,7 @@ export default function ActivitiesScreen() {
               {FilterBar}
             </View>
           }
-          renderItem={({ item, index }) => {
-            // `index` from SectionList is local to the section, so the cascade
-            // restarts per date bucket and stays in the visible window.
-            const firstReveal = !animatedIds.current.has(item.id);
-            if (firstReveal) animatedIds.current.add(item.id);
-            return (
-              <ActivityRow
-                act={item}
-                staggerIndex={index}
-                animate={firstReveal}
-                maxDistance={maxDistance}
-                onPress={() => openDetail(item)}
-              />
-            );
-          }}
+          renderItem={renderItem}
           renderSectionHeader={({ section }) => {
             const { title, count } = section as any;
             if (!title) return null;
@@ -599,6 +606,33 @@ export default function ActivitiesScreen() {
           }
         />
       )}
+
+      {/* Sort options */}
+      <Sheet
+        visible={showSort}
+        onClose={() => setShowSort(false)}
+        title="Sort by"
+        caption="Order your activity list"
+      >
+        {SORT_OPTIONS.map((opt, i) => {
+          const active = sort === opt.key;
+          return (
+            <PressableScale
+              key={opt.key}
+              haptic="selection"
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              style={[s.sortOptRow, i === SORT_OPTIONS.length - 1 && { borderBottomWidth: 0 }]}
+              onPress={() => { setSort(opt.key); setShowSort(false); }}
+            >
+              <Typography style={[s.sortOptText, active && { color: fam.accent }]}>
+                {opt.label}
+              </Typography>
+              {active ? <Icon icon={Check} variant="plain" size="sm" color={fam.accent} /> : null}
+            </PressableScale>
+          );
+        })}
+      </Sheet>
     </SafeAreaView>
   );
 }
@@ -617,17 +651,17 @@ const s = StyleSheet.create({
   },
   heroTopRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
   heroTitle: {
-    fontSize: 28, fontWeight: '900', color: '#fff',
+    fontSize: 28, fontWeight: '900', color: theme.colors.onAccent,
     letterSpacing: -0.6,
   },
   heroSub: {
-    fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.85)',
+    fontSize: 12, fontWeight: '700', color: withAlpha(theme.colors.onAccent, 'heavy'),
     letterSpacing: 0.4, marginTop: 2,
   },
   heroPillRow: { flexDirection: 'row', gap: 8 },
   heroPill: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.25)',
+    backgroundColor: withAlpha(theme.colors.background, 'medium'),
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 10,
@@ -635,13 +669,13 @@ const s = StyleSheet.create({
     alignItems: 'flex-start',
   },
   heroPillVal: {
-    fontSize: 20, fontWeight: '900', color: '#fff',
+    fontSize: 20, fontWeight: '900', color: theme.colors.onAccent,
     letterSpacing: -0.4,
     fontVariant: ['tabular-nums'],
     minWidth: 28,
   },
   heroPillLbl: {
-    fontSize: 9, fontWeight: '800', color: 'rgba(255,255,255,0.85)',
+    fontSize: 9, fontWeight: '800', color: withAlpha(theme.colors.onAccent, 'heavy'),
     letterSpacing: 1.2, textTransform: 'uppercase', marginTop: 2,
   },
 
@@ -654,14 +688,14 @@ const s = StyleSheet.create({
   chip: {
     paddingHorizontal: 16, paddingVertical: 9, borderRadius: 999,
     backgroundColor: 'transparent',
-    borderWidth: 1, borderColor: theme.colors.border,
+    borderWidth: 1,
     justifyContent: 'center', alignItems: 'center', minHeight: 34,
   },
   chipText: {
-    fontSize: 11, fontWeight: '900', color: theme.colors.textSecondary,
+    fontSize: 11, fontWeight: '900',
     letterSpacing: 1,
   },
-  chipTextActive: { color: '#fff' },
+  chipTextActive: { color: theme.colors.onAccent },
   toolBtn: {
     width: 38, height: 38, borderRadius: 10,
     backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border,
@@ -678,14 +712,13 @@ const s = StyleSheet.create({
   },
   searchInput: { flex: 1, fontSize: 14, color: theme.colors.text, fontWeight: '600' },
 
-  sortRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 8 },
-  sortOpt: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
-    backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border,
+  // ── Sort sheet ─────────────────────────────────────────────────────────
+  sortOptRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 15, paddingHorizontal: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.divider,
   },
-  sortOptActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-  sortOptText: { fontSize: 12, color: theme.colors.textSecondary, fontWeight: '800', letterSpacing: 0.4 },
-  sortOptTextActive: { color: '#fff' },
+  sortOptText: { ...theme.typography.body, color: theme.colors.text },
 
   // ── Section heading ────────────────────────────────────────────────────
   sectionHead: {
@@ -720,7 +753,7 @@ const s = StyleSheet.create({
   },
   rowInnerStroke: {
     position: 'absolute', left: 0, right: 0, top: 0, height: 0.5,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
   },
   sportPill: {
     width: 44, height: 44, borderRadius: 12,
@@ -734,7 +767,7 @@ const s = StyleSheet.create({
   },
   rowMid: { flex: 1, minWidth: 0 },
   rowName: {
-    fontSize: 16, fontWeight: '800', color: '#fff',
+    fontSize: 16, fontWeight: '800', color: theme.colors.text,
     letterSpacing: -0.2, marginBottom: 4,
   },
 
@@ -754,7 +787,7 @@ const s = StyleSheet.create({
   },
   heroMetric: { gap: 2 },
   heroMetricVal: {
-    fontSize: 22, fontWeight: '900', color: '#fff',
+    fontSize: 22, fontWeight: '900', color: theme.colors.text,
     letterSpacing: -0.6, fontVariant: ['tabular-nums'],
   },
   heroMetricUnit: {
@@ -763,7 +796,7 @@ const s = StyleSheet.create({
   },
   metricBlock: { gap: 2, alignItems: 'flex-start' },
   metricVal: {
-    fontSize: 14, fontWeight: '900', color: '#fff',
+    fontSize: 14, fontWeight: '900', color: theme.colors.text,
     letterSpacing: -0.2, fontVariant: ['tabular-nums'],
   },
   metricLbl: {
@@ -780,7 +813,7 @@ const s = StyleSheet.create({
   rpeText: { fontSize: 11, fontWeight: '900', fontVariant: ['tabular-nums'] },
   distanceBarTrack: {
     width: 4, height: 60, borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.06)', overflow: 'hidden',
+    backgroundColor: theme.colors.divider, overflow: 'hidden',
     justifyContent: 'flex-end',
   },
   distanceBarFill: { width: '100%', borderRadius: 2 },
@@ -792,17 +825,11 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   emptyTitle: {
-    fontSize: 22, fontWeight: '900', color: '#fff',
+    fontSize: 22, fontWeight: '900', color: theme.colors.text,
     letterSpacing: -0.4, marginTop: 8,
   },
   emptySub: {
     fontSize: 14, fontWeight: '500',
     color: theme.colors.textSecondary, textAlign: 'center', lineHeight: 20,
   },
-  emptyCta: { marginTop: 14, borderRadius: 14, overflow: 'hidden' },
-  emptyCtaInner: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 22, paddingVertical: 14,
-  },
-  emptyCtaText: { color: '#fff', fontSize: 15, fontWeight: '900', letterSpacing: 0.3 },
 });

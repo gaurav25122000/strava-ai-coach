@@ -1,1004 +1,925 @@
-import React, { useMemo, useState, useDeferredValue, useCallback, useEffect, useRef } from 'react';
-import { View, StyleSheet, FlatList, TouchableOpacity, Dimensions } from 'react-native';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { theme } from '../theme';
-import { Typography } from '../components/Typography';
-import { LineChart, BarChart, PieChart } from 'react-native-gifted-charts';
 import Animated, {
   FadeIn,
   FadeInDown,
-  useSharedValue,
+  interpolate,
   useAnimatedStyle,
   useDerivedValue,
-  interpolate,
+  useSharedValue,
   withSpring,
   type SharedValue,
 } from 'react-native-reanimated';
-import { useStore } from '../store/useStore';
-import { format, parseISO, startOfWeek, endOfWeek, eachWeekOfInterval, subWeeks } from 'date-fns';
 import {
-  Heart,
+  Activity as ActivityIcon,
   BarChart3,
-  Zap,
-  Activity,
-  Settings2,
-  Footprints,
   Clock,
-  TrendingUp,
-  TrendingDown,
-  Mountain,
   Flame,
+  Footprints,
+  Heart,
+  Mountain,
+  Settings2,
+  TrendingDown,
+  TrendingUp,
+  Zap,
+  type LucideIcon,
 } from 'lucide-react-native';
+import { theme, withAlpha } from '../theme';
+import { Typography } from '../components/Typography';
 import { Icon } from '../components/Icon';
-import { LinearGradient } from 'expo-linear-gradient';
-import { chartBase, barProps, lineProps, pieProps, pointerConfig } from '../utils/chartTheme';
-import { INSIGHT_FAMILY, familyStyle } from '../utils/widgetFamilies';
-import { WidgetCard } from '../components/WidgetCard';
-import { BottomSheet } from '../components/BottomSheet';
+import { Button } from '../components/Button';
+import { Sheet } from '../components/Sheet';
 import { SectionLabel } from '../components/SheetUI';
+import { WidgetCard } from '../components/WidgetCard';
 import { SkeletonChart } from '../components/SkeletonPresets';
 import { PressableScale } from '../components/PressableScale';
 import { AnimatedNumber } from '../components/AnimatedNumber';
 import { ProgressBar } from '../components/ProgressBar';
 import { Toggle } from '../components/Toggle';
+import { ChartBars, ChartDonut, ChartLine, type LinePoint } from '../components/charts';
+import { INSIGHT_FAMILY, familyStyle, type WidgetFamily } from '../utils/widgetFamilies';
+import { activityDayKey, formatPace, localDateStr, mondayOf, weekKey } from '../utils/dates';
+import { resolveHrZones, zoneOf, ZONE_LABELS, type ResolvedZones } from '../utils/hrZones';
+import { useStore, type Activity as StravaActivity } from '../store/useStore';
 
+// ── Ranges ─────────────────────────────────────────────────────────────
 type Range = '30d' | '3m' | '6m' | '1y' | 'all';
-const RANGE_LABELS: Record<Range, string> = { '30d': '30D', '3m': '3M', '6m': '6M', '1y': '1Y', all: 'All' };
 const RANGE_KEYS: Range[] = ['30d', '3m', '6m', '1y', 'all'];
+const RANGE_LABELS: Record<Range, string> = { '30d': '30D', '3m': '3M', '6m': '6M', '1y': '1Y', all: 'All' };
 const RANGE_DAYS: Record<Range, number> = { '30d': 30, '3m': 90, '6m': 180, '1y': 365, all: Infinity };
-const RANGE_WEEKS: Record<Range, number> = { '30d': 4, '3m': 12, '6m': 26, '1y': 52, all: 104 };
 
-const { width: SCREEN_W } = Dimensions.get('window');
-// scroll padding 16*2 + widget-card body padding 14*2 + gifted-charts yAxis ~44 = ~104
-const CHART_W = SCREEN_W - 108;
+/** Bucket size for the aggregate (bars) tabs — adapts to the range so the
+ *  chart never squeezes 100+ bars: 30d → daily, 3m/6m/1y → weekly, all-time →
+ *  weekly while short, monthly once the history outgrows 26 weekly buckets. */
+type Granularity = 'day' | 'week' | 'month';
 
+// ── Tabs ───────────────────────────────────────────────────────────────
 type Tab = 'pace' | 'volume' | 'heart' | 'elevation' | 'steps' | 'time' | 'calories' | 'power' | 'cadence' | 'mix';
-const ALL_TABS: { key: Tab; label: string }[] = [
-  { key: 'steps',     label: 'Steps'     },
-  { key: 'time',      label: 'Time'      },
-  { key: 'volume',    label: 'Volume'    },
-  { key: 'pace',      label: 'Pace'      },
-  { key: 'heart',     label: 'HR Zones'  },
-  { key: 'cadence',   label: 'Cadence'   },
+interface TabDef { key: Tab; label: string }
+const ALL_TABS: TabDef[] = [
+  { key: 'steps',     label: 'Steps'        },
+  { key: 'time',      label: 'Time'         },
+  { key: 'volume',    label: 'Volume'       },
+  { key: 'pace',      label: 'Pace'         },
+  { key: 'heart',     label: 'HR Zones'     },
+  { key: 'cadence',   label: 'Cadence'      },
   { key: 'mix',       label: 'Activity Mix' },
-  { key: 'elevation', label: 'Elevation' },
-  { key: 'calories',  label: 'Calories'  },
-  { key: 'power',     label: 'Power'     },
+  { key: 'elevation', label: 'Elevation'    },
+  { key: 'calories',  label: 'Calories'     },
+  { key: 'power',     label: 'Power'        },
 ];
 
-// Each tab maps to a lucide icon that surfaces inside the widget card header.
-const TAB_ICON: Record<Tab, React.ComponentType<{ size?: number; color?: string }>> = {
+const TAB_ICON: Record<Tab, LucideIcon> = {
   steps:     Footprints,
   time:      Clock,
   volume:    TrendingUp,
   pace:      Zap,
   heart:     Heart,
-  cadence:   Activity,
+  cadence:   ActivityIcon,
   mix:       BarChart3,
   elevation: Mountain,
   calories:  Flame,
   power:     Zap,
 };
 
-// Short caption shown under each row label in the Manage Graphs sheet —
-// describes what the graph plots so the toggle is self-explanatory.
+// Short caption under each row label in the Manage Graphs sheet.
 const TAB_DESCRIPTION: Record<Tab, string> = {
-  steps:     'Weekly step counts and trend',
-  time:      'Active hours per week',
-  volume:    'Weekly distance and trend',
+  steps:     'Step counts from your activities',
+  time:      'Active hours over time',
+  volume:    'Distance totals and trend',
   pace:      'Average run pace over time',
   heart:     'Heart-rate zone distribution',
   cadence:   'Steps-per-minute trend',
   mix:       'Activity-type breakdown',
-  elevation: 'Elevation gained per week',
-  calories:  'Estimated calories burned',
-  power:     'Power output per ride',
+  elevation: 'Elevation gained over time',
+  calories:  'Energy burned over time',
+  power:     'Power output per activity',
 };
 
-// % change between the latest half of a numeric series and the earlier half.
-// Returns null when there's too little data to be meaningful.
+const DEFAULT_GRAPHS: Tab[] = ['steps', 'time', 'volume', 'pace', 'heart'];
+
+// Z1..Z5 — cool → hot, from the theme palette.
+const ZONE_COLORS = [
+  theme.colors.info,
+  theme.colors.success,
+  theme.colors.warning,
+  theme.colors.primary,
+  theme.colors.error,
+];
+
+// Sport-split palette: family accents, assigned by frequency rank.
+const MIX_PALETTE = [
+  theme.colors.families.activity.accent,
+  theme.colors.families.plan.accent,
+  theme.colors.families.progress.accent,
+  theme.colors.families.social.accent,
+  theme.colors.families.recovery.accent,
+  theme.colors.families.records.accent,
+  theme.colors.families.health.accent,
+];
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// ── Pure helpers (module level — no per-render identities) ─────────────
+
+/** % change between the later and earlier half of a series; null if sparse. */
 function computeTrend(values: number[]): number | null {
   const filtered = values.filter((v) => Number.isFinite(v));
   if (filtered.length < 4) return null;
   const mid = Math.floor(filtered.length / 2);
-  const earlier = filtered.slice(0, mid);
-  const later = filtered.slice(mid);
   const avg = (xs: number[]) => xs.reduce((s, v) => s + v, 0) / xs.length;
-  const a = avg(earlier);
-  const b = avg(later);
+  const a = avg(filtered.slice(0, mid));
+  const b = avg(filtered.slice(mid));
   if (!a) return null;
   return Math.round(((b - a) / a) * 100);
 }
 
-export default function InsightsScreen() {
-  const { activities, settings, updateSettings, hrZones } = useStore();
-  const activeKeys = settings.activeGraphs || ['steps', 'time', 'volume', 'pace', 'heart'];
-  const [showManageModal, setShowManageModal] = useState(false);
-  const [range, setRange] = useState<Range>('3m');
-  const [compareHR, setCompareHR] = useState(false);
+/** Local Date from a YYYY-MM-DD key (never via `new Date(string)` — UTC shift). */
+function dateOfDayKey(key: string): Date {
+  return new Date(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, Number(key.slice(8, 10)));
+}
 
-  // Deferred range — keeps the pills snappy while heavy memos recompute lazily
-  const deferredRange = useDeferredValue(range);
-  const rangeDays = RANGE_DAYS[deferredRange];
-  const rangeWeeks = RANGE_WEEKS[deferredRange];
+function dayLabelOf(dayKey: string): string {
+  return `${MONTHS[Number(dayKey.slice(5, 7)) - 1]} ${Number(dayKey.slice(8, 10))}`;
+}
 
-  // ── Window of activities for the selected range (per-activity charts) ──
-  const windowedActivities = useMemo(() => {
-    if (rangeDays === Infinity) return activities;
-    const cutoff = Date.now() - rangeDays * 86400000;
-    return activities.filter((a) => new Date(a.startDate).getTime() >= cutoff);
-  }, [activities, rangeDays]);
+function monthLabelOf(monthKey: string): string {
+  return `${MONTHS[Number(monthKey.slice(5, 7)) - 1]} '${monthKey.slice(2, 4)}`;
+}
 
-  // ── Single weekly bucket pass — feeds volume / time / steps / calories ──
-  // Only emits weeks that had at least one activity, so charts don't render
-  // empty columns for inactive weeks.
-  const weeklyBuckets = useMemo(() => {
+function bucketLabel(key: string, granularity: Granularity): string {
+  return granularity === 'month' ? monthLabelOf(key) : dayLabelOf(key);
+}
+
+/** Seconds → "3h 24m" / "48m". */
+function fmtDuration(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  if (h <= 0) return `${m}m`;
+  return `${h}h ${String(m).padStart(2, '0')}m`;
+}
+
+// Stable axis/pill formatters for the bar charts.
+const fmtStepsAxis = (v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : `${Math.round(v)}`);
+const fmtHoursAxis = (v: number) => `${v >= 10 ? Math.round(v) : Number(v.toFixed(1))}h`;
+const fmtKmAxis = (v: number) => `${Math.round(v)} km`;
+const fmtCalsAxis = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`);
+const fmtSpm = (v: number) => `${Math.round(v)} spm`;
+const fmtMetres = (v: number) => `${Math.round(v)} m`;
+const fmtWatts = (v: number) => `${Math.round(v)} W`;
+const fmtBpm = (v: number) => `${Math.round(v)}`;
+const fmtCount = (v: number) => `${Math.round(v)}`;
+
+// ── Aggregation ────────────────────────────────────────────────────────
+
+interface BucketRow { key: string; label: string; km: number; hours: number; steps: number; cals: number }
+interface BucketData {
+  granularity: Granularity;
+  rows: BucketRow[];
+  /** Buckets in the range that had zero activity (trimmed from the chart). */
+  hidden: number;
+  /** Any calories in range came from our MET estimate, not the recording. */
+  estimatedCals: boolean;
+}
+
+/** One pass over activities → adaptive volume/time/steps/calories buckets.
+ *  Day-keyed via activityDayKey (no per-activity ISO parsing); steps come from
+ *  stored a.steps only — no stride-length fabrication. */
+function buildBuckets(activities: StravaActivity[], range: Range): BucketData {
+  const days = RANGE_DAYS[range];
+  const todayKey = localDateStr(new Date());
+  const cutoffKey = days === Infinity ? '' : localDateStr(new Date(Date.now() - (days - 1) * 86400000));
+
+  let earliestDay = todayKey;
+  if (range === 'all') {
+    for (const a of activities) {
+      const k = activityDayKey(a);
+      if (k < earliestDay) earliestDay = k;
+    }
+  }
+
+  let granularity: Granularity;
+  if (range === '30d') {
+    granularity = 'day';
+  } else if (range === 'all') {
+    const spanWeeks = (dateOfDayKey(todayKey).getTime() - dateOfDayKey(earliestDay).getTime()) / (7 * 86400000);
+    granularity = spanWeeks > 26 ? 'month' : 'week';
+  } else {
+    granularity = 'week';
+  }
+
+  // dayKey → weekKey memo so each distinct day is parsed at most once.
+  const weekOfDay = new Map<string, string>();
+  const sums = new Map<string, { km: number; hours: number; steps: number; cals: number }>();
+  let estimatedCals = false;
+
+  for (const a of activities) {
+    const dk = activityDayKey(a);
+    if (cutoffKey && dk < cutoffKey) continue;
+    let bk: string;
+    if (granularity === 'day') {
+      bk = dk;
+    } else if (granularity === 'month') {
+      bk = dk.slice(0, 7);
+    } else {
+      let wk = weekOfDay.get(dk);
+      if (!wk) {
+        wk = weekKey(dateOfDayKey(dk));
+        weekOfDay.set(dk, wk);
+      }
+      bk = wk;
+    }
+    const s = sums.get(bk) ?? { km: 0, hours: 0, steps: 0, cals: 0 };
+    s.km += a.distance / 1000;
+    s.hours += a.movingTime / 3600;
+    if (a.steps) s.steps += a.steps;
+    if (a.calories) {
+      s.cals += a.calories;
+      if (a.caloriesEstimated) estimatedCals = true;
+    }
+    sums.set(bk, s);
+  }
+
+  // Full bucket timeline for the range — only to order rows + count hidden.
+  const keys: string[] = [];
+  if (granularity === 'day') {
+    const d = dateOfDayKey(cutoffKey);
+    for (let k = localDateStr(d); k <= todayKey; d.setDate(d.getDate() + 1), k = localDateStr(d)) keys.push(k);
+  } else if (granularity === 'week') {
+    const start = mondayOf(dateOfDayKey(cutoffKey || earliestDay));
+    const end = mondayOf(new Date()).getTime();
+    for (const d = start; d.getTime() <= end; d.setDate(d.getDate() + 7)) keys.push(localDateStr(d));
+  } else {
     const now = new Date();
-    const start = subWeeks(startOfWeek(now, { weekStartsOn: 1 }), rangeWeeks - 1);
-    const end = endOfWeek(now, { weekStartsOn: 1 });
-    const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 }).slice(-rangeWeeks);
-    const raw = weeks.map((ws) => {
-      const we = endOfWeek(ws, { weekStartsOn: 1 });
-      let km = 0, hours = 0, steps = 0, cals = 0;
-      for (const a of activities) {
-        const d = parseISO(a.startDate);
-        if (d < ws || d > we) continue;
-        km += a.distance / 1000;
-        hours += a.movingTime / 3600;
-        if (a.steps) steps += a.steps;
-        else if (a.type === 'Run') steps += a.distance / 1.0;
-        else if (a.type === 'Walk') steps += a.distance / 0.75;
-        cals += a.calories || 0;
-      }
-      return { ws, km, hours, steps: Math.round(steps), cals: Math.round(cals) };
+    let y = Number(earliestDay.slice(0, 4));
+    let m = Number(earliestDay.slice(5, 7));
+    while (y < now.getFullYear() || (y === now.getFullYear() && m <= now.getMonth() + 1)) {
+      keys.push(`${y}-${String(m).padStart(2, '0')}`);
+      m += 1;
+      if (m > 12) { m = 1; y += 1; }
+    }
+  }
+
+  const rows: BucketRow[] = [];
+  for (const key of keys) {
+    const s = sums.get(key);
+    if (!s) continue;
+    rows.push({
+      key,
+      label: bucketLabel(key, granularity),
+      km: Number(s.km.toFixed(1)),
+      hours: Number(s.hours.toFixed(1)),
+      steps: Math.round(s.steps),
+      cals: Math.round(s.cals),
     });
-    const active = raw.filter(b => b.km > 0 || b.hours > 0 || b.steps > 0 || b.cals > 0);
-    const labelStep = Math.max(1, Math.ceil(active.length / 6));
-    return active.map((b, i, arr) => {
-      const showLabel = (arr.length - 1 - i) % labelStep === 0;
-      const labelComponent = showLabel
-        ? () => (
-            <View style={{ width: 45, transform: [{ translateX: -10 }] }}>
-              <Typography style={{ color: theme.colors.textSecondary, fontSize: 9, fontWeight: '700', textAlign: 'center' }}>
-                {format(b.ws, 'MMM d')}
-              </Typography>
-            </View>
-          )
-        : undefined;
-      return { ...b, labelComponent };
+  }
+
+  return { granularity, rows, hidden: keys.length - rows.length, estimatedCals };
+}
+
+interface PacePoint { label: string; value: number; hr: number }
+interface LineSeries {
+  pace: PacePoint[];
+  cadence: LinePoint[];
+  elevation: LinePoint[];
+  power: LinePoint[];
+}
+
+/** Per-activity line series — one honest point per activity, no back-fill.
+ *  ChartLine's own maxPoints (LTTB) caps long series. */
+function buildLines(windowed: StravaActivity[]): LineSeries {
+  const sorted = [...windowed].sort((a, b) => (a.startDate < b.startDate ? -1 : 1));
+  const pace: PacePoint[] = [];
+  const cadence: LinePoint[] = [];
+  const elevation: LinePoint[] = [];
+  const power: LinePoint[] = [];
+  for (const a of sorted) {
+    const label = dayLabelOf(activityDayKey(a));
+    if (a.type === 'Run' && a.averageSpeed > 0) {
+      pace.push({ label, value: 1000 / a.averageSpeed / 60, hr: a.averageHeartRate || 0 });
+    }
+    if ((a.averageCadence || 0) > 0) cadence.push({ label, value: Math.round((a.averageCadence || 0) * 2) });
+    elevation.push({ label, value: Math.round(a.totalElevationGain || 0) });
+    if ((a.averageWatts || 0) > 0) power.push({ label, value: Math.round(a.averageWatts || 0) });
+  }
+  return { pace, cadence, elevation, power };
+}
+
+interface ZoneAgg {
+  /** 'time' = real Strava time-in-zone seconds; 'sessions' = avg-HR fallback. */
+  mode: 'time' | 'sessions';
+  values: number[]; // Z1..Z5
+  total: number;
+}
+
+/** Aggregate real cached time-in-zone across the range; fall back to counting
+ *  sessions by which zone their average HR lands in. */
+function buildZoneAgg(windowed: StravaActivity[], resolved: ResolvedZones): ZoneAgg {
+  const time = [0, 0, 0, 0, 0];
+  let timeTotal = 0;
+  for (const a of windowed) {
+    const buckets = a.zones?.find((z) => z.type === 'heartrate')?.buckets;
+    if (!buckets?.length) continue;
+    buckets.slice(0, 5).forEach((b, i) => {
+      const t = Number.isFinite(b.time) ? b.time : 0;
+      time[i] += t;
+      timeTotal += t;
     });
-  }, [activities, rangeWeeks]);
+  }
+  if (timeTotal > 0) return { mode: 'time', values: time, total: timeTotal };
 
-  // Derived chart data (cheap — just maps existing buckets)
-  const volumeData = useMemo(
-    () => weeklyBuckets.map(b => ({
-      value: Number(b.km.toFixed(1)),
-      labelComponent: b.labelComponent,
-      frontColor: b.km > 0 ? theme.colors.primary : theme.colors.border,
-    })),
-    [weeklyBuckets]
-  );
-  const timeData = useMemo(
-    () => weeklyBuckets.map(b => ({
-      value: Number(b.hours.toFixed(1)),
-      labelComponent: b.labelComponent,
-      frontColor: b.hours > 0 ? '#8B5CF6' : theme.colors.border,
-    })),
-    [weeklyBuckets]
-  );
-  const stepsData = useMemo(
-    () => weeklyBuckets.map(b => ({
-      value: b.steps,
-      labelComponent: b.labelComponent,
-      frontColor: b.steps > 0 ? theme.colors.success : theme.colors.border,
-    })),
-    [weeklyBuckets]
-  );
-  const caloriesData = useMemo(
-    () => weeklyBuckets.map(b => ({
-      value: b.cals,
-      labelComponent: b.labelComponent,
-      frontColor: b.cals > 0 ? '#EF4444' : theme.colors.border,
-    })),
-    [weeklyBuckets]
-  );
+  const counts = [0, 0, 0, 0, 0];
+  let n = 0;
+  for (const a of windowed) {
+    const hr = a.averageHeartRate || 0;
+    if (hr <= 0) continue;
+    counts[zoneOf(hr, resolved) - 1] += 1;
+    n += 1;
+  }
+  return { mode: 'sessions', values: counts, total: n };
+}
 
-  const toggleGraph = (key: Tab) => {
-    let newKeys = [...activeKeys];
-    if (newKeys.includes(key)) newKeys = newKeys.filter(k => k !== key);
-    else newKeys.push(key);
-    updateSettings({ activeGraphs: newKeys });
-  };
+interface MixEntry { type: string; count: number; pct: number; color: string }
 
-  const fmtPace = (v: number) => {
-    const m = Math.floor(v); const s = Math.round((v - m) * 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
-
-  // ── Pace ──────────────────────────────────────────────────────────
-  const paceRuns = useMemo(
-    () =>
-      [...windowedActivities]
-        .filter((a) => a.type === 'Run' && a.averageSpeed > 0)
-        .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()),
-    [windowedActivities],
-  );
-
-  const paceData = useMemo(() => {
-    return paceRuns.map((act, i, arr) => {
-      const minPerKm = 1000 / act.averageSpeed / 60;
-      const isLast = i === arr.length - 1;
-      const step = Math.max(1, Math.ceil(arr.length / 5));
-      return {
-        value: Number(minPerKm.toFixed(2)),
-        labelComponent:
-          i % step === 0 || isLast
-            ? () => (
-                <View style={{ width: 40, transform: [{ translateX: -10 }] }}>
-                  <Typography style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700', textAlign: 'center' }}>
-                    {format(parseISO(act.startDate), 'MMM d')}
-                  </Typography>
-                </View>
-              )
-            : undefined,
-      };
-    });
-  }, [paceRuns]);
-
-  const paceHRData = useMemo(() => {
-    if (!paceRuns.length) return [] as { value: number }[];
-    const hrVals = paceRuns.map((a) => a.averageHeartRate || 0);
-    if (!hrVals.some((v) => v > 0)) return [];
-    return hrVals.map((v) => ({ value: v }));
-  }, [paceRuns]);
-
-  const bestPace = paceData.length ? Math.min(...paceData.map((d) => d.value)) : 0;
-  const avgPace = paceData.length ? paceData.reduce((s, d) => s + d.value, 0) / paceData.length : 0;
-
-  // How many calendar weeks in the selected range had no logged activity at
-  // all — surfaced as a small caption under the bar charts so the user knows
-  // we trimmed them (instead of silently dropping data).
-  const inactiveWeeks = Math.max(0, rangeWeeks - weeklyBuckets.length);
-
-  // Volume / time / steps / calories aggregates
-  const maxWeekVol = volumeData.length ? Math.max(...volumeData.map(d => d.value), 1) : 1;
-  const totalVol   = volumeData.reduce((s, d) => s + d.value, 0).toFixed(0);
-  const BAR_SPACING = Math.max(CHART_W / Math.max(volumeData.length * 2.2, 1), 10);
-  const BAR_W       = Math.max(BAR_SPACING * 0.8, 12);
-  const maxSteps = stepsData.length ? Math.max(...stepsData.map(d => d.value), 1) : 1;
-  const avgSteps = stepsData.length ? Math.round(stepsData.reduce((s,d) => s + d.value, 0) / stepsData.length) : 0;
-  const avgTime = timeData.length ? (timeData.reduce((s,d) => s + d.value, 0) / timeData.length).toFixed(1) : '0';
-  const avgCalories = caloriesData.length ? Math.round(caloriesData.reduce((s,d) => s + d.value, 0) / caloriesData.length) : 0;
-
-  // ── HR Zones ──────────────────────────────────────────────────────
-  const { pieData, zoneStats } = useMemo(() => {
-    const boundaries: number[] = hrZones.length >= 5
-      ? hrZones.map(z => z.min)
-      : [0, 115, 135, 155, 170];
-
-    const counts = [0, 0, 0, 0, 0];
-    activities.forEach(a => {
-      const hr = a.averageHeartRate || 0;
-      if (hr <= 0) return;
-      let z = 0;
-      for (let i = 0; i < boundaries.length; i++) {
-        if (hr >= boundaries[i]) z = i;
-      }
-      counts[z]++;
-    });
-    const total = counts.reduce((a, b) => a + b, 0);
-    if (!total) return { pieData: [] as any[], zoneStats: [] as any[] };
-    const ZONE_DEFS = [
-      { label: 'Z1 Recovery',  color: '#60A5FA' },
-      { label: 'Z2 Aerobic',   color: '#34D399' },
-      { label: 'Z3 Tempo',     color: '#FBBF24' },
-      { label: 'Z4 Threshold', color: '#F97316' },
-      { label: 'Z5 Max',       color: '#EF4444' },
-    ];
-    const zones = ZONE_DEFS.map((d, i) => ({ ...d, value: counts[i] })).filter(z => z.value > 0);
-    return {
-      pieData:   zones.map(z => ({ value: z.value, color: z.color, text: `${Math.round(z.value / total * 100)}%` })),
-      zoneStats: zones.map(z => ({ ...z, pct: Math.round(z.value / total * 100) })),
-    };
-  }, [activities, hrZones]);
-
-  // ── Elevation ─────────────────────────────────────────────────────
-  const elevData = useMemo(() => {
-    if (!windowedActivities.length) return [];
-    return [...windowedActivities]
-      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
-      .map(a => ({ value: a.totalElevationGain || 0 }));
-  }, [windowedActivities]);
-
-  const totalElev = Math.round(windowedActivities.reduce((s, a) => s + a.totalElevationGain, 0));
-  const maxElev   = windowedActivities.length ? Math.max(...windowedActivities.map(a => a.totalElevationGain), 1) : 1;
-
-  // ── Power ─────────────────────────────────────────────────────────
-  const powerData = useMemo(() => {
-    const items = [...windowedActivities]
-      .filter((a) => a.averageWatts && a.averageWatts > 0)
-      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
-    const step = Math.max(1, Math.ceil(items.length / 5));
-    return items.map((act, i, arr) => {
-      const isLast = i === arr.length - 1;
-      return {
-        value: Math.round(act.averageWatts || 0),
-        labelComponent:
-          i % step === 0 || isLast
-            ? () => (
-                <View style={{ width: 40, transform: [{ translateX: -10 }] }}>
-                  <Typography style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700', textAlign: 'center' }}>
-                    {format(parseISO(act.startDate), 'MMM d')}
-                  </Typography>
-                </View>
-              )
-            : undefined,
-      };
-    });
-  }, [windowedActivities]);
-  const avgPower = powerData.length ? Math.round(powerData.reduce((s,d) => s + d.value, 0) / powerData.length) : 0;
-
-  // ── Cadence ───────────────────────────────────────────────────────
-  const cadenceData = useMemo(() => {
-    const items = [...windowedActivities]
-      .filter((a) => (a.averageCadence || 0) > 0)
-      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
-    const step = Math.max(1, Math.ceil(items.length / 5));
-    return items.map((act, i, arr) => ({
-      value: Math.round((act.averageCadence || 0) * 2),
-      labelComponent:
-        i % step === 0 || i === arr.length - 1
-          ? () => (
-              <View style={{ width: 40, transform: [{ translateX: -10 }] }}>
-                <Typography style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: '700', textAlign: 'center' }}>
-                  {format(parseISO(act.startDate), 'MMM d')}
-                </Typography>
-              </View>
-            )
-          : undefined,
+function buildMix(windowed: StravaActivity[]): MixEntry[] {
+  const counts = new Map<string, number>();
+  for (const a of windowed) counts.set(a.type, (counts.get(a.type) || 0) + 1);
+  const total = windowed.length || 1;
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([type, count], i) => ({
+      type,
+      count,
+      pct: Math.round((count / total) * 100),
+      color: MIX_PALETTE[i % MIX_PALETTE.length],
     }));
-  }, [windowedActivities]);
-  const avgCadence = cadenceData.length ? Math.round(cadenceData.reduce((s, d) => s + d.value, 0) / cadenceData.length) : 0;
-  const maxCadence = cadenceData.length ? Math.max(...cadenceData.map(d => d.value), 1) : 200;
+}
 
-  // ── Activity Mix ──────────────────────────────────────────────────
-  const { mixPieData, mixStats } = useMemo(() => {
-    const counts: Record<string, number> = {};
-    activities.forEach(a => { counts[a.type] = (counts[a.type] || 0) + 1; });
-    const palette: Record<string, string> = { Run: '#f97316', Walk: '#10b981', Ride: '#6366f1', Workout: '#ec4899' };
-    const total = Object.values(counts).reduce((s, v) => s + v, 0) || 1;
-    const entries = Object.entries(counts).map(([type, count]) => ({
-      type, count, color: palette[type] || '#8b5cf6',
-      pct: Math.round(count / total * 100),
-    }));
-    return {
-      mixPieData: entries.map(e => ({ value: e.count, color: e.color, text: `${e.pct}%` })),
-      mixStats: entries,
-    };
-  }, [activities]);
+// ── Per-tab hero metric + honest caption + trend ───────────────────────
 
-  const paceYLabel = (v: string) => {
-    const n = parseFloat(v);
-    if (isNaN(n)) return v;
-    const m = Math.floor(n); const s = Math.round((n - m) * 60);
-    return `${m}:${s.toString().padStart(2,'0')}`;
+interface TabMeta {
+  title: string;
+  caption: string;
+  stat: string;
+  statValue?: number;
+  statSuffix?: string;
+  statDecimals?: number;
+  statUnit: string;
+  trend: number | null;
+  insight?: string;
+}
+
+function buildMeta(buckets: BucketData, lines: LineSeries, zones: ZoneAgg, mix: MixEntry[]): Record<Tab, TabMeta> {
+  const per = buckets.granularity === 'day' ? 'day' : buckets.granularity === 'week' ? 'week' : 'month';
+  const rows = buckets.rows;
+  const avg = (vals: number[]) => (vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0);
+
+  const stepVals = rows.map((r) => r.steps);
+  const hourVals = rows.map((r) => r.hours);
+  const kmVals = rows.map((r) => r.km);
+  const calVals = rows.map((r) => r.cals);
+  const avgSteps = Math.round(avg(stepVals));
+  const avgHours = avg(hourVals);
+  const peakKm = kmVals.length ? Math.max(...kmVals) : 0;
+  const totalKm = kmVals.reduce((s, v) => s + v, 0);
+  const avgCals = Math.round(avg(calVals));
+
+  const paceVals = lines.pace.map((p) => p.value);
+  const bestPace = paceVals.length ? Math.min(...paceVals) : 0;
+  const avgPace = avg(paceVals);
+  const cadVals = lines.cadence.map((p) => p.value);
+  const avgCad = Math.round(avg(cadVals));
+  const elevVals = lines.elevation.map((p) => p.value);
+  const totalElev = Math.round(elevVals.reduce((s, v) => s + v, 0));
+  const maxElev = elevVals.length ? Math.max(...elevVals) : 0;
+  const powVals = lines.power.map((p) => p.value);
+  const avgPow = Math.round(avg(powVals));
+  const mixTotal = mix.reduce((s, e) => s + e.count, 0);
+
+  const paceTrendRaw = computeTrend(paceVals);
+  const isZoneTime = zones.mode === 'time';
+  const easyPct = zones.total > 0 ? Math.round(((zones.values[0] + zones.values[1]) / zones.total) * 100) : 0;
+
+  const stepsTarget = per === 'day' ? ' — 10,000/day is the classic target' : per === 'week' ? ' — 10,000/day ≈ 70,000/week' : '';
+  const whoLine = per === 'week' ? ' — WHO recommends 2.5 hrs of moderate activity weekly' : '';
+
+  return {
+    steps: {
+      title: 'Steps',
+      caption: 'Steps recorded on your activities',
+      stat: avgSteps > 0 ? `${avgSteps}` : '—',
+      statValue: avgSteps >= 1000 ? Math.round(avgSteps / 1000) : avgSteps || undefined,
+      statSuffix: avgSteps >= 1000 ? 'k' : undefined,
+      statUnit: `avg / ${per}`,
+      trend: computeTrend(stepVals),
+      insight: avgSteps > 0 ? `${avgSteps.toLocaleString()} avg steps/${per}${stepsTarget}` : undefined,
+    },
+    time: {
+      title: 'Active Time',
+      caption: 'Hours of movement',
+      stat: avgHours > 0 ? avgHours.toFixed(1) : '—',
+      statValue: avgHours > 0 ? Number(avgHours.toFixed(1)) : undefined,
+      statDecimals: 1,
+      statUnit: `hrs / ${per}`,
+      trend: computeTrend(hourVals),
+      insight: avgHours > 0 ? `${avgHours.toFixed(1)} hrs/${per} of movement${whoLine}` : undefined,
+    },
+    volume: {
+      title: 'Volume',
+      caption: 'Distance across all activities',
+      stat: peakKm > 0 ? peakKm.toFixed(0) : '—',
+      statValue: peakKm > 0 ? Math.round(peakKm) : undefined,
+      statUnit: `km peak ${per}`,
+      trend: computeTrend(kmVals),
+      insight: totalKm > 0 ? `${totalKm.toFixed(0)} km total · increase no more than 10%/week to avoid injury` : undefined,
+    },
+    pace: {
+      title: 'Running Pace',
+      caption: `Min/km · ${paceVals.length} run${paceVals.length === 1 ? '' : 's'} in range`,
+      stat: bestPace ? formatPace(bestPace) : '—',
+      statUnit: 'min/km best',
+      // Pace is inverted — lower is better, so negate for the trend chip.
+      trend: paceTrendRaw === null ? null : -paceTrendRaw,
+      insight: paceVals.length >= 2
+        ? `Avg ${formatPace(avgPace)}/km · best ${formatPace(bestPace)}/km · ${paceVals.length} runs`
+        : undefined,
+    },
+    heart: {
+      title: 'HR Zones',
+      caption: isZoneTime ? 'Real time-in-zone across the range' : 'Sessions by average HR',
+      stat: zones.total > 0 ? (isZoneTime ? fmtDuration(zones.total) : `${zones.total}`) : '—',
+      statValue: !isZoneTime && zones.total > 0 ? zones.total : undefined,
+      statUnit: isZoneTime ? 'in HR zones' : 'sessions with HR',
+      trend: null,
+      insight: zones.total > 0
+        ? `${easyPct}% easy effort — elite endurance training targets ~80% in Z1–Z2`
+        : undefined,
+    },
+    cadence: {
+      title: 'Running Cadence',
+      caption: 'Steps per minute',
+      stat: avgCad ? `${avgCad}` : '—',
+      statValue: avgCad || undefined,
+      statUnit: 'spm average',
+      trend: computeTrend(cadVals),
+      insight: cadVals.length >= 2 && avgCad > 0
+        ? `Target 170–180 spm. Your avg ${avgCad} spm — ${avgCad < 165 ? 'try shortening your stride' : avgCad >= 170 ? 'great cadence!' : 'close to optimal'}`
+        : undefined,
+    },
+    mix: {
+      title: 'Activity Mix',
+      caption: 'Breakdown by sport in range',
+      stat: mixTotal ? `${mixTotal}` : '—',
+      statValue: mixTotal || undefined,
+      statUnit: 'activities',
+      trend: null,
+    },
+    elevation: {
+      title: 'Elevation Gain',
+      caption: 'Metres climbed per activity',
+      stat: totalElev > 0 ? totalElev.toLocaleString() : '—',
+      statUnit: 'm total',
+      trend: computeTrend(elevVals),
+      insight: elevVals.length >= 2 && totalElev > 0
+        ? `${totalElev.toLocaleString()} m total climbed · peak activity ${Math.round(maxElev)} m`
+        : undefined,
+    },
+    calories: {
+      title: 'Calories Burned',
+      caption: buckets.estimatedCals ? '~ includes estimates' : 'kcal from recorded activities',
+      stat: avgCals ? `${avgCals}` : '—',
+      statValue: avgCals || undefined,
+      statUnit: `kcal / ${per} avg`,
+      trend: computeTrend(calVals),
+      insight: avgCals > 0
+        ? `${avgCals.toLocaleString()} kcal/${per} avg${per === 'week' ? ` — roughly ${Math.round(avgCals / 7)} kcal/day from exercise` : ''}`
+        : undefined,
+    },
+    power: {
+      title: 'Average Power',
+      caption: 'Watts per activity',
+      stat: avgPow ? `${avgPow}` : '—',
+      statValue: avgPow || undefined,
+      statUnit: 'W average',
+      trend: computeTrend(powVals),
+      insight: powVals.length >= 2 && avgPow > 0 ? `${avgPow} W avg power across ${powVals.length} sessions` : undefined,
+    },
   };
+}
 
-  // ── Premium empty placeholder for charts with no data — dashed border at
-  // the chart height so the layout stays the same regardless of data state.
-  const EmptyRow = ({
-    icon,
-    msg,
-    color,
-    headline,
-    cta,
-  }: {
-    icon: React.ReactNode;
-    msg: string;
-    color: string;
-    headline?: string;
-    cta?: { label: string; onPress: () => void };
-  }) => (
-    <Animated.View
-      entering={FadeIn.duration(theme.motion.base)}
-      style={[st.emptyBox, { borderColor: color + '55' }]}
-    >
-      <View style={[st.emptyIconWrap, { backgroundColor: color + '18', borderColor: color + '55' }]}>
-        {icon}
-      </View>
-      <Typography style={[st.emptyHeadline, { color: theme.colors.text }]}>
-        {headline ?? 'No data yet'}
-      </Typography>
-      <Typography style={[st.emptyCaption, { color: theme.colors.textSecondary }]}>{msg}</Typography>
-      {cta && (
-        <PressableScale
-          scaleTo={0.94}
-          haptic="light"
-          onPress={cta.onPress}
-          style={[st.emptyCta, { backgroundColor: color + '18', borderColor: color + '88' }]}
-          accessibilityRole="button"
-          accessibilityLabel={cta.label}
-        >
-          <Typography style={[st.emptyCtaText, { color }]}>{cta.label}</Typography>
-        </PressableScale>
-      )}
-    </Animated.View>
-  );
+interface InsightsData {
+  buckets: BucketData;
+  lines: LineSeries;
+  zones: ZoneAgg;
+  resolved: ResolvedZones;
+  mix: MixEntry[];
+  meta: Record<Tab, TabMeta>;
+}
 
-  const Insight = ({ text, color }: { text: string; color: string }) => (
-    <View style={[st.insightBar, { borderLeftColor: color, backgroundColor: color + '14' }]}>
-      <Icon icon={Zap} variant="plain" size="xs" color={color} />
-      <Typography style={[st.insightText, { color }]}>{text}</Typography>
-    </View>
-  );
+// ── Module-level subcomponents (stable identities across renders) ──────
 
-  // Big stat row above each chart — primary metric + signed trend chip.
-  // When `statValue` (a number) is supplied the hero figure counts up via
-  // AnimatedNumber so it tweens on range change; the '—' / formatted-pace
-  // (m:ss) cases keep the plain Typography render since they aren't a single
-  // number to interpolate.
-  const BigStat = ({
-    stat,
-    statValue,
-    statSuffix,
-    statDecimals,
-    statUnit,
-    trend,
-  }: {
-    stat: string | number;
-    statValue?: number;
-    statSuffix?: string;
-    statDecimals?: number;
-    statUnit: string;
-    trend: number | null;
-  }) => (
+function BigStat({ meta }: { meta: TabMeta }) {
+  const up = (meta.trend ?? 0) >= 0;
+  const trendColor = up ? theme.colors.success : theme.colors.error;
+  return (
     <View style={st.bigStatRow}>
       <View>
-        {statValue !== undefined ? (
+        {meta.statValue !== undefined ? (
           <AnimatedNumber
-            value={statValue}
-            decimals={statDecimals ?? 0}
-            suffix={statSuffix ?? ''}
+            value={meta.statValue}
+            decimals={meta.statDecimals ?? 0}
+            suffix={meta.statSuffix ?? ''}
             duration={theme.motion.slow}
             style={st.bigStat}
           />
         ) : (
-          <Typography style={st.bigStat}>{stat}</Typography>
+          <Typography style={st.bigStat}>{meta.stat}</Typography>
         )}
-        <Typography style={st.bigStatUnit}>{statUnit}</Typography>
+        <Typography style={st.bigStatUnit}>{meta.statUnit}</Typography>
       </View>
-      {trend !== null && (
-        <View
-          style={[
-            st.trendChip,
-            {
-              backgroundColor: trend >= 0 ? '#22c55e22' : '#ef444422',
-              borderColor: trend >= 0 ? '#22c55e' : '#ef4444',
-            },
-          ]}
-        >
-          {trend >= 0
-            ? <Icon icon={TrendingUp} variant="plain" size="xs" color="#22c55e" />
-            : <Icon icon={TrendingDown} variant="plain" size="xs" color="#ef4444" />}
-          <Typography style={{ fontSize: 11, fontWeight: '800', color: trend >= 0 ? '#22c55e' : '#ef4444' }}>
-            {Math.abs(trend)}%
-          </Typography>
+      {meta.trend !== null && (
+        <View style={[st.trendChip, { backgroundColor: withAlpha(trendColor, 'tint'), borderColor: trendColor }]}>
+          <Icon icon={up ? TrendingUp : TrendingDown} variant="plain" size="xs" color={trendColor} />
+          <Typography style={[st.trendText, { color: trendColor }]}>{Math.abs(meta.trend)}%</Typography>
         </View>
       )}
     </View>
   );
+}
 
-  const visibleTabs = useMemo(
-    () => ALL_TABS.filter(t => activeKeys.includes(t.key)),
-    [activeKeys]
+function Insight({ text, color }: { text: string; color: string }) {
+  return (
+    <View style={[st.insightBar, { borderLeftColor: color, backgroundColor: withAlpha(color, 'soft') }]}>
+      <Icon icon={Zap} variant="plain" size="xs" color={color} />
+      <Typography style={[st.insightText, { color }]}>{text}</Typography>
+    </View>
+  );
+}
+
+function EmptyRow({
+  icon,
+  headline,
+  msg,
+  color,
+  cta,
+}: {
+  icon: LucideIcon;
+  headline: string;
+  msg: string;
+  color: string;
+  cta?: { label: string; onPress: () => void };
+}) {
+  return (
+    <Animated.View
+      entering={FadeIn.duration(theme.motion.base)}
+      style={[st.emptyBox, { borderColor: withAlpha(color, 'strong') }]}
+    >
+      <View style={[st.emptyIconWrap, { backgroundColor: withAlpha(color, 'tint'), borderColor: withAlpha(color, 'strong') }]}>
+        <Icon icon={icon} variant="plain" size="md" color={color} />
+      </View>
+      <Typography style={st.emptyHeadline}>{headline}</Typography>
+      <Typography style={st.emptyCaption}>{msg}</Typography>
+      {cta && <Button title={cta.label} variant="secondary" size="sm" onPress={cta.onPress} style={st.emptyCtaBtn} />}
+    </Animated.View>
+  );
+}
+
+/** Honest note when zero-activity buckets were trimmed from a bar chart. */
+function InactiveCaption({ count, granularity }: { count: number; granularity: Granularity }) {
+  if (count <= 0) return null;
+  const unit = granularity === 'day' ? 'day' : granularity === 'week' ? 'week' : 'month';
+  return (
+    <Typography style={st.inactiveCaption}>
+      {count} {unit}{count === 1 ? '' : 's'} hidden — no activity recorded
+    </Typography>
+  );
+}
+
+function BarsBlock({
+  buckets,
+  field,
+  family,
+  accent,
+  format,
+  emptyIcon,
+  emptyHeadline,
+  emptyMsg,
+}: {
+  buckets: BucketData;
+  field: 'km' | 'hours' | 'steps' | 'cals';
+  family: WidgetFamily;
+  accent: string;
+  format: (v: number) => string;
+  emptyIcon: LucideIcon;
+  emptyHeadline: string;
+  emptyMsg: string;
+}) {
+  const points = useMemo(
+    () => buckets.rows.map((r) => ({ label: r.label, value: r[field] })),
+    [buckets, field],
+  );
+  if (!points.some((p) => p.value > 0)) {
+    return <EmptyRow icon={emptyIcon} headline={emptyHeadline} msg={emptyMsg} color={accent} />;
+  }
+  return (
+    <View style={st.chartWrap}>
+      <ChartBars data={points} height={190} family={family} formatValue={format} />
+      <InactiveCaption count={buckets.hidden} granularity={buckets.granularity} />
+    </View>
+  );
+}
+
+function LineBlock({
+  points,
+  family,
+  accent,
+  format,
+  emptyIcon,
+  emptyHeadline,
+  emptyMsg,
+}: {
+  points: LinePoint[];
+  family: WidgetFamily;
+  accent: string;
+  format: (v: number) => string;
+  emptyIcon: LucideIcon;
+  emptyHeadline: string;
+  emptyMsg: string;
+}) {
+  if (points.length < 2) {
+    return <EmptyRow icon={emptyIcon} headline={emptyHeadline} msg={emptyMsg} color={accent} />;
+  }
+  return (
+    <View style={st.chartWrap}>
+      <ChartLine data={points} height={190} family={family} formatValue={format} fromZero={false} />
+    </View>
+  );
+}
+
+/** Pace card body. compareHR is local state here so toggling it re-renders
+ *  ONLY this card, not the whole list. HR renders as its own small chart —
+ *  bpm and min/km share no scale, so overlaying them on one axis would
+ *  flatten the pace line into noise. */
+function PaceBody({ pace, family, insight }: { pace: PacePoint[]; family: WidgetFamily; insight?: string }) {
+  const [compareHR, setCompareHR] = useState(false);
+  const accent = familyStyle(family).accent;
+  const health = familyStyle('health').accent;
+  const pacePoints = useMemo(() => pace.map((p) => ({ label: p.label, value: p.value })), [pace]);
+  const hrPoints = useMemo(
+    () => pace.filter((p) => p.hr > 0).map((p) => ({ label: p.label, value: p.hr })),
+    [pace],
   );
 
-  // Small caption shown under bar charts when calendar weeks with no activity
-  // were filtered out of `weeklyBuckets`. Honest > silently trimming.
-  const InactiveCaption = inactiveWeeks > 0
-    ? () => (
-        <Typography style={st.inactiveCaption}>
-          {inactiveWeeks} {inactiveWeeks === 1 ? 'week' : 'weeks'} hidden — no activity recorded
-        </Typography>
-      )
-    : () => null;
-
-  const renderCard = useCallback(({ item: t, index }: { item: { key: Tab; label: string }; index: number }) => {
-    const family = INSIGHT_FAMILY[t.key] || 'activity';
-    const fam = familyStyle(family);
-    const accent = fam.accent;
-    const TabIcon = TAB_ICON[t.key];
-
-    // Per-tab "primary metric" + trend series. Pie tabs get a null trend.
-    const primary = (() => {
-      switch (t.key) {
-        case 'steps':
-          return {
-            title: 'Weekly Steps',
-            caption: 'Estimated from run & walk distance',
-            stat: avgSteps > 0 ? `${Math.round(avgSteps / 1000)}k` : '—',
-            statValue: avgSteps > 0 ? Math.round(avgSteps / 1000) : undefined,
-            statSuffix: 'k',
-            statUnit: 'avg / week',
-            trend: computeTrend(stepsData.map(d => d.value)),
-          };
-        case 'time':
-          return {
-            title: 'Active Time',
-            caption: 'Hours of movement per week',
-            stat: Number(avgTime) > 0 ? avgTime : '—',
-            statValue: Number(avgTime) > 0 ? Number(avgTime) : undefined,
-            statDecimals: 1,
-            statUnit: 'hrs / week',
-            trend: computeTrend(timeData.map(d => d.value)),
-          };
-        case 'volume':
-          return {
-            title: 'Weekly Volume',
-            caption: 'Kilometres across all activities',
-            stat: maxWeekVol > 0 ? maxWeekVol.toFixed(0) : '—',
-            statValue: maxWeekVol > 0 ? maxWeekVol : undefined,
-            statUnit: 'km peak week',
-            trend: computeTrend(volumeData.map(d => d.value)),
-          };
-        case 'pace':
-          return {
-            title: 'Running Pace',
-            caption: `Min/km trend · ${paceData.length} runs in window`,
-            stat: bestPace ? fmtPace(bestPace) : '—',
-            statUnit: 'min/km best',
-            // Pace is inverted — lower is better. Negate so the chip's colour
-            // reflects "improvement" instead of raw delta.
-            trend: paceData.length ? (() => {
-              const t = computeTrend(paceData.map(d => d.value));
-              return t === null ? null : -t;
-            })() : null,
-          };
-        case 'heart':
-          return {
-            title: 'HR Zone Distribution',
-            caption: 'Where you spend your effort',
-            stat: zoneStats.length ? `${zoneStats.reduce((s, z) => s + z.value, 0)}` : '—',
-            statValue: zoneStats.length ? zoneStats.reduce((s, z) => s + z.value, 0) : undefined,
-            statUnit: 'sessions',
-            trend: null,
-          };
-        case 'cadence':
-          return {
-            title: 'Running Cadence',
-            caption: 'Steps per minute',
-            stat: avgCadence || '—',
-            statValue: avgCadence || undefined,
-            statUnit: 'spm average',
-            trend: computeTrend(cadenceData.map(d => d.value)),
-          };
-        case 'mix':
-          return {
-            title: 'Activity Mix',
-            caption: 'All-time breakdown by sport',
-            stat: mixStats.length ? mixStats.reduce((s, e) => s + e.count, 0) : '—',
-            statValue: mixStats.length ? mixStats.reduce((s, e) => s + e.count, 0) : undefined,
-            statUnit: 'activities',
-            trend: null,
-          };
-        case 'elevation':
-          return {
-            title: 'Elevation Gain',
-            caption: 'Metres climbed per activity',
-            stat: totalElev > 0 ? totalElev.toLocaleString() : '—',
-            statUnit: 'm total',
-            trend: computeTrend(elevData.map(d => d.value)),
-          };
-        case 'calories':
-          return {
-            title: 'Calories Burned',
-            caption: 'Weekly kcal from Strava',
-            stat: avgCalories || '—',
-            statValue: avgCalories || undefined,
-            statUnit: 'kcal / wk avg',
-            trend: computeTrend(caloriesData.map(d => d.value)),
-          };
-        case 'power':
-          return {
-            title: 'Average Power',
-            caption: 'Watts from power meter',
-            stat: avgPower || '—',
-            statValue: avgPower || undefined,
-            statUnit: 'W average',
-            trend: computeTrend(powerData.map(d => d.value)),
-          };
-      }
-    })();
-
-    // While the deferred range hasn't caught up to the active range, the heavy
-    // memos are still recomputing in the background. Surface a skeleton in the
-    // chart slot so the card doesn't flicker the prior range's data.
-    const rangePending = range !== deferredRange;
-
-    return (
-      <Animated.View entering={FadeInDown.delay(Math.min(index * 40, 280)).springify()}>
-        <WidgetCard
-          family={family}
-          title={primary.title}
-          caption={primary.caption}
-          icon={TabIcon as any}
-          style={st.widgetCard}
-        >
-          <BigStat
-            stat={primary.stat}
-            statValue={(primary as any).statValue}
-            statSuffix={(primary as any).statSuffix}
-            statDecimals={(primary as any).statDecimals}
-            statUnit={primary.statUnit}
-            trend={primary.trend}
-          />
-
-          {rangePending && <SkeletonChart height={180} />}
-
-          {!rangePending && t.key === 'steps' && (
-            <>
-              {stepsData.some(d => d.value > 0) ? (
-                <View style={{ overflow: 'hidden', marginTop: 4 }}>
-                  <BarChart data={stepsData} height={180} width={CHART_W} barWidth={BAR_W}
-                    maxValue={Math.ceil(maxSteps * 1.25)}
-                    initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                    yAxisLabelTexts={Array.from({length:5},(_,i)=>Math.round(maxSteps*1.25*i/4/1000)+'k')}
-                    {...barProps(family)}
-                    pointerConfig={pointerConfig(' steps', family)}
-                    {...chartBase({ family })} />
-                </View>
-              ) : (
-                <EmptyRow icon={<Icon icon={Footprints} variant="plain" size="md" color={accent} />} msg="No steps in this range" color={accent} headline="No steps tracked" />
-              )}
-              {avgSteps > 0 && <Insight color={accent} text={`${Math.round(avgSteps).toLocaleString()} avg steps/week — 10,000/day target = 70,000/week`} />}
-            </>
-          )}
-
-          {!rangePending && t.key === 'time' && (
-            <>
-              {timeData.some(d => d.value > 0) ? (
-                <View style={{ overflow: 'hidden', marginTop: 4 }}>
-                  <BarChart data={timeData} height={180} width={CHART_W} barWidth={BAR_W}
-                    maxValue={Math.ceil(Math.max(...timeData.map(d=>d.value),1) * 1.3)}
-                    initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                    {...barProps(family)}
-                    pointerConfig={pointerConfig(' hrs', family)}
-                    {...chartBase({ family })} />
-                  <InactiveCaption />
-                </View>
-              ) : (
-                <EmptyRow icon={<Icon icon={Clock} variant="plain" size="md" color={accent} />} msg="No time logged in this range" color={accent} headline="No active time" />
-              )}
-              {Number(avgTime) > 0 && <Insight color={accent} text={`${avgTime} hrs/wk avg — WHO recommends 2.5 hrs moderate activity weekly`} />}
-            </>
-          )}
-
-          {!rangePending && t.key === 'volume' && (
-            <>
-              {volumeData.some(d=>d.value>0) ? (
-                <View style={{ overflow: 'hidden', marginTop: 4 }}>
-                  <BarChart data={volumeData} height={180} width={CHART_W} barWidth={BAR_W}
-                    maxValue={Math.ceil(maxWeekVol * 1.35)}
-                    initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                    {...barProps(family)}
-                    pointerConfig={pointerConfig(' km', family)}
-                    {...chartBase({ family })} />
-                  <InactiveCaption />
-                </View>
-              ) : (
-                <EmptyRow icon={<Icon icon={TrendingUp} variant="plain" size="md" color={accent} />} msg="No volume in this range" color={accent} headline="No kilometres" />
-              )}
-              {Number(totalVol) > 0 && <Insight color={accent} text={`${totalVol} km total · increase no more than 10%/week to avoid injury`} />}
-            </>
-          )}
-
-          {!rangePending && t.key === 'pace' && (
-            <>
-              {paceHRData.length > 0 && (
-                <PressableScale
-                  scaleTo={0.94}
-                  haptic="selection"
-                  onPress={() => setCompareHR(v => !v)}
-                  style={[st.compareChip, compareHR && { backgroundColor: '#EF444422', borderColor: '#EF4444' }]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Compare heart rate"
-                  accessibilityState={{ selected: compareHR }}
-                >
-                  <Icon icon={Heart} variant="plain" size="xs" color={compareHR ? '#EF4444' : theme.colors.textSecondary} />
-                  <Typography style={{ fontSize: 11, fontWeight: '700', color: compareHR ? '#EF4444' : theme.colors.textSecondary }}>
-                    {compareHR ? 'Comparing HR' : 'Compare HR'}
-                  </Typography>
-                </PressableScale>
-              )}
-              {paceData.length > 1 ? (
-                <View style={{ overflow: 'hidden', marginTop: 4 }}>
-                  <LineChart {...lineProps(family)} data={paceData}
-                    {...(compareHR && paceHRData.length === paceData.length ? { data2: paceHRData, color2: '#EF4444', secondaryYAxis: { yAxisColor: 'transparent', yAxisTextStyle: { color: '#EF4444', fontSize: 10, fontWeight: '700' } } } : {})}
-                    height={180} width={CHART_W}
-                    maxValue={Math.ceil(Math.max(...paceData.map(d=>d.value)) * 1.15)}
-                    initialSpacing={12}
-                    spacing={Math.max((CHART_W-12)/Math.max(paceData.length-1,1),18)}
-                    yAxisLabelTexts={Array.from({length:5},(_,i)=>{const mx=Math.ceil(Math.max(...paceData.map(d=>d.value))*1.15);const mn=Math.floor(Math.min(...paceData.map(d=>d.value))*0.9);return paceYLabel((mn+(mx-mn)*i/4).toFixed(2));})}
-                    pointerConfig={pointerConfig('/km', family)}
-                    {...chartBase({ family })} />
-                </View>
-              ) : (
-                <EmptyRow icon={<Icon icon={Zap} variant="plain" size="md" color={accent} />} msg="Need 2+ runs in this range to plot pace" color={accent} headline="Not enough runs" />
-              )}
-              {avgPace > 0 && <Insight color={accent} text={`Avg ${fmtPace(avgPace)}/km · Best ${bestPace ? fmtPace(bestPace) : '--'}/km · ${paceData.length} runs`} />}
-            </>
-          )}
-
-          {!rangePending && t.key === 'heart' && (
-            <>
-              {zoneStats.length > 0 ? (
-                <>
-                  <View style={{ alignItems: 'center', marginVertical: 16 }}>
-                    <PieChart data={pieData} {...pieProps()}
-                      centerLabelComponent={() => (
-                        <View style={{ alignItems: 'center' }}>
-                          <Icon icon={Heart} variant="plain" size="md" color="#EF4444" />
-                          <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginTop: 2 }}>zones</Typography>
-                        </View>
-                      )} />
-                  </View>
-                  <View style={{ gap: 8 }}>
-                    {zoneStats.map((z) => {
-                      const boundaries: number[] = hrZones.length >= 5
-                        ? hrZones.map(hz => hz.min)
-                        : [0, 115, 135, 155, 170];
-                      const maxBounds = hrZones.length >= 5
-                        ? hrZones.map((_, j) => hrZones[j + 1] ? hrZones[j + 1].min - 1 : 999)
-                        : [114, 134, 154, 169, 999];
-                      const zoneIdx = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5'].findIndex(zl => z.label.includes(zl));
-                      const bpmRange = zoneIdx >= 0
-                        ? (maxBounds[zoneIdx] < 999 ? `${boundaries[zoneIdx]}–${maxBounds[zoneIdx]} bpm` : `${boundaries[zoneIdx]}+ bpm`)
-                        : '';
-                      return (
-                        <View key={z.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: z.color }} />
-                          <View style={{ flex: 1 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                              <Typography style={{ fontSize: 11, color: theme.colors.text, fontWeight: '600' }}>{z.label}</Typography>
-                              <Typography style={{ fontSize: 10, color: theme.colors.textSecondary }}>({bpmRange})</Typography>
-                            </View>
-                            <ProgressBar progress={z.pct} color={z.color} height={5} />
-                          </View>
-                          <Typography style={{ fontSize: 12, fontWeight: '700', color: z.color, width: 36, textAlign: 'right' }}>{z.pct}%</Typography>
-                        </View>
-                      );
-                    })}
-                  </View>
-                  {(() => { const ez=(zoneStats.find(z=>z.label.includes('Z1'))?.pct||0)+(zoneStats.find(z=>z.label.includes('Z2'))?.pct||0); return <Insight color="#ef4444" text={`${ez}% easy effort. Elite runners target 80% in Z1–Z2 for aerobic base building.`} />; })()}
-                </>
-              ) : (
-                <EmptyRow icon={<Icon icon={Heart} variant="plain" size="md" color="#ef4444" />} msg="No HR data — enable heart rate recording on Strava" color="#ef4444" headline="No heart-rate data" />
-              )}
-            </>
-          )}
-
-          {!rangePending && t.key === 'cadence' && (
-            <>
-              {cadenceData.length > 1 ? (
-                <View style={{ overflow: 'hidden', marginTop: 4 }}>
-                  <LineChart {...lineProps(family)} data={cadenceData} height={180} width={CHART_W}
-                    maxValue={Math.max(maxCadence + 10, 200)}
-                    initialSpacing={12}
-                    spacing={Math.max((CHART_W-12)/Math.max(cadenceData.length-1,1),18)}
-                    yAxisLabelSuffix=" spm"
-                    pointerConfig={pointerConfig(' spm', family)}
-                    {...chartBase({ family })} />
-                </View>
-              ) : (
-                <EmptyRow icon={<Icon icon={Activity} variant="plain" size="md" color={accent} />} msg="No cadence data in this range" color={accent} headline="No cadence yet" />
-              )}
-              {avgCadence > 0 && <Insight color={accent} text={`Target 170–180 spm. Your avg ${avgCadence} spm — ${avgCadence < 165 ? 'try shortening your stride' : avgCadence >= 170 ? 'great cadence!' : 'close to optimal'}`} />}
-            </>
-          )}
-
-          {!rangePending && t.key === 'mix' && (
-            <>
-              {mixStats.length > 0 ? (
-                <>
-                  <View style={{ alignItems: 'center', marginVertical: 16 }}>
-                    <PieChart data={mixPieData} {...pieProps()}
-                      centerLabelComponent={() => (
-                        <View style={{ alignItems: 'center' }}>
-                          <Icon icon={Activity} variant="plain" size="md" color={theme.colors.primary} />
-                          <Typography style={{ fontSize: 9, color: theme.colors.textSecondary, marginTop: 2 }}>mix</Typography>
-                        </View>
-                      )} />
-                  </View>
-                  <View style={{ gap: 10 }}>
-                    {mixStats.map(e => (
-                      <View key={e.type} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: e.color }} />
-                        <View style={{ flex: 1 }}>
-                          <Typography style={{ fontSize: 11, color: theme.colors.textSecondary, marginBottom: 3 }}>{e.type} — {e.count} activities</Typography>
-                          <ProgressBar progress={e.pct} color={e.color} height={5} />
-                        </View>
-                        <Typography style={{ fontSize: 12, fontWeight: '700', color: e.color, width: 36, textAlign: 'right' }}>{e.pct}%</Typography>
-                      </View>
-                    ))}
-                  </View>
-                </>
-              ) : (
-                <EmptyRow icon={<Icon icon={BarChart3} variant="plain" size="md" color={accent} />} msg="No activities synced yet" color={accent} headline="No activity mix" cta={{ label: 'Manage graphs', onPress: () => setShowManageModal(true) }} />
-              )}
-            </>
-          )}
-
-          {!rangePending && t.key === 'elevation' && (
-            <>
-              {elevData.length > 1 ? (
-                <View style={{ overflow: 'hidden', marginTop: 4 }}>
-                  <LineChart {...lineProps(family)} data={elevData} height={180} width={CHART_W}
-                    initialSpacing={0}
-                    spacing={Math.max(CHART_W/Math.max(elevData.length-1,1),4)}
-                    yAxisLabelSuffix=" m"
-                    pointerConfig={pointerConfig('m', family)}
-                    {...chartBase({ family })} />
-                </View>
-              ) : (
-                <EmptyRow icon={<Icon icon={Mountain} variant="plain" size="md" color={accent} />} msg="No elevation data in this range" color={accent} headline="No climbs yet" />
-              )}
-              {totalElev > 0 && <Insight color={accent} text={`${totalElev.toLocaleString()}m total climbed · Peak single activity: ${Math.round(maxElev)}m`} />}
-            </>
-          )}
-
-          {!rangePending && t.key === 'calories' && (
-            <>
-              {caloriesData.some(d=>d.value>0) ? (
-                <View style={{ overflow: 'hidden', marginTop: 4 }}>
-                  <BarChart data={caloriesData} height={180} width={CHART_W} barWidth={BAR_W}
-                    maxValue={Math.ceil(Math.max(...caloriesData.map(d=>d.value),1) * 1.25)}
-                    initialSpacing={BAR_SPACING} spacing={BAR_SPACING}
-                    {...barProps(family)}
-                    pointerConfig={pointerConfig(' kcal', family)}
-                    {...chartBase({ family })} />
-                  <InactiveCaption />
-                </View>
-              ) : (
-                <EmptyRow icon={<Icon icon={Flame} variant="plain" size="md" color={accent} />} msg="No calorie data in this range" color={accent} headline="No calories burned" />
-              )}
-              {avgCalories > 0 && <Insight color={accent} text={`${avgCalories.toLocaleString()} kcal/wk avg — roughly ${Math.round(avgCalories / 7)} kcal/day from exercise`} />}
-            </>
-          )}
-
-          {!rangePending && t.key === 'power' && (
-            <>
-              {powerData.length > 1 ? (
-                <View style={{ overflow: 'hidden', marginTop: 4 }}>
-                  <LineChart {...lineProps(family)} data={powerData} height={180} width={CHART_W}
-                    initialSpacing={12}
-                    spacing={Math.max((CHART_W-12)/Math.max(powerData.length-1,1),18)}
-                    yAxisLabelSuffix=" W"
-                    pointerConfig={pointerConfig('W', family)}
-                    {...chartBase({ family })} />
-                </View>
-              ) : (
-                <EmptyRow icon={<Icon icon={Zap} variant="plain" size="md" color={accent} />} msg="No power data — requires a power meter" color={accent} headline="No power data" />
-              )}
-              {avgPower > 0 && <Insight color={accent} text={`${avgPower}W avg power across ${powerData.length} sessions`} />}
-            </>
-          )}
-
-        </WidgetCard>
-      </Animated.View>
-    );
-    // ESLint exhaustive-deps would over-list; rely on closure semantics. Range is the dominant trigger.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    range, deferredRange, compareHR,
-    paceData, paceHRData, volumeData, timeData, stepsData, caloriesData,
-    elevData, powerData, cadenceData,
-    zoneStats, pieData, mixPieData, mixStats,
-    avgSteps, avgTime, avgPace, bestPace, totalVol, maxWeekVol,
-    avgPower, avgCadence, totalElev, avgCalories, maxSteps,
-  ]);
+  if (pace.length < 2) {
+    return <EmptyRow icon={Zap} headline="Not enough runs" msg="Need 2+ runs in this range to plot pace" color={accent} />;
+  }
 
   return (
-    <SafeAreaView style={st.container}>
-      {/* Header */}
-      <View style={st.header}>
-        <View style={{ flex: 1 }}>
-          <Typography style={st.pageTitle}>Insights</Typography>
-          <View style={st.pageSubRow}>
-            <Icon icon={Activity} variant="plain" size="xs" color={theme.colors.textSecondary} />
-            <Typography style={st.pageSub}>{activities.length} activities analysed</Typography>
-          </View>
-        </View>
+    <>
+      {hrPoints.length >= 2 && (
         <PressableScale
-          onPress={() => setShowManageModal(true)}
-          style={st.manageBtnWrap}
+          scaleTo={0.94}
+          haptic="selection"
+          onPress={() => setCompareHR((v) => !v)}
+          style={[st.compareChip, compareHR && { backgroundColor: withAlpha(health, 'tint'), borderColor: health }]}
           accessibilityRole="button"
-          accessibilityLabel="Manage graphs"
+          accessibilityLabel="Compare heart rate"
+          accessibilityState={{ selected: compareHR }}
         >
-          <LinearGradient
-            colors={theme.colors.gradients.primary}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={st.manageBtn}
-          >
-            <Icon icon={Settings2} variant="plain" size="xs" color="#FFFFFF" />
-            <Typography style={st.manageBtnText}>Manage</Typography>
-          </LinearGradient>
+          <Icon icon={Heart} variant="plain" size="xs" color={compareHR ? health : theme.colors.textSecondary} />
+          <Typography style={[st.compareChipText, { color: compareHR ? health : theme.colors.textSecondary }]}>
+            {compareHR ? 'Comparing HR' : 'Compare HR'}
+          </Typography>
         </PressableScale>
+      )}
+      <View style={st.chartWrap}>
+        <ChartLine data={pacePoints} height={190} family={family} formatValue={formatPace} fromZero={false} />
       </View>
+      {compareHR && (
+        <View style={st.hrOverlayWrap}>
+          <Typography style={st.hrOverlayLabel}>Avg HR per run (bpm)</Typography>
+          <ChartLine data={hrPoints} height={110} family="health" formatValue={fmtBpm} fromZero={false} />
+        </View>
+      )}
+      {insight && <Insight color={accent} text={insight} />}
+    </>
+  );
+}
 
-      {/* Range selector — sliding pill (PressableScale segments fire the
-          selection haptic on press-in, so no extra haptic here) */}
-      <RangeSelector range={range} onChange={setRange} />
-
-      <FlatList
-        data={visibleTabs}
-        keyExtractor={t => t.key}
-        renderItem={renderCard}
-        contentContainerStyle={st.scroll}
-        showsVerticalScrollIndicator={false}
-        removeClippedSubviews
-        initialNumToRender={2}
-        maxToRenderPerBatch={1}
-        windowSize={3}
-        ListEmptyComponent={
-          <View style={{ alignItems: 'center', paddingTop: 60 }}>
-            <Icon icon={BarChart3} variant="plain" size="hero" color={theme.colors.textSecondary} />
-            <Typography style={{ color: theme.colors.textSecondary, marginTop: 16, fontSize: 15 }}>No graphs enabled</Typography>
-            <TouchableOpacity style={{ marginTop: 12 }} onPress={() => setShowManageModal(true)}>
-              <Typography style={{ color: theme.colors.primary, fontWeight: '700' }}>Tap Manage to add some →</Typography>
-            </TouchableOpacity>
-          </View>
-        }
+function ZonesBody({ zones, resolved, insight }: { zones: ZoneAgg; resolved: ResolvedZones; insight?: string }) {
+  const accent = familyStyle('health').accent;
+  if (zones.total <= 0) {
+    return (
+      <EmptyRow
+        icon={Heart}
+        headline="No heart-rate data"
+        msg="No HR recorded in this range — enable heart rate on your watch"
+        color={accent}
       />
+    );
+  }
+  const isTime = zones.mode === 'time';
+  const fmt = isTime ? fmtDuration : fmtCount;
+  const slices = ZONE_LABELS.map((label, i) => ({ label, value: zones.values[i], color: ZONE_COLORS[i] }));
+  const sourceNote =
+    resolved.source === 'estimated' ? ' · zones estimated from age'
+    : resolved.source === 'profile' ? ' · zones from your max HR'
+    : '';
 
-      {/* Manage modal — premium bottom sheet */}
-      <BottomSheet
-        visible={showManageModal}
-        onClose={() => setShowManageModal(false)}
-        title="Manage Graphs"
-        subtitle="Choose which insights appear on this screen"
-        icon={Settings2}
-        family="activity"
-      >
-        <SectionLabel family="activity">On the dashboard</SectionLabel>
-        {ALL_TABS.map(t => {
-          const fam = INSIGHT_FAMILY[t.key] || 'activity';
-          const famStyle = familyStyle(fam);
-          const TabIcon = TAB_ICON[t.key];
-          const active = activeKeys.includes(t.key);
+  return (
+    <>
+      <View style={st.donutWrap}>
+        <ChartDonut data={slices} legend={false} size={150} formatValue={fmt}>
+          <Icon icon={Heart} variant="plain" size="md" color={accent} />
+          <Typography style={st.donutCenterCaption}>
+            {isTime ? fmtDuration(zones.total) : `${zones.total} sessions`}
+          </Typography>
+        </ChartDonut>
+      </View>
+      <View style={st.zoneRows}>
+        {ZONE_LABELS.map((label, i) => {
+          const v = zones.values[i];
+          const pct = Math.round((v / zones.total) * 100);
+          const lo = resolved.bounds[i];
+          const bpm = i < 4 ? `${lo}–${resolved.bounds[i + 1] - 1} bpm` : `${lo}+ bpm`;
           return (
-            <View key={t.key} style={st.manageRowBlock}>
-              <Icon icon={TabIcon as any} family={fam} variant="gradient" size="md" />
+            <View key={label} style={st.zoneRow}>
+              <View style={[st.zoneDot, { backgroundColor: ZONE_COLORS[i] }]} />
               <View style={{ flex: 1 }}>
-                <Typography style={st.manageRowLabel}>{t.label}</Typography>
-                <Typography style={st.manageRowCaption}>{TAB_DESCRIPTION[t.key]}</Typography>
+                <View style={st.zoneLabelRow}>
+                  <Typography style={st.zoneLabel}>{label}</Typography>
+                  <Typography style={st.zoneBpm}>{bpm}</Typography>
+                </View>
+                <ProgressBar progress={pct} color={ZONE_COLORS[i]} height={5} />
               </View>
-              <Toggle
-                value={active}
-                onValueChange={() => toggleGraph(t.key)}
-                accent={famStyle.accent}
-                accessibilityLabel={`${active ? 'Hide' : 'Show'} ${t.label} graph`}
-              />
+              <Typography style={[st.zonePct, { color: ZONE_COLORS[i] }]}>{pct}%</Typography>
             </View>
           );
         })}
-      </BottomSheet>
+      </View>
+      <Typography style={st.sourceCaption}>
+        {isTime
+          ? `Time in zone from your recorded activities${sourceNote}`
+          : `Sessions by avg HR (open activities to cache true zones)${sourceNote}`}
+      </Typography>
+      {insight && <Insight color={accent} text={insight} />}
+    </>
+  );
+}
 
-    </SafeAreaView>
+function MixBody({ mix }: { mix: MixEntry[] }) {
+  const accent = familyStyle('activity').accent;
+  const total = mix.reduce((s, e) => s + e.count, 0);
+  if (!total) {
+    return <EmptyRow icon={BarChart3} headline="No activity mix" msg="Nothing recorded in this range" color={accent} />;
+  }
+  return (
+    <View style={st.donutWrap}>
+      <ChartDonut
+        data={mix.map((e) => ({ label: e.type, value: e.count, color: e.color }))}
+        size={140}
+        formatValue={fmtCount}
+      >
+        <Typography style={st.donutCenterValue}>{total}</Typography>
+        <Typography style={st.donutCenterCaption}>activities</Typography>
+      </ChartDonut>
+    </View>
+  );
+}
+
+function CardBody({ tab, d }: { tab: Tab; d: InsightsData }) {
+  const family = INSIGHT_FAMILY[tab] || 'activity';
+  const accent = familyStyle(family).accent;
+  const m = d.meta[tab];
+
+  switch (tab) {
+    case 'steps':
+      return (
+        <>
+          <BarsBlock buckets={d.buckets} field="steps" family={family} accent={accent} format={fmtStepsAxis}
+            emptyIcon={Footprints} emptyHeadline="No steps tracked" emptyMsg="No activities with step data in this range" />
+          {m.insight && <Insight color={accent} text={m.insight} />}
+        </>
+      );
+    case 'time':
+      return (
+        <>
+          <BarsBlock buckets={d.buckets} field="hours" family={family} accent={accent} format={fmtHoursAxis}
+            emptyIcon={Clock} emptyHeadline="No active time" emptyMsg="No time logged in this range" />
+          {m.insight && <Insight color={accent} text={m.insight} />}
+        </>
+      );
+    case 'volume':
+      return (
+        <>
+          <BarsBlock buckets={d.buckets} field="km" family={family} accent={accent} format={fmtKmAxis}
+            emptyIcon={TrendingUp} emptyHeadline="No kilometres" emptyMsg="No distance recorded in this range" />
+          {m.insight && <Insight color={accent} text={m.insight} />}
+        </>
+      );
+    case 'calories':
+      return (
+        <>
+          <BarsBlock buckets={d.buckets} field="cals" family={family} accent={accent} format={fmtCalsAxis}
+            emptyIcon={Flame} emptyHeadline="No calories burned" emptyMsg="No calorie data in this range" />
+          {m.insight && <Insight color={accent} text={m.insight} />}
+        </>
+      );
+    case 'pace':
+      return <PaceBody pace={d.lines.pace} family={family} insight={m.insight} />;
+    case 'cadence':
+      return (
+        <>
+          <LineBlock points={d.lines.cadence} family={family} accent={accent} format={fmtSpm}
+            emptyIcon={ActivityIcon} emptyHeadline="No cadence yet" emptyMsg="No cadence data in this range" />
+          {m.insight && <Insight color={accent} text={m.insight} />}
+        </>
+      );
+    case 'elevation':
+      return (
+        <>
+          <LineBlock points={d.lines.elevation} family={family} accent={accent} format={fmtMetres}
+            emptyIcon={Mountain} emptyHeadline="No climbs yet" emptyMsg="No elevation data in this range" />
+          {m.insight && <Insight color={accent} text={m.insight} />}
+        </>
+      );
+    case 'power':
+      return (
+        <>
+          <LineBlock points={d.lines.power} family={family} accent={accent} format={fmtWatts}
+            emptyIcon={Zap} emptyHeadline="No power data" emptyMsg="Requires a power meter or smart trainer" />
+          {m.insight && <Insight color={accent} text={m.insight} />}
+        </>
+      );
+    case 'heart':
+      return <ZonesBody zones={d.zones} resolved={d.resolved} insight={m.insight} />;
+    case 'mix':
+      return <MixBody mix={d.mix} />;
+  }
+}
+
+// ── Manage Graphs sheet — drafts locally, persists ONCE on close ───────
+
+function ManageSheet({
+  visible,
+  activeKeys,
+  onCommit,
+}: {
+  visible: boolean;
+  activeKeys: string[];
+  onCommit: (keys: string[]) => void;
+}) {
+  const [draft, setDraft] = useState<string[]>(activeKeys);
+
+  useEffect(() => {
+    if (visible) setDraft(activeKeys);
+  }, [visible, activeKeys]);
+
+  const toggle = (key: Tab) =>
+    setDraft((d) => (d.includes(key) ? d.filter((k) => k !== key) : [...d, key]));
+
+  return (
+    <Sheet
+      visible={visible}
+      onClose={() => onCommit(draft)}
+      title="Manage Graphs"
+      caption="Choose which insights appear on this screen"
+      scrollable
+    >
+      <SectionLabel family="activity">Visible graphs</SectionLabel>
+      {ALL_TABS.map((t) => {
+        const fam = INSIGHT_FAMILY[t.key] || 'activity';
+        const famStyle = familyStyle(fam);
+        const active = draft.includes(t.key);
+        return (
+          <View key={t.key} style={st.manageRowBlock}>
+            <Icon icon={TAB_ICON[t.key]} family={fam} variant="gradient" size="md" />
+            <View style={{ flex: 1 }}>
+              <Typography style={st.manageRowLabel}>{t.label}</Typography>
+              <Typography style={st.manageRowCaption}>{TAB_DESCRIPTION[t.key]}</Typography>
+            </View>
+            <Toggle
+              value={active}
+              onValueChange={() => toggle(t.key)}
+              accent={famStyle.accent}
+              accessibilityLabel={`${active ? 'Hide' : 'Show'} ${t.label} graph`}
+            />
+          </View>
+        );
+      })}
+    </Sheet>
   );
 }
 
 // ── Sliding-pill range selector ────────────────────────────────────────
-// One rounded container, 5 equal segments, an animated background that
-// springs between segments as the user taps. Width is measured via onLayout
-// so the indicator stays accurate across orientations and screen sizes.
+
 function RangeSelector({ range, onChange }: { range: Range; onChange: (r: Range) => void }) {
   const [containerW, setContainerW] = useState(0);
   const idx = RANGE_KEYS.indexOf(range);
   const translateX = useSharedValue(0);
   const segW = containerW > 0 ? containerW / RANGE_KEYS.length : 0;
-  // Skip the spring on the very first measured layout so the indicator appears
-  // already under the default range instead of twitching in from segment 0.
+  // Skip the spring on first layout so the pill doesn't twitch in from seg 0.
   const hasLaidOut = useRef(false);
 
   useEffect(() => {
@@ -1025,32 +946,24 @@ function RangeSelector({ range, onChange }: { range: Range; onChange: (r: Range)
         onLayout={(e) => setContainerW(e.nativeEvent.layout.width)}
       >
         {containerW > 0 && (
-          <Animated.View
-            style={[st.rangeIndicator, { width: segW }, indicatorStyle]}
-          />
+          <Animated.View style={[st.rangeIndicator, { width: segW }, indicatorStyle]} />
         )}
-        {RANGE_KEYS.map((r, i) => {
-          const selected = r === range;
-          return (
-            <RangeSegment
-              key={r}
-              label={RANGE_LABELS[r]}
-              index={i}
-              selected={selected}
-              segW={segW}
-              translateX={translateX}
-              onPress={() => onChange(r)}
-            />
-          );
-        })}
+        {RANGE_KEYS.map((r, i) => (
+          <RangeSegment
+            key={r}
+            label={RANGE_LABELS[r]}
+            index={i}
+            selected={r === range}
+            segW={segW}
+            translateX={translateX}
+            onPress={() => onChange(r)}
+          />
+        ))}
       </View>
     </View>
   );
 }
 
-// One range segment. The active label colour/opacity is derived from the shared
-// indicator position so the text brightens as the pill arrives under it, rather
-// than snapping the instant `selected` flips.
 function RangeSegment({
   label,
   index,
@@ -1066,8 +979,7 @@ function RangeSegment({
   translateX: SharedValue<number>;
   onPress: () => void;
 }) {
-  // Distance (in segment-widths) from the indicator's current centre to this
-  // segment's centre — 0 when the pill is fully under us, 1+ when it's away.
+  // Label brightens as the pill arrives under it, not the instant of the tap.
   const proximity = useDerivedValue(() => {
     if (segW <= 0) return selected ? 0 : 1;
     return Math.abs(translateX.value - index * segW) / segW;
@@ -1089,10 +1001,7 @@ function RangeSegment({
     >
       <Animated.View style={labelStyle}>
         <Typography
-          style={[
-            st.rangeSegmentText,
-            { color: selected ? theme.colors.primary : theme.colors.textSecondary },
-          ]}
+          style={[st.rangeSegmentText, { color: selected ? theme.colors.primary : theme.colors.textSecondary }]}
         >
           {label}
         </Typography>
@@ -1101,9 +1010,119 @@ function RangeSegment({
   );
 }
 
+const keyExtractor = (t: TabDef) => t.key;
+
+// ── Screen ─────────────────────────────────────────────────────────────
+
+export default function InsightsScreen() {
+  const activities = useStore((s) => s.activities);
+  const activeGraphs = useStore((s) => s.settings.activeGraphs);
+  const updateSettings = useStore((s) => s.updateSettings);
+  const hrZones = useStore((s) => s.hrZones);
+  const userProfile = useStore((s) => s.userProfile);
+
+  const activeKeys = (activeGraphs as Tab[] | undefined) ?? DEFAULT_GRAPHS;
+  const [showManage, setShowManage] = useState(false);
+  const [range, setRange] = useState<Range>('3m');
+
+  // Deferred range keeps the pills snappy while heavy memos recompute lazily.
+  const deferredRange = useDeferredValue(range);
+  const rangePending = range !== deferredRange;
+
+  const windowed = useMemo(() => {
+    const days = RANGE_DAYS[deferredRange];
+    if (days === Infinity) return activities;
+    const cutoff = Date.now() - days * 86400000;
+    return activities.filter((a) => new Date(a.startDate).getTime() >= cutoff);
+  }, [activities, deferredRange]);
+
+  const resolved = useMemo(() => resolveHrZones(hrZones, userProfile), [hrZones, userProfile]);
+  const buckets = useMemo(() => buildBuckets(activities, deferredRange), [activities, deferredRange]);
+  const lines = useMemo(() => buildLines(windowed), [windowed]);
+  const zones = useMemo(() => buildZoneAgg(windowed, resolved), [windowed, resolved]);
+  const mix = useMemo(() => buildMix(windowed), [windowed]);
+  const meta = useMemo(() => buildMeta(buckets, lines, zones, mix), [buckets, lines, zones, mix]);
+
+  const data: InsightsData = useMemo(
+    () => ({ buckets, lines, zones, resolved, mix, meta }),
+    [buckets, lines, zones, resolved, mix, meta],
+  );
+
+  const visibleTabs = useMemo(() => ALL_TABS.filter((t) => activeKeys.includes(t.key)), [activeKeys]);
+
+  const openManage = useCallback(() => setShowManage(true), []);
+
+  const commitGraphs = useCallback(
+    (keys: string[]) => {
+      setShowManage(false);
+      const changed = keys.length !== activeKeys.length || keys.some((k) => !activeKeys.includes(k as Tab));
+      if (changed) updateSettings({ activeGraphs: keys });
+    },
+    [activeKeys, updateSettings],
+  );
+
+  const renderCard = useCallback(
+    ({ item, index }: { item: TabDef; index: number }) => {
+      const tab = item.key;
+      const family = INSIGHT_FAMILY[tab] || 'activity';
+      const m = data.meta[tab];
+      return (
+        <Animated.View entering={FadeInDown.duration(theme.motion.base).delay(Math.min(index * 40, 240))}>
+          <WidgetCard family={family} title={m.title} caption={m.caption} icon={TAB_ICON[tab]} style={st.widgetCard}>
+            <BigStat meta={m} />
+            {rangePending ? <SkeletonChart height={190} /> : <CardBody tab={tab} d={data} />}
+          </WidgetCard>
+        </Animated.View>
+      );
+    },
+    [data, rangePending],
+  );
+
+  return (
+    <SafeAreaView style={st.container}>
+      <View style={st.header}>
+        <View style={{ flex: 1 }}>
+          <Typography style={st.pageTitle}>Insights</Typography>
+          <View style={st.pageSubRow}>
+            <Icon icon={ActivityIcon} variant="plain" size="xs" color={theme.colors.textSecondary} />
+            <Typography style={st.pageSub}>{activities.length} activities analysed</Typography>
+          </View>
+        </View>
+        <Button title="Manage" icon={Settings2} size="sm" onPress={openManage} />
+      </View>
+
+      <RangeSelector range={range} onChange={setRange} />
+
+      <FlatList
+        data={visibleTabs}
+        keyExtractor={keyExtractor}
+        renderItem={renderCard}
+        contentContainerStyle={st.scroll}
+        showsVerticalScrollIndicator={false}
+        removeClippedSubviews
+        initialNumToRender={2}
+        maxToRenderPerBatch={1}
+        windowSize={3}
+        ListEmptyComponent={
+          <View style={st.listEmpty}>
+            <Icon icon={BarChart3} variant="plain" size="hero" color={theme.colors.textSecondary} />
+            <Typography style={st.listEmptyTitle}>No graphs enabled</Typography>
+            <Typography style={st.listEmptyMsg}>
+              Turn on the insights you care about and they will appear here.
+            </Typography>
+            <Button title="Manage graphs" icon={Settings2} size="sm" onPress={openManage} style={st.listEmptyBtn} />
+          </View>
+        }
+      />
+
+      <ManageSheet visible={showManage} activeKeys={activeKeys} onCommit={commitGraphs} />
+    </SafeAreaView>
+  );
+}
+
 const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background },
-  scroll:    { padding: 16, paddingBottom: 40 },
+  scroll: { padding: 16, paddingBottom: 40 },
 
   header: {
     flexDirection: 'row',
@@ -1113,22 +1132,17 @@ const st = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 10,
   },
-  pageTitle: { fontSize: 28, fontWeight: '900', color: theme.colors.text, letterSpacing: -0.5 },
-  pageSubRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
-  pageSub:   { fontSize: 11, color: theme.colors.textSecondary, fontWeight: '600', letterSpacing: 0.2 },
-  manageBtnWrap: { borderRadius: 20, overflow: 'hidden', ...theme.shadows.glow(theme.colors.primary) },
-  manageBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
+  pageTitle: {
+    fontSize: 28,
+    lineHeight: 34,
+    fontFamily: theme.fonts.display,
+    color: theme.colors.text,
+    letterSpacing: -0.5,
   },
-  manageBtnText: { fontSize: 12, fontWeight: '800', color: '#FFFFFF', letterSpacing: 0.2 },
+  pageSubRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
+  pageSub: { ...theme.typography.micro, color: theme.colors.textSecondary },
 
-  // WidgetCard override — the FlatList already provides horizontal padding,
-  // so we kill the WidgetCard's own marginHorizontal to avoid double-margins.
+  // FlatList already pads horizontally — kill WidgetCard's own margin.
   widgetCard: { marginHorizontal: 0, marginBottom: 14 },
 
   bigStatRow: {
@@ -1137,20 +1151,10 @@ const st = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 4,
   },
-  bigStat: {
-    fontSize: 30,
-    fontWeight: '900',
-    fontFamily: theme.fonts.display,
-    color: theme.colors.text,
-    letterSpacing: -0.8,
-    lineHeight: 34,
-    fontVariant: ['tabular-nums'],
-  },
+  bigStat: { ...theme.typography.numeric, color: theme.colors.text },
   bigStatUnit: {
-    fontSize: 11,
-    fontWeight: '700',
+    ...theme.typography.label,
     color: theme.colors.textSecondary,
-    letterSpacing: 0.4,
     textTransform: 'uppercase',
     marginTop: 2,
   },
@@ -1163,6 +1167,7 @@ const st = StyleSheet.create({
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
   },
+  trendText: { ...theme.typography.label },
 
   insightBar: {
     flexDirection: 'row',
@@ -1174,12 +1179,14 @@ const st = StyleSheet.create({
     borderRadius: 10,
     borderLeftWidth: 3,
   },
-  insightText: { fontSize: 12, flex: 1, lineHeight: 18, fontWeight: '700' },
+  insightText: { ...theme.typography.caption, flex: 1, lineHeight: 18 },
+
+  chartWrap: { marginTop: 4 },
 
   emptyBox: {
     alignItems: 'center',
     justifyContent: 'center',
-    height: 180,
+    height: 190,
     marginTop: 8,
     borderRadius: 12,
     borderWidth: 1,
@@ -1196,21 +1203,43 @@ const st = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 2,
   },
-  emptyHeadline: { fontSize: 13, fontWeight: '800', letterSpacing: -0.1 },
-  emptyCaption: { fontSize: 11, fontWeight: '600', textAlign: 'center', lineHeight: 16 },
-  emptyCta: {
-    marginTop: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+  emptyHeadline: { ...theme.typography.footnote, fontFamily: theme.fonts.semibold, color: theme.colors.text },
+  emptyCaption: { ...theme.typography.caption, color: theme.colors.textSecondary, textAlign: 'center' },
+  emptyCtaBtn: { alignSelf: 'center', marginTop: 6 },
+
+  inactiveCaption: { ...theme.typography.micro, color: theme.colors.textSecondary, marginTop: 8, marginLeft: 4 },
+
+  compareChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginTop: 4,
+    marginBottom: 6,
   },
-  emptyCtaText: { fontSize: 12, fontWeight: '800', letterSpacing: 0.2 },
+  compareChipText: { ...theme.typography.label },
+  hrOverlayWrap: { marginTop: 12 },
+  hrOverlayLabel: { ...theme.typography.micro, color: theme.colors.textSecondary, marginBottom: 4 },
 
-  rangeOuter: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
+  donutWrap: { alignItems: 'center', marginVertical: 12 },
+  donutCenterValue: { ...theme.typography.numericSm, color: theme.colors.text },
+  donutCenterCaption: { ...theme.typography.micro, color: theme.colors.textSecondary, marginTop: 2 },
+
+  zoneRows: { gap: 8, marginTop: 4 },
+  zoneRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  zoneDot: { width: 10, height: 10, borderRadius: 5 },
+  zoneLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
+  zoneLabel: { ...theme.typography.caption, color: theme.colors.text },
+  zoneBpm: { ...theme.typography.micro, color: theme.colors.textSecondary },
+  zonePct: { ...theme.typography.caption, width: 40, textAlign: 'right' },
+  sourceCaption: { ...theme.typography.micro, color: theme.colors.textSecondary, marginTop: 12 },
+
+  rangeOuter: { paddingHorizontal: 16, paddingBottom: 12 },
   rangeBar: {
     flexDirection: 'row',
     backgroundColor: theme.colors.surface,
@@ -1226,43 +1255,13 @@ const st = StyleSheet.create({
     top: 3,
     bottom: 3,
     left: 3,
-    backgroundColor: theme.colors.primary + '22',
+    backgroundColor: withAlpha(theme.colors.primary, 'tint'),
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: theme.colors.primary + '88',
+    borderColor: withAlpha(theme.colors.primary, 'heavy'),
   },
-  rangeSegment: {
-    flex: 1,
-    paddingVertical: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rangeSegmentText: {
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-  },
-
-  inactiveCaption: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: theme.colors.textSecondary,
-    marginTop: 6,
-    marginLeft: 4,
-    letterSpacing: 0.2,
-  },
-  compareChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: theme.borderRadius.full,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    marginTop: 4,
-  },
+  rangeSegment: { flex: 1, paddingVertical: 8, alignItems: 'center', justifyContent: 'center' },
+  rangeSegmentText: { ...theme.typography.caption, letterSpacing: 0.3 },
 
   manageRowBlock: {
     flexDirection: 'row',
@@ -1275,6 +1274,11 @@ const st = StyleSheet.create({
     borderColor: theme.colors.border,
     marginBottom: 8,
   },
-  manageRowLabel: { fontSize: 15, fontWeight: '700', color: theme.colors.text },
-  manageRowCaption: { fontSize: 12, fontWeight: '500', color: theme.colors.textSecondary, marginTop: 2 },
+  manageRowLabel: { ...theme.typography.body, fontFamily: theme.fonts.semibold, color: theme.colors.text },
+  manageRowCaption: { ...theme.typography.caption, color: theme.colors.textSecondary, marginTop: 2 },
+
+  listEmpty: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 32 },
+  listEmptyTitle: { ...theme.typography.subtitle, color: theme.colors.text, marginTop: 16 },
+  listEmptyMsg: { ...theme.typography.footnote, color: theme.colors.textSecondary, textAlign: 'center', marginTop: 6 },
+  listEmptyBtn: { alignSelf: 'center', marginTop: 14 },
 });
