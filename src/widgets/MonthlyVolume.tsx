@@ -21,7 +21,9 @@ export const MonthlyVolumeWidget = memo(function MonthlyVolumeWidget() {
 
   const months = useMemo(() => monthlyKmBuckets(activities, 12), [activities]);
   const chartData = useMemo(
-    () => months.map((m) => ({ label: m.label, value: m.km })),
+    // Append the 2-digit year so a 12-month span reads unambiguously
+    // ("Jul ’25 … Jun ’26") — the bucket key is YYYY-MM.
+    () => months.map((m) => ({ label: `${m.label} ’${m.key.slice(2, 4)}`, value: m.km })),
     [months],
   );
 
