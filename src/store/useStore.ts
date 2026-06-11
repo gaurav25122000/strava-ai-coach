@@ -449,7 +449,6 @@ interface AppState {
   // Attach per-activity zone distribution (cached). No-op if the activity
   // isn't in the store (e.g. it was pruned).
   setActivityZones: (activityId: string, zones: ActivityZoneDistribution[]) => void;
-  setLifetimeStats: (stats: any) => void;
   setGoals: (goals: Goal[]) => void;
   setUserStats: (stats: UserStats) => void;
   addGoal: (goal: Goal) => void;
@@ -574,23 +573,6 @@ export const useStore = create<AppState>()(
           a.id === activityId ? { ...a, ...patch } : a,
         ),
       })),
-      setLifetimeStats: (stats: any) => set((state) => {
-        const runDist = (stats.all_run_totals?.distance || 0) / 1000;
-        const rideDist = (stats.all_ride_totals?.distance || 0) / 1000;
-        const swimDist = (stats.all_swim_totals?.distance || 0) / 1000;
-        const totalKm = Math.round(runDist + rideDist + swimDist);
-        const runCount = stats.all_run_totals?.count || 0;
-
-        // Strava's lifetime rollup is authoritative — assign, don't max(),
-        // so deleting an activity on Strava is reflected here too.
-        return {
-          userStats: {
-            ...state.userStats,
-            totalRuns: runCount,
-            totalKm,
-          }
-        };
-      }),
       setGoals: (goals) => set({ goals }),
       setUserStats: (userStats) => set({ userStats }),
       addGoal: (goal) => set((state) => ({ goals: [...state.goals, goal] })),
@@ -807,6 +789,9 @@ export async function hydrateDataCache(): Promise<void> {
 let dataSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleDataSave() {
+  // A write scheduled before hydration completes would persist the empty
+  // boot state over the real cache — exactly how activity history got wiped.
+  if (!dataHydrated) return;
   if (dataSaveTimer) clearTimeout(dataSaveTimer);
   dataSaveTimer = setTimeout(async () => {
     dataSaveTimer = null;
@@ -828,6 +813,7 @@ function scheduleDataSave() {
 
 /** Flush a pending debounced save immediately (background task teardown). */
 export async function flushDataCache(): Promise<void> {
+  if (!dataHydrated) return;
   if (!dataSaveTimer) return;
   clearTimeout(dataSaveTimer);
   dataSaveTimer = null;

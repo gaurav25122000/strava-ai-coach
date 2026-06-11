@@ -104,7 +104,6 @@ async function refreshAuxiliaryData() {
   const store = useStore.getState();
   try {
     const { stats, athlete } = await StravaService.fetchAthleteStats();
-    store.setLifetimeStats(stats);
     store.setAthleteStats({ stats, athlete });
     if (Array.isArray(athlete?.shoes)) {
       const prev = new Map(store.shoes.map((s) => [s.id, s]));

@@ -24,20 +24,23 @@ export const YearToDateWidget = memo(function YearToDateWidget() {
   const weeklyGoalKm = useStore((s) => s.userProfile.weeklyGoalKm);
 
   const ytdKm = useMemo(() => {
-    const s = athleteStats?.stats;
-    if (s && (s.ytd_run_totals || s.ytd_ride_totals || s.ytd_swim_totals)) {
-      const metres =
-        (s.ytd_run_totals?.distance || 0) +
-        (s.ytd_ride_totals?.distance || 0) +
-        (s.ytd_swim_totals?.distance || 0);
-      return Math.round(metres / 1000);
+    // Local history covers EVERY sport type. Strava's ytd_*_totals only roll
+    // up run/ride/swim — for a walker that reads as a near-zero year — so the
+    // API numbers are only a fallback for the pre-first-sync window.
+    if (activities.length > 0) {
+      const prefix = `${new Date().getFullYear()}-`;
+      return Math.round(
+        activities
+          .filter((a) => activityDayKey(a).startsWith(prefix))
+          .reduce((sum, a) => sum + a.distance / 1000, 0),
+      );
     }
-    const prefix = `${new Date().getFullYear()}-`;
-    return Math.round(
-      activities
-        .filter((a) => activityDayKey(a).startsWith(prefix))
-        .reduce((sum, a) => sum + a.distance / 1000, 0),
-    );
+    const s = athleteStats?.stats;
+    const metres =
+      (s?.ytd_run_totals?.distance || 0) +
+      (s?.ytd_ride_totals?.distance || 0) +
+      (s?.ytd_swim_totals?.distance || 0);
+    return Math.round(metres / 1000);
   }, [athleteStats, activities]);
 
   const months = useMemo(() => monthlyKmBuckets(activities, 12), [activities]);

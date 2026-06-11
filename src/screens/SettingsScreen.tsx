@@ -113,7 +113,6 @@ export default function SettingsScreen() {
   const updateSettings = useStore(s => s.updateSettings);
   const setActivities = useStore(s => s.setActivities);
   const setAthleteStats = useStore(s => s.setAthleteStats);
-  const setLifetimeStats = useStore(s => s.setLifetimeStats);
   const setToast = useStore(s => s.setToast);
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -216,7 +215,6 @@ export default function SettingsScreen() {
     try {
       const res = await StravaService.fetchAthleteStats();
       setAthleteStats(res);
-      setLifetimeStats(res.stats);
     } catch (statsErr) {
       console.warn('Could not fetch lifetime stats:', statsErr);
     }
