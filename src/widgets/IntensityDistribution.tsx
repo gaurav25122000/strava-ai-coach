@@ -12,6 +12,10 @@ import { useStore } from '../store/useStore';
 import { EmptyHint } from './common';
 import { bigStat, StatChip } from './_shared';
 
+// Polarization is a statement about CURRENT training, not career history —
+// assess the rolling four weeks like the training-load widgets do.
+const WINDOW_DAYS = 28;
+
 export const IntensityDistributionWidget = memo(function IntensityDistributionWidget() {
   const activities = useStore((s) => s.activities);
   const hrZones = useStore((s) => s.hrZones);
@@ -25,7 +29,9 @@ export const IntensityDistributionWidget = memo(function IntensityDistributionWi
     let moderate = 0;
     let hard = 0;
     let usedZones = false;
+    const cutoff = Date.now() - WINDOW_DAYS * 86_400_000;
     for (const a of activities) {
+      if (new Date(a.startDate).getTime() < cutoff) continue;
       const buckets = a.zones?.find((z) => z.type === 'heartrate')?.buckets;
       if (buckets && buckets.length) {
         // Strava's own time-in-zone (seconds): Z1-Z2 easy, Z3 moderate, Z4+ hard.
@@ -79,6 +85,7 @@ export const IntensityDistributionWidget = memo(function IntensityDistributionWi
         family={family}
         title={WIDGET_TITLES.IntensityDistribution}
         icon={Activity}
+        caption="last 4 weeks"
         onPress={dist ? () => setInfoOpen(true) : undefined}
         action={
           <PressableScale onPress={() => setInfoOpen(true)} hitSlop={theme.hitSlop}>
@@ -90,7 +97,7 @@ export const IntensityDistributionWidget = memo(function IntensityDistributionWi
           <EmptyHint
             icon={Activity}
             family={family}
-            text="No heart-rate time yet — sync activities recorded with an HR monitor to see your easy/moderate/hard balance."
+            text="No heart-rate time in the last 4 weeks — train with an HR monitor to see your easy/moderate/hard balance."
           />
         ) : (
           <>

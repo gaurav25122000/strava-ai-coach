@@ -13,7 +13,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
   FadeInDown,
   FadeInRight,
-  FadeInLeft,
   FadeOut,
   useSharedValue,
   useAnimatedStyle,
@@ -26,7 +25,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import Markdown from 'react-native-markdown-display';
-import { Send, Bot, RefreshCw, Sparkles } from 'lucide-react-native';
+import { Send, RefreshCw, Zap } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { Icon } from '../components/Icon';
@@ -37,30 +36,22 @@ import { AIService, ChatMessage } from '../services/ai';
 import { theme, withAlpha } from '../theme';
 import { secureSettingsStorage } from '../store/useStore';
 import { familyStyle } from '../utils/widgetFamilies';
+import { activityDayKey, localDateStr } from '../utils/dates';
+import { prescriptionFor } from '../services/goalProgress';
 import { PressableScale } from '../components/PressableScale';
-
-const SUGGESTIONS = [
-  'How should I pace my long run this weekend?',
-  'Am I overtraining based on my recent data?',
-  'What\'s a good workout for improving my 5K pace?',
-  'How much rest do I need before my next race?',
-  'Explain my training load this week.',
-];
-
-// Compact chips shown above the input bar once the coach has replied.
-const FOLLOW_UP_CHIPS = [
-  'Why?',
-  'Give me a plan',
-  'Show example workout',
-];
 
 // Family used across the chat surface — chat is "social" in our taxonomy.
 const SOCIAL = familyStyle('social');
 
-const DOT_COLORS = [theme.colors.primary, SOCIAL.accent, theme.colors.accent];
+// Show a time divider when two messages are more than this far apart.
+const TIME_GAP_MS = 10 * 60 * 1000;
 
 // Shape of one persisted transcript entry in store.coachChat.
 type CoachChatMsg = { role: 'user' | 'assistant'; text: string; at: string };
+
+type Row =
+  | { kind: 'msg'; msg: CoachChatMsg; firstOfGroup: boolean }
+  | { kind: 'divider'; at: string };
 
 function formatTime(at: string) {
   const d = new Date(at);
@@ -68,69 +59,118 @@ function formatTime(at: string) {
   const m = d.getMinutes();
   const hh = ((h + 11) % 12) + 1;
   const mm = m < 10 ? `0${m}` : `${m}`;
-  const ampm = h < 12 ? 'AM' : 'PM';
-  return `${hh}:${mm} ${ampm}`;
+  return `${hh}:${mm} ${h < 12 ? 'AM' : 'PM'}`;
 }
 
-function CoachAvatar({ size = 28 }: { size?: number }) {
-  return (
-    <LinearGradient
-      colors={SOCIAL.gradient}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={[
-        styles.coachAvatar,
-        { width: size, height: size, borderRadius: size / 2 },
-      ]}
-    >
-      <Bot size={Math.round(size * 0.55)} color={theme.colors.onAccent} />
-    </LinearGradient>
-  );
+function dayPart(): string {
+  const h = new Date().getHours();
+  if (h < 5) return 'Up late';
+  if (h < 12) return 'Morning';
+  if (h < 17) return 'Afternoon';
+  return 'Evening';
 }
 
-// One looping 0→1 progress drives all three dots; each dot reads it at a
-// staggered phase offset so the wave ripples left to right.
+/**
+ * Suggestions built from the athlete's actual state, not a canned list —
+ * this is most of what makes the screen feel like a coach who knows you.
+ */
+function useSmartSuggestions(): string[] {
+  const activities = useStore((s) => s.activities);
+  const goals = useStore((s) => s.goals);
+  const userStats = useStore((s) => s.userStats);
+  const weeklyGoalKm = useStore((s) => s.userProfile.weeklyGoalKm);
+
+  return useMemo(() => {
+    const out: string[] = [];
+    const goal = goals.find((g) => !g.isSimple);
+
+    if (goal) {
+      const rx = prescriptionFor(goal, new Date());
+      if (rx && rx.kind !== 'REST') {
+        out.push(`Walk me through today's ${rx.title || rx.kind.toLowerCase()} — how should it feel?`);
+      } else if (rx) {
+        out.push('What should a proper rest day look like for me today?');
+      }
+      out.push(`Am I on track for ${goal.title} on ${goal.targetDate}?`);
+    }
+
+    const today = localDateStr(new Date());
+    const movedToday = activities.some((a) => activityDayKey(a) === today);
+    if (!movedToday && userStats.currentStreak > 0) {
+      out.push(`What's the lightest session that still keeps my ${userStats.currentStreak}-day streak alive?`);
+    }
+
+    if (weeklyGoalKm > 0) {
+      const monday = localDateStr(
+        (() => { const d = new Date(); const day = (d.getDay() + 6) % 7; d.setDate(d.getDate() - day); return d; })(),
+      );
+      const weekKm = activities
+        .filter((a) => activityDayKey(a) >= monday)
+        .reduce((s, a) => s + a.distance / 1000, 0);
+      const left = weeklyGoalKm - weekKm;
+      if (left > 0 && left <= weeklyGoalKm * 0.5) {
+        out.push(`I'm ${left.toFixed(1)} km short of this week's goal — how do I close it without overdoing it?`);
+      }
+    }
+
+    const recent = activities[0];
+    if (recent?.name) {
+      out.push(`Give me honest feedback on "${recent.name}".`);
+    }
+
+    // Evergreens to round the list out.
+    out.push('Am I overtraining based on my recent data?');
+    out.push('Build me a workout for this weekend.');
+    return out.slice(0, 5);
+  }, [activities, goals, userStats.currentStreak, weeklyGoalKm]);
+}
+
+/** One-line training context for the greeting — proof the coach is looking. */
+function useGreetingContext(): string {
+  const activities = useStore((s) => s.activities);
+  const userStats = useStore((s) => s.userStats);
+  return useMemo(() => {
+    const bits: string[] = [];
+    if (userStats.currentStreak > 0) bits.push(`${userStats.currentStreak}-day streak`);
+    const recent = activities[0];
+    if (recent) {
+      const km = (recent.distance / 1000).toFixed(1);
+      bits.push(`last out: ${recent.name || recent.type} (${km} km)`);
+    }
+    return bits.length ? bits.join(' · ') : 'Synced and ready when you are.';
+  }, [activities, userStats.currentStreak]);
+}
+
+// One looping 0→1 progress drives all three dots at staggered phases.
 function useDotStyle(progress: SharedValue<number>, index: number) {
   return useAnimatedStyle(() => {
     const phase = (progress.value + 1 - index * 0.16) % 1;
     return {
-      opacity: interpolate(phase, [0, 0.3, 0.6, 1], [0.4, 1, 0.4, 0.4]),
-      transform: [{ translateY: interpolate(phase, [0, 0.3, 0.6, 1], [0, -6, 0, 0]) }],
+      opacity: interpolate(phase, [0, 0.3, 0.6, 1], [0.35, 1, 0.35, 0.35]),
+      transform: [{ translateY: interpolate(phase, [0, 0.3, 0.6, 1], [0, -4, 0, 0]) }],
     };
   });
 }
 
-function ThinkingDots() {
+function Thinking() {
   const progress = useSharedValue(0);
-
   useEffect(() => {
-    progress.value = withRepeat(
-      withTiming(1, { duration: 1000, easing: Easing.linear }),
-      -1,
-      false,
-    );
+    progress.value = withRepeat(withTiming(1, { duration: 1000, easing: Easing.linear }), -1, false);
     return () => cancelAnimation(progress);
   }, [progress]);
-
   const dotStyles = [useDotStyle(progress, 0), useDotStyle(progress, 1), useDotStyle(progress, 2)];
-
   return (
-    <View style={styles.typingRow}>
-      <CoachAvatar size={28} />
-      <View style={styles.typingBubble}>
-        {dotStyles.map((style, i) => (
-          <Animated.View
-            key={i}
-            style={[styles.dot, { backgroundColor: DOT_COLORS[i] }, style]}
-          />
-        ))}
-      </View>
+    <View style={styles.thinkingRow}>
+      <Text style={styles.thinkingTxt}>Coach is thinking</Text>
+      {dotStyles.map((s, i) => (
+        <Animated.View key={i} style={[styles.thinkingDot, s]} />
+      ))}
     </View>
   );
 }
 
 const markdownStyles = StyleSheet.create({
-  body: { color: theme.colors.text, fontSize: theme.typography.body.fontSize, lineHeight: 22 },
+  body: { color: theme.colors.text, fontSize: theme.typography.body.fontSize, lineHeight: 23 },
   heading1: { color: theme.colors.text, fontSize: theme.typography.subtitle.fontSize, fontWeight: '700', marginBottom: 4, marginTop: 6 },
   heading2: { color: theme.colors.text, fontSize: theme.typography.body.fontSize, fontWeight: '700', marginBottom: 3, marginTop: 5 },
   heading3: { color: SOCIAL.accent, fontSize: 14, fontWeight: '700', marginBottom: 2, marginTop: 4 },
@@ -198,41 +238,41 @@ const markdownStyles = StyleSheet.create({
   paragraph: { marginVertical: 3 },
 });
 
-// One chat row — memoised so appending a message doesn't re-render the whole
-// transcript. The coach reply lands as a single bubble with FadeInDown.
-const MessageBubble = React.memo(function MessageBubble({ message }: { message: CoachChatMsg }) {
-  const isUser = message.role === 'user';
-  const Enter = isUser ? FadeInRight : FadeInDown;
-
+/**
+ * User turns stay as compact gradient bubbles; coach turns read as open
+ * conversational text with a tiny "COACH" rule above the first message of a
+ * group — closer to a message from a person than a chatbot card.
+ */
+const MessageRow = React.memo(function MessageRow({
+  msg,
+  firstOfGroup,
+}: {
+  msg: CoachChatMsg;
+  firstOfGroup: boolean;
+}) {
+  if (msg.role === 'user') {
+    return (
+      <Animated.View entering={FadeInRight.duration(240).springify().damping(18)} style={styles.userWrap}>
+        <LinearGradient
+          colors={SOCIAL.gradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.userBubble, theme.shadows.sm]}
+        >
+          <Text style={styles.userText}>{msg.text}</Text>
+        </LinearGradient>
+      </Animated.View>
+    );
+  }
   return (
-    <Animated.View
-      entering={Enter.duration(280).springify().damping(18)}
-      style={[styles.bubbleWrap, isUser ? styles.bubbleWrapUser : styles.bubbleWrapBot]}
-    >
-      {!isUser && (
-        <View style={styles.coachSide}>
-          <CoachAvatar size={28} />
+    <Animated.View entering={FadeInDown.duration(260)} style={styles.coachWrap}>
+      {firstOfGroup && (
+        <View style={styles.coachTag}>
+          <View style={[styles.coachTagDot, { backgroundColor: SOCIAL.accent }]} />
+          <Text style={[styles.coachTagTxt, { color: SOCIAL.accent }]}>COACH</Text>
         </View>
       )}
-      <View style={[styles.bubbleColumn, isUser ? styles.bubbleColumnUser : styles.bubbleColumnBot]}>
-        {isUser ? (
-          <LinearGradient
-            colors={SOCIAL.gradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={[styles.bubble, styles.bubbleUser, theme.shadows.sm]}
-          >
-            <Text style={styles.bubbleUserText}>{message.text}</Text>
-          </LinearGradient>
-        ) : (
-          <View style={[styles.bubble, styles.bubbleBot, { borderLeftColor: SOCIAL.accent }]}>
-            <Markdown style={markdownStyles}>{message.text}</Markdown>
-          </View>
-        )}
-        <Text style={[styles.timestamp, isUser ? styles.timestampUser : styles.timestampBot]}>
-          {formatTime(message.at)}
-        </Text>
-      </View>
+      <Markdown style={markdownStyles}>{msg.text}</Markdown>
     </Animated.View>
   );
 });
@@ -249,15 +289,31 @@ export default function ChatScreen() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The message a failed send should retry with (also restored to the input).
   const [failedText, setFailedText] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const listRef = useRef<FlatList>(null);
   const tabBarHeight = useBottomTabBarHeight();
 
-  // The coach service injects today's prescription + adherence when it gets a
-  // structured goal — pass the first non-simple one.
+  const suggestions = useSmartSuggestions();
+  const greetingContext = useGreetingContext();
+  const firstName = (userProfile.name || '').trim().split(/\s+/)[0];
+
   const coachGoal = useMemo(() => goals.find(g => !g.isSimple), [goals]);
+
+  // Transcript → rows with time dividers and coach-group markers.
+  const rows = useMemo<Row[]>(() => {
+    const out: Row[] = [];
+    let prev: CoachChatMsg | null = null;
+    for (const m of messages) {
+      const gap = prev ? new Date(m.at).getTime() - new Date(prev.at).getTime() : Infinity;
+      if (gap > TIME_GAP_MS) out.push({ kind: 'divider', at: m.at });
+      const firstOfGroup =
+        m.role === 'assistant' && (!prev || prev.role !== 'assistant' || gap > TIME_GAP_MS);
+      out.push({ kind: 'msg', msg: m, firstOfGroup });
+      prev = m;
+    }
+    return out;
+  }, [messages]);
 
   const send = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -283,8 +339,6 @@ export default function ChatScreen() {
     setLoading(true);
 
     try {
-      // The AI service expects ChatMessage (role + text) — strip the local
-      // timestamp before sending so payload semantics are unchanged.
       const payload: ChatMessage[] = next.map(({ role, text: t }) => ({ role, text: t }));
       const reply = await AIService.chatWithCoach(
         payload,
@@ -300,13 +354,8 @@ export default function ChatScreen() {
         ...useStore.getState().coachChat,
         { role: 'assistant', text: reply, at: new Date().toISOString() },
       ]);
-      if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
     } catch (e: any) {
-      // Pull the failed user turn back out of the transcript and into the
-      // input so retrying doesn't double-send it.
       const cur = useStore.getState().coachChat;
       const last = cur[cur.length - 1];
       if (last && last.role === 'user' && last.text === trimmed) {
@@ -327,32 +376,31 @@ export default function ChatScreen() {
     setFailedText(null);
   }, [setCoachChat]);
 
-  const renderItem = ({ item }: { item: CoachChatMsg }) => <MessageBubble message={item} />;
+  const renderItem = useCallback(({ item }: { item: Row }) => {
+    if (item.kind === 'divider') {
+      return (
+        <View style={styles.timeDivider}>
+          <Text style={styles.timeDividerTxt}>{formatTime(item.at)}</Text>
+        </View>
+      );
+    }
+    return <MessageRow msg={item.msg} firstOfGroup={item.firstOfGroup} />;
+  }, []);
 
   const lastMessage = messages[messages.length - 1];
   const showFollowUps = !loading && lastMessage?.role === 'assistant';
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header — social-family gradient strip with coach avatar + status pill */}
-      <LinearGradient
-        colors={SOCIAL.gradient}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.header}
-      >
-        <View style={styles.headerLeft}>
-          <View style={styles.headerAvatarRing}>
-            <CoachAvatar size={40} />
-          </View>
-          <View style={styles.headerTextWrap}>
-            <Text style={styles.headerTitle}>Coach</Text>
-            <View style={styles.statusPill}>
-              <View style={styles.statusDot} />
-              <Text style={styles.statusText} numberOfLines={1}>
-                Online · {settings.coachPersonality}
-              </Text>
-            </View>
+      {/* Minimal header — matches the rest of the app's chrome. */}
+      <View style={styles.topBar}>
+        <View style={styles.topLeft}>
+          <Text style={styles.brand}>Coach</Text>
+          <View style={[styles.personaChip, { backgroundColor: SOCIAL.tint }]}>
+            <Zap size={10} color={SOCIAL.accent} />
+            <Text style={[styles.personaTxt, { color: SOCIAL.accent }]}>
+              {settings.coachPersonality}
+            </Text>
           </View>
         </View>
         {messages.length > 0 && (
@@ -363,82 +411,65 @@ export default function ChatScreen() {
             accessibilityRole="button"
             accessibilityLabel="Clear conversation"
           >
-            <Icon icon={RefreshCw} variant="plain" size="sm" color={theme.colors.onAccent} />
+            <Icon icon={RefreshCw} variant="plain" size="sm" color={theme.colors.textSecondary} />
           </PressableScale>
         )}
-      </LinearGradient>
+      </View>
 
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? tabBarHeight : 0}
       >
-        {/* Message list */}
         {messages.length === 0 ? (
           <ScrollView contentContainerStyle={styles.emptyContainer} showsVerticalScrollIndicator={false}>
-            <Animated.View entering={FadeInDown.duration(400)} style={styles.emptyHero}>
-              <LinearGradient
-                colors={SOCIAL.gradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.emptyIconBg}
-              >
-                <Sparkles size={36} color={theme.colors.onAccent} />
-              </LinearGradient>
-              <Text style={styles.emptyTitle}>Hi, I'm your coach</Text>
-              <Text style={styles.emptySub}>
-                Ask about your plans, recovery, pacing, or anything running-related.
+            <Animated.View entering={FadeInDown.duration(400)}>
+              <Text style={styles.greetTitle}>
+                {dayPart()}
+                {firstName ? `, ${firstName}` : ''}.
               </Text>
+              <Text style={styles.greetSub}>{greetingContext}</Text>
+              <View style={[styles.greetRule, { backgroundColor: withAlpha(SOCIAL.accent, 'strong') }]} />
             </Animated.View>
-            <Text style={styles.suggestLabel}>Starter prompts</Text>
-            {SUGGESTIONS.slice(0, 3).map((s, i) => (
-              <Animated.View key={i} entering={FadeInDown.delay(400 + i * 55).springify()}>
+
+            {suggestions.map((s, i) => (
+              <Animated.View key={s} entering={FadeInDown.delay(150 + i * 60).springify().damping(16)}>
                 <PressableScale
                   style={styles.suggestChip}
                   onPress={() => send(s)}
                   accessibilityRole="button"
                   accessibilityLabel={s}
                 >
-                  <View style={[styles.suggestAccent, { backgroundColor: SOCIAL.accent }]} />
                   <Text style={styles.suggestText}>{s}</Text>
+                  <Icon icon={Send} variant="plain" size="xs" color={withAlpha(SOCIAL.accent, 'heavy')} />
                 </PressableScale>
               </Animated.View>
             ))}
-            <Text style={[styles.suggestLabel, { marginTop: 16 }]}>More ideas</Text>
-            {SUGGESTIONS.slice(3).map((s, i) => (
-              <Animated.View key={i} entering={FadeInDown.delay(400 + (3 + i) * 55).springify()}>
-                <PressableScale
-                  style={styles.suggestChip}
-                  onPress={() => send(s)}
-                  accessibilityRole="button"
-                  accessibilityLabel={s}
-                >
-                  <View style={[styles.suggestAccent, { backgroundColor: SOCIAL.accent }]} />
-                  <Text style={styles.suggestText}>{s}</Text>
-                </PressableScale>
-              </Animated.View>
-            ))}
+            <Text style={styles.greetFootnote}>
+              Your coach sees your synced training, PRs and plan — ask anything.
+            </Text>
           </ScrollView>
         ) : (
           <FlatList
             ref={listRef}
-            data={messages}
+            data={rows}
             renderItem={renderItem}
-            keyExtractor={(item, index) => `${item.at}-${index}`}
+            keyExtractor={(item, index) =>
+              item.kind === 'divider' ? `div-${item.at}-${index}` : `${item.msg.at}-${index}`
+            }
             contentContainerStyle={styles.list}
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
             showsVerticalScrollIndicator={false}
             ListFooterComponent={
               loading ? (
-                <Animated.View entering={FadeInLeft.duration(280)} exiting={FadeOut.duration(180)}>
-                  <ThinkingDots />
+                <Animated.View entering={FadeInDown.duration(240)} exiting={FadeOut.duration(160)}>
+                  <Thinking />
                 </Animated.View>
               ) : null
             }
           />
         )}
 
-        {/* Error — retryable: the failed message is back in the input */}
         {error && (
           <View style={styles.errorBanner}>
             <Text style={styles.errorText}>{error}</Text>
@@ -453,69 +484,65 @@ export default function ChatScreen() {
           </View>
         )}
 
-        {/* Quick-reply chips — shown above the input bar after a coach reply */}
         {showFollowUps && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.quickRow}
-          >
-            {FOLLOW_UP_CHIPS.map((chip) => (
+          <View style={styles.quickRow}>
+            {['Why?', 'Make that a workout', 'Adjust for how I feel'].map((chip) => (
               <PressableScale
                 key={chip}
-                style={[styles.quickChip, { backgroundColor: SOCIAL.tint, borderColor: withAlpha(SOCIAL.accent, 'strong') }]}
+                style={styles.quickChip}
                 onPress={() => send(chip)}
                 accessibilityRole="button"
                 accessibilityLabel={chip}
               >
-                <Text style={[styles.quickChipText, { color: SOCIAL.accent }]}>{chip}</Text>
+                <Text style={styles.quickChipText}>{chip}</Text>
               </PressableScale>
             ))}
-          </ScrollView>
+          </View>
         )}
 
-        {/* Input bar */}
-        <View style={styles.inputBar}>
-          <TextInput
-            style={styles.input}
-            value={input}
-            onChangeText={setInput}
-            placeholder="Ask your coach…"
-            placeholderTextColor={theme.colors.textSecondary}
-            multiline
-            maxLength={600}
-            returnKeyType="default"
-          />
-          {(!input.trim() || loading) ? (
-            <View
-              style={[styles.sendBtn, styles.sendBtnDisabled]}
-              accessibilityRole="button"
-              accessibilityLabel="Send message"
-              accessibilityState={{ disabled: true }}
-            >
-              <Icon icon={Send} variant="plain" size="md" color={theme.colors.textSecondary} />
-            </View>
-          ) : (
-            <PressableScale
-              onPress={() => send(input)}
-              haptic="none"
-              accessibilityRole="button"
-              accessibilityLabel="Send message"
-            >
-              <LinearGradient
-                colors={SOCIAL.gradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={[styles.sendBtn, theme.shadows.glow(SOCIAL.accent)]}
+        {/* Floating input pill */}
+        <View style={styles.inputWrap}>
+          <View style={styles.inputBar}>
+            <TextInput
+              style={styles.input}
+              value={input}
+              onChangeText={setInput}
+              placeholder={firstName ? `Talk to your coach, ${firstName}…` : 'Talk to your coach…'}
+              placeholderTextColor={theme.colors.textSecondary}
+              multiline
+              maxLength={600}
+              returnKeyType="default"
+            />
+            {(!input.trim() || loading) ? (
+              <View
+                style={[styles.sendBtn, styles.sendBtnDisabled]}
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+                accessibilityState={{ disabled: true }}
               >
-                <Icon icon={Send} variant="plain" size="md" color={theme.colors.onAccent} />
-              </LinearGradient>
-            </PressableScale>
-          )}
+                <Icon icon={Send} variant="plain" size="sm" color={theme.colors.textSecondary} />
+              </View>
+            ) : (
+              <PressableScale
+                onPress={() => send(input)}
+                haptic="none"
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+              >
+                <LinearGradient
+                  colors={SOCIAL.gradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.sendBtn, theme.shadows.glow(SOCIAL.accent)]}
+                >
+                  <Icon icon={Send} variant="plain" size="sm" color={theme.colors.onAccent} />
+                </LinearGradient>
+              </PressableScale>
+            )}
+          </View>
         </View>
       </KeyboardAvoidingView>
 
-      {/* Clear-chat confirmation */}
       <Sheet
         visible={confirmClear}
         onClose={() => setConfirmClear(false)}
@@ -536,108 +563,83 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
 
   // Header
-  header: {
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: 6,
+    paddingBottom: 8,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
-  headerAvatarRing: {
-    padding: 2,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: withAlpha(theme.colors.onAccent, 'medium'),
-    backgroundColor: withAlpha(theme.colors.onAccent, 'soft'),
-  },
-  coachAvatar: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTextWrap: { flex: 1 },
-  headerTitle: { fontSize: theme.typography.subtitle.fontSize, fontFamily: theme.fonts.bold, color: theme.colors.onAccent, letterSpacing: -0.2 },
-  statusPill: {
+  topLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  brand: { ...theme.typography.title, color: theme.colors.text },
+  personaChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    alignSelf: 'flex-start',
+    gap: 4,
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: theme.borderRadius.full,
-    backgroundColor: withAlpha(theme.colors.onAccent, 'tint'),
-    borderWidth: 1,
-    borderColor: withAlpha(theme.colors.onAccent, 'medium'),
-    marginTop: 4,
-    maxWidth: '100%',
   },
-  statusDot: {
-    width: 6, height: 6, borderRadius: 3,
-    backgroundColor: theme.colors.success,
-  },
-  statusText: { fontSize: theme.typography.label.fontSize, color: theme.colors.onAccent, fontWeight: theme.typography.caption.fontWeight, letterSpacing: 0.2 },
-  clearBtn: { padding: 8 },
+  personaTxt: { ...theme.typography.label, textTransform: 'capitalize' },
+  clearBtn: { padding: 6 },
 
-  // Empty state
-  emptyContainer: { padding: 24, paddingTop: 32 },
-  emptyHero: { alignItems: 'center', marginBottom: 32 },
-  emptyIconBg: {
-    width: 84, height: 84, borderRadius: 42,
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: 18,
-    ...theme.shadows.lg,
+  // Empty / greeting
+  emptyContainer: { padding: 24, paddingTop: 28 },
+  greetTitle: {
+    fontSize: 28,
+    fontFamily: theme.fonts.display,
+    color: theme.colors.text,
+    letterSpacing: -0.5,
   },
-  emptyTitle: { fontSize: theme.typography.title.fontSize, fontFamily: theme.fonts.display, color: theme.colors.text, marginBottom: 8, letterSpacing: -0.3 },
-  emptySub: { fontSize: theme.typography.body.fontSize, color: theme.colors.textSecondary, textAlign: 'center', lineHeight: 21 },
-  suggestLabel: { fontSize: theme.typography.label.fontSize, color: theme.colors.textSecondary, marginBottom: 10, fontWeight: theme.typography.label.fontWeight, letterSpacing: 1, textTransform: 'uppercase' },
+  greetSub: {
+    ...theme.typography.footnote,
+    color: theme.colors.textSecondary,
+    marginTop: 6,
+  },
+  greetRule: { width: 36, height: 3, borderRadius: 2, marginTop: 14, marginBottom: 22 },
   suggestChip: {
-    flexDirection: 'row', alignItems: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     backgroundColor: theme.colors.surfaceElevated,
     borderRadius: 14,
     paddingHorizontal: 14,
-    paddingVertical: 14,
-    marginBottom: 10,
+    paddingVertical: 13,
+    marginBottom: 9,
     borderWidth: 1,
     borderColor: theme.colors.divider,
-    ...theme.shadows.sm,
   },
-  suggestAccent: { width: 3, height: 22, borderRadius: 2, marginRight: 10 },
-  suggestText: { color: theme.colors.text, fontSize: theme.typography.body.fontSize, lineHeight: 21, flex: 1 },
+  suggestText: { color: theme.colors.text, fontSize: theme.typography.footnote.fontSize, lineHeight: 19, flex: 1 },
+  greetFootnote: {
+    ...theme.typography.micro,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 14,
+  },
 
   // Messages
-  list: { padding: 16, paddingBottom: 8 },
-  bubbleWrap: { flexDirection: 'row', marginBottom: 14, alignItems: 'flex-start' },
-  bubbleWrapUser: { justifyContent: 'flex-end' },
-  bubbleWrapBot: { justifyContent: 'flex-start' },
-  coachSide: { marginRight: 8, marginTop: 2 },
-  bubbleColumn: { maxWidth: '78%' },
-  bubbleColumnUser: { alignItems: 'flex-end' },
-  bubbleColumnBot: { alignItems: 'flex-start' },
-  bubble: { borderRadius: 18, padding: 12 },
-  bubbleUser: { borderBottomRightRadius: 4 },
-  bubbleBot: {
-    backgroundColor: theme.colors.surfaceElevated,
-    borderBottomLeftRadius: 4,
-    borderWidth: 1,
-    borderColor: theme.colors.divider,
-    borderLeftWidth: 3,
-    ...theme.shadows.sm,
+  list: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
+  userWrap: { alignItems: 'flex-end', marginVertical: 6 },
+  userBubble: {
+    maxWidth: '82%',
+    borderRadius: 18,
+    borderBottomRightRadius: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
-  bubbleUserText: { color: theme.colors.onAccent, fontSize: theme.typography.body.fontSize, lineHeight: 22, fontWeight: theme.typography.body.fontWeight },
-  timestamp: { fontSize: theme.typography.micro.fontSize, color: theme.colors.textSecondary, marginTop: 4, letterSpacing: 0.3 },
-  timestampUser: { marginRight: 4 },
-  timestampBot: { marginLeft: 4 },
+  userText: { color: theme.colors.onAccent, fontSize: theme.typography.body.fontSize, lineHeight: 22 },
+  coachWrap: { marginVertical: 8, paddingRight: 12 },
+  coachTag: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  coachTagDot: { width: 6, height: 6, borderRadius: 3 },
+  coachTagTxt: { ...theme.typography.label, letterSpacing: 1.2 },
+  timeDivider: { alignItems: 'center', marginVertical: 10 },
+  timeDividerTxt: { ...theme.typography.micro, color: theme.colors.textSecondary, letterSpacing: 0.4 },
 
-  // Thinking dots
-  typingRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 14, gap: 8 },
-  typingBubble: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: theme.colors.surface,
-    borderRadius: 16, borderBottomLeftRadius: 4,
-    paddingHorizontal: 16, paddingVertical: 14,
-    borderWidth: 1, borderColor: theme.colors.border,
-  },
-  dot: { width: 8, height: 8, borderRadius: 4 },
+  // Thinking
+  thinkingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginVertical: 10 },
+  thinkingTxt: { ...theme.typography.footnote, color: theme.colors.textSecondary, marginRight: 4 },
+  thinkingDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: SOCIAL.accent },
 
   // Error
   errorBanner: {
@@ -650,53 +652,56 @@ const styles = StyleSheet.create({
   },
   errorText: { color: theme.colors.error, fontSize: theme.typography.footnote.fontSize },
 
-  // Quick-reply chips
+  // Quick replies
   quickRow: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 6,
   },
   quickChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
-    marginRight: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderColor: withAlpha(SOCIAL.accent, 'strong'),
   },
-  quickChipText: { fontSize: theme.typography.footnote.fontSize, fontWeight: '700', lineHeight: 18 },
+  quickChipText: {
+    fontSize: theme.typography.footnote.fontSize,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: SOCIAL.accent,
+  },
 
-  // Input
+  // Floating input
+  inputWrap: { paddingHorizontal: 12, paddingBottom: 10, paddingTop: 4 },
   inputBar: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
     gap: 8,
+    backgroundColor: theme.colors.surfaceElevated,
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingLeft: 16,
+    paddingRight: 6,
+    paddingVertical: 6,
+    ...theme.shadows.md,
   },
   input: {
     flex: 1,
-    backgroundColor: withAlpha(theme.colors.text, 'faint'),
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
     color: theme.colors.text,
     fontSize: theme.typography.body.fontSize,
-    maxHeight: 120,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+    maxHeight: 110,
+    paddingVertical: 8,
   },
   sendBtn: {
-    width: 42, height: 42, borderRadius: 21,
-    backgroundColor: theme.colors.primary,
+    width: 38, height: 38, borderRadius: 19,
     alignItems: 'center', justifyContent: 'center',
   },
-  sendBtnDisabled: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border },
+  sendBtnDisabled: { backgroundColor: theme.colors.surfaceMuted },
 
-  // Clear-chat confirm sheet
   confirmActions: { gap: 10, paddingTop: 4 },
 });
