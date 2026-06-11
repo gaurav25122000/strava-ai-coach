@@ -4,7 +4,6 @@ import { HeroBannerWidget } from './HeroBanner';
 import { CoachInsightWidget } from './CoachInsight';
 import { WeeklyDigestWidget } from './WeeklyDigest';
 import { ActiveGoalsWidget } from './ActiveGoals';
-import { RecoveryAdvisorWidget } from './RecoveryAdvisor';
 import { InjuryAlertWidget } from './InjuryAlert';
 import { TrainingLoadWidget } from './TrainingLoad';
 import { WeeklyGoalTrackerWidget } from './WeeklyGoalTracker';
@@ -17,6 +16,9 @@ import { YearToDateWidget } from './YearToDate';
 import { AllTimeStatsWidget } from './AllTimeStats';
 import { ShoeTrackerWidget } from './ShoeTracker';
 import { StreakGuardWidget } from './StreakGuard';
+import { WeeklyRecapWidget } from './WeeklyRecap';
+import { PRProximityWidget } from './PRProximity';
+import { RestBalanceWidget } from './RestBalance';
 import { ActiveHoursWidget } from './ActiveHours';
 import { TrainerRatioWidget } from './TrainerRatio';
 import { HeartRateWidget } from './HeartRate';
@@ -27,7 +29,6 @@ import { EnergyExpenditureWidget } from './EnergyExpenditure';
 import { PaceTrendWidget } from './PaceTrend';
 import { PersonalBestsWidget } from './PersonalBests';
 import { RacePredictorWidget } from './RacePredictor';
-import { BestEffortsWidget } from './BestEfforts';
 import { BadgesWidget } from './Badges';
 import { NextBadgeWidget } from './NextBadge';
 import { StarredSegmentsWidget } from './StarredSegments';
@@ -44,7 +45,6 @@ export const WIDGET_REGISTRY: Record<string, React.ComponentType> = {
   CoachInsight: CoachInsightWidget,
   WeeklyDigest: WeeklyDigestWidget,
   ActiveGoals: ActiveGoalsWidget,
-  RecoveryAdvisor: RecoveryAdvisorWidget,
   InjuryAlert: InjuryAlertWidget,
   TrainingLoad: TrainingLoadWidget,
   WeeklyGoalTracker: WeeklyGoalTrackerWidget,
@@ -57,6 +57,9 @@ export const WIDGET_REGISTRY: Record<string, React.ComponentType> = {
   AllTimeStats: AllTimeStatsWidget,
   ShoeTracker: ShoeTrackerWidget,
   StreakGuard: StreakGuardWidget,
+  WeeklyRecap: WeeklyRecapWidget,
+  PRProximity: PRProximityWidget,
+  RestBalance: RestBalanceWidget,
   ActiveHours: ActiveHoursWidget,
   TrainerRatio: TrainerRatioWidget,
   HeartRate: HeartRateWidget,
@@ -67,7 +70,6 @@ export const WIDGET_REGISTRY: Record<string, React.ComponentType> = {
   PaceTrend: PaceTrendWidget,
   PersonalBests: PersonalBestsWidget,
   RacePredictor: RacePredictorWidget,
-  BestEfforts: BestEffortsWidget,
   Badges: BadgesWidget,
   NextBadge: NextBadgeWidget,
   StarredSegments: StarredSegmentsWidget,

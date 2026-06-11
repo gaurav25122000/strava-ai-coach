@@ -646,7 +646,9 @@ export const useStore = create<AppState>()(
       // Activities/starredSegments/athleteStats also leave this blob for the
       // separate data cache (they rehydrate from the old blob one last time).
       // v5 (2026-06): SportSplit→ActivityMix, StravaTotals→AllTimeStats.
-      version: 5,
+      // v6 (2026-06): RecoveryAdvisor→TrainingLoad, BestEfforts→PersonalBests;
+      // WeeklyRecap, PRProximity, RestBalance introduced.
+      version: 6,
       migrate: (persistedState: any, fromVersion: number) => {
         if (!persistedState) return persistedState;
         const next = { ...persistedState };
@@ -660,7 +662,7 @@ export const useStore = create<AppState>()(
           next.settings = { ...(next.settings ?? {}), widgetLayout: withHero };
         }
 
-        if (fromVersion < 5) {
+        if (fromVersion < 6) {
           const layout: string[] = next.settings?.widgetLayout ?? [...DEFAULT_WIDGET_LAYOUT];
           const migrated: string[] = [];
           for (const id of layout) {
@@ -679,6 +681,18 @@ export const useStore = create<AppState>()(
           if (!migrated.includes('ActiveHours')) {
             const anchor = migrated.indexOf('MonthlyVolume');
             migrated.splice(anchor >= 0 ? anchor + 1 : migrated.length, 0, 'ActiveHours');
+          }
+          if (!migrated.includes('WeeklyRecap')) {
+            const anchor = migrated.indexOf('ThisWeek');
+            migrated.splice(anchor >= 0 ? anchor + 1 : migrated.length, 0, 'WeeklyRecap');
+          }
+          if (!migrated.includes('PRProximity')) {
+            const anchor = migrated.indexOf('PersonalBests');
+            migrated.splice(anchor >= 0 ? anchor + 1 : migrated.length, 0, 'PRProximity');
+          }
+          if (!migrated.includes('RestBalance')) {
+            const anchor = migrated.indexOf('TrainingLoad');
+            migrated.splice(anchor >= 0 ? anchor + 1 : migrated.length, 0, 'RestBalance');
           }
           next.settings = { ...(next.settings ?? {}), widgetLayout: migrated };
         }

@@ -102,6 +102,14 @@ export const TrainingLoadWidget = memo(function TrainingLoadWidget() {
         ? { label: 'Strained', color: theme.colors.error }
         : { label: 'Optimal', color: familyStyle('progress').accent };
 
+  // Today's call, absorbed from the retired Recovery Advisor widget.
+  const advice =
+    tsb < -15
+      ? { status: 'Take a rest day', desc: 'Form is deeply negative — rest up to avoid overtraining.', color: theme.colors.error }
+      : tsb < -5
+        ? { status: 'Active recovery', desc: 'You carry some fatigue. Keep today easy.', color: theme.colors.accent }
+        : { status: 'Ready to push', desc: 'You are fresh — a hard workout lands well today.', color: theme.colors.success };
+
   const openInfo = () => setInfoOpen(true);
 
   return (
@@ -131,6 +139,11 @@ export const TrainingLoadWidget = memo(function TrainingLoadWidget() {
                 <Typography style={bigStat.unit}>TSB</Typography>
               </View>
               <StatChip color={form.color} label={form.label} />
+            </View>
+
+            <View style={[styles.adviceRow, { backgroundColor: withAlpha(advice.color, 'faint'), borderColor: withAlpha(advice.color, 'medium') }]}>
+              <Typography style={[styles.adviceStatus, { color: advice.color }]}>{advice.status}</Typography>
+              <Typography style={styles.adviceDesc}>{advice.desc}</Typography>
             </View>
 
             <View style={styles.toggleRow}>
@@ -220,6 +233,22 @@ export const TrainingLoadWidget = memo(function TrainingLoadWidget() {
 });
 
 const styles = StyleSheet.create({
+  adviceRow: {
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 12,
+  },
+  adviceStatus: {
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  adviceDesc: {
+    ...theme.typography.micro,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
   toggleRow: {
     flexDirection: 'row',
     gap: 6,
