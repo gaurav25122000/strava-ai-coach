@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, ScrollView, Modal, Platform, FlatList, StyleSheet, Animated as RNAnimated } from 'react-native';
+import { View, ScrollView, Platform, FlatList, StyleSheet, Animated as RNAnimated } from 'react-native';
 import { styles, goalMarkdownStyles } from './GoalsScreen.styles';
 import Markdown from 'react-native-markdown-display';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,17 +10,17 @@ import { Typography } from '../components/Typography';
 import { ProgressBar } from '../components/ProgressBar';
 import { Button } from '../components/Button';
 import { Sheet } from '../components/Sheet';
-import { Pulsing } from '../components/Pulsing';
 import { useStore, secureSettingsStorage, Goal, Phase, CheckIn, DailyPrescription } from '../store/useStore';
 import {
-  Flame, Bike, Footprints, Plus, Zap, Calendar, Trophy, TrendingUp, Clock, Heart, MapPin,
-  Activity, Pencil, MessageCircle, Send, Target, Sparkles, PartyPopper, Check, CheckCircle2,
-  XCircle, Trash2, LucideIcon,
+  Flame, Bike, Footprints, Plus, Zap, Calendar, CalendarDays, RefreshCw, Trophy, TrendingUp,
+  Clock, Heart, MapPin, Activity, Pencil, MessageCircle, Send, Target, Sparkles, PartyPopper,
+  Check, CheckCircle2, XCircle, Trash2, LucideIcon,
 } from 'lucide-react-native';
 import { Icon } from '../components/Icon';
 import { FieldBlock, SegmentedControl, SectionLabel } from '../components/SheetUI';
 import { AIService, ChatMessage } from '../services/ai';
 import { computeProgress, expectedTrainingDays, prescriptionFor } from '../services/goalProgress';
+import { startGoalGeneration } from '../services/goalGeneration';
 import { phaseForDate, scheduleForDate } from '../services/planSchedule';
 import { performStravaSync } from '../services/syncRunner';
 import { familyStyle } from '../utils/widgetFamilies';
@@ -36,15 +36,6 @@ import { AnimatedNumber } from '../components/AnimatedNumber';
 import { SkeletonWidget } from '../components/SkeletonPresets';
 import { DonutRing } from '../components/DonutRing';
 import { StaggerItem } from '../components/Stagger';
-
-const GENERATING_MESSAGES = [
-  'Analyzing your training history...',
-  'Applying the 10% volume rule...',
-  'Building your phase structure...',
-  'Calculating threshold paces...',
-  'Designing your key workouts...',
-  'Finalizing your coaching plan...',
-];
 
 const DOW_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -161,7 +152,6 @@ export default function GoalsScreen() {
   const activities = useStore(s => s.activities);
   const settings = useStore(s => s.settings);
   const userProfile = useStore(s => s.userProfile);
-  const injuries = useStore(s => s.injuries);
   const bestEfforts = useStore(s => s.bestEfforts);
   const addGoal = useStore(s => s.addGoal);
   const updateGoal = useStore(s => s.updateGoal);
@@ -183,8 +173,6 @@ export default function GoalsScreen() {
   const [simplePeriod, setSimplePeriod] = useState<'Week' | 'Month'>('Week');
   const [simpleTarget, setSimpleTarget] = useState('10');
   const [simpleActivityType, setSimpleActivityType] = useState<'All' | 'Run' | 'Walk' | 'Ride'>('All');
-  const [generatingMsgIdx, setGeneratingMsgIdx] = useState(0);
-  const msgIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [chatMessage, setChatMessage] = useState('');
 
   // Card-level UI state
@@ -267,19 +255,6 @@ export default function GoalsScreen() {
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Rotate the generating-overlay status line.
-  useEffect(() => {
-    if (isGenerating) {
-      setGeneratingMsgIdx(0);
-      msgIntervalRef.current = setInterval(() => {
-        setGeneratingMsgIdx(i => (i + 1) % GENERATING_MESSAGES.length);
-      }, 2000);
-    } else if (msgIntervalRef.current) {
-      clearInterval(msgIntervalRef.current);
-    }
-    return () => { if (msgIntervalRef.current) clearInterval(msgIntervalRef.current); };
-  }, [isGenerating]);
 
   // ── Check-in plumbing ──────────────────────────────────────────────
 
@@ -503,56 +478,19 @@ export default function GoalsScreen() {
       return;
     }
 
-    if (!settings.llmApiKey) {
-      setToast({ title: 'Error', message: 'Please configure your LLM API Key in settings first to generate a plan.', type: 'error' });
-      return;
-    }
+    // Fire-and-forget: the plan builds in the background (GenerationPill shows
+    // progress above the tab bar) so the app stays fully usable meanwhile.
+    startGoalGeneration({
+      title: newGoalTitle,
+      targetDate: newGoalDate,
+      targetFinishTime: newGoalFinishTime.trim() || undefined,
+    });
 
-    try {
-      setIsGenerating(true);
-
-      const generatedPlan = await AIService.generateTrainingPlan(
-        newGoalTitle,
-        newGoalDate,
-        activities,
-        settings.llmProvider,
-        settings.llmApiKey,
-        settings.coachPersonality,
-        injuries,
-        userProfile,
-        { bestEfforts, targetFinishTime: newGoalFinishTime.trim() || undefined, unit: settings.unit }
-      );
-
-      const finalGoal: Goal = {
-        id: editingGoal || Date.now().toString(),
-        title: newGoalTitle,
-        targetDate: newGoalDate,
-        daysRemaining: daysLeftOf(newGoalDate),
-        type: 'Race',
-        metric: 'days',
-        progress: 0,
-        phase: generatedPlan.phase || 'Base Building',
-        phases: generatedPlan.phases || [],
-        weeklyVolume: generatedPlan.weeklyVolume || { current: 0, target: 40 },
-        longRun: generatedPlan.longRun || { current: 0, target: 15 },
-        keyWorkout: generatedPlan.keyWorkout || 'Easy Run\n45 minutes aerobic',
-        targetFinishTime: newGoalFinishTime.trim() || undefined,
-      };
-
-      if (editingGoal) updateGoal(finalGoal); else addGoal(finalGoal);
-
-      setEditingGoal(null);
-      setFormVisible(false);
-      setNewGoalTitle('');
-      setNewGoalDate('');
-      setNewGoalFinishTime('');
-      successHaptic();
-      setToast({ title: 'Success', message: 'Goal plan created!', type: 'success' });
-    } catch (error) {
-      setToast({ title: 'Error', message: 'Failed to generate training plan. Check API Key.', type: 'error' });
-    } finally {
-      setIsGenerating(false);
-    }
+    setEditingGoal(null);
+    setFormVisible(false);
+    setNewGoalTitle('');
+    setNewGoalDate('');
+    setNewGoalFinishTime('');
   };
 
   // ── Plan-diff apply (never touches checkIns) ───────────────────────
@@ -633,19 +571,46 @@ export default function GoalsScreen() {
 
         {goals && goals.length === 0 && (
           <View style={styles.emptyState}>
-            <View style={styles.emptyIconWrap}>
-              <Icon icon={Target} variant="plain" size="xl" color={theme.colors.primary} />
-            </View>
+            <LinearGradient
+              colors={theme.colors.gradients.primary}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.emptyIconRing}
+            >
+              <View style={styles.emptyIconWrap}>
+                <Icon icon={Target} variant="plain" size="xl" color={theme.colors.primary} />
+              </View>
+            </LinearGradient>
             <Typography style={styles.emptyTitle}>Set your first goal</Typography>
             <Typography style={styles.emptySub}>
               Pick a race date or a simple weekly target — your AI coach will build the plan around it.
             </Typography>
+
+            <View style={styles.emptyFeatures}>
+              {(
+                [
+                  [CalendarDays, 'Phase-by-phase plan, week by week to race day'],
+                  [Zap, "Daily workouts sized to your actual training history"],
+                  [RefreshCw, 'Strava runs auto-match your plan as check-ins'],
+                ] as const
+              ).map(([FeatIcon, text]) => (
+                <View key={text} style={styles.emptyFeatureRow}>
+                  <View style={styles.emptyFeatureIcon}>
+                    <Icon icon={FeatIcon} variant="plain" size="sm" color={theme.colors.primary} />
+                  </View>
+                  <Typography style={styles.emptyFeatureText}>{text}</Typography>
+                </View>
+              ))}
+            </View>
+
             <Button
               title="Create a Goal"
               icon={Plus}
               onPress={openCreate}
-              style={{ marginTop: 18 }}
+              fullWidth
+              style={{ marginTop: 20 }}
             />
+            <Typography style={styles.emptyFootnote}>Built from your synced Strava history</Typography>
           </View>
         )}
 
@@ -1043,27 +1008,6 @@ export default function GoalsScreen() {
         ))}
 
       </ScrollView>
-
-      {/* ── AI Generating Overlay ── */}
-      <Modal visible={isGenerating} transparent animationType="fade" statusBarTranslucent>
-        <View style={styles.genOverlay}>
-          <Pulsing maxScale={1.1} duration={900}>
-            <View style={styles.genIconBg}>
-              <LinearGradient
-                colors={planFam.gradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFillObject}
-              />
-              <Icon icon={Sparkles} variant="plain" size="hero" color={theme.colors.onAccent} />
-            </View>
-          </Pulsing>
-          <Typography style={styles.genTitle}>Building your plan</Typography>
-          <GoalThinkingDots />
-          <Typography style={styles.genMessage}>{GENERATING_MESSAGES[generatingMsgIdx]}</Typography>
-          <Typography style={styles.genHint}>This can take up to 30 seconds</Typography>
-        </View>
-      </Modal>
 
       {/* ── New / Edit goal ── */}
       <Sheet

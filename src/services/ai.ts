@@ -6,9 +6,11 @@ import { prescriptionForDate, prescriptionSummary } from './planSchedule';
 // ── Providers ────────────────────────────────────────────────────────────────
 // Pinned model ids — floating aliases (gemini-flash-latest) silently changed
 // behaviour under us. BYO-key app: the user supplies the key in Settings.
+// Gemini policy: always the newest GA flash model (owner preference) —
+// bump this pin when Google ships the next stable flash.
 
 const MODELS = {
-  gemini: 'gemini-2.5-flash',
+  gemini: 'gemini-3.5-flash',
   openai: 'gpt-4o',
   anthropic: 'claude-opus-4-8',
 } as const;

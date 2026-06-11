@@ -15,6 +15,7 @@ import { AppState, StyleSheet, View } from 'react-native';
 import { Typography } from './src/components/Typography';
 import { Flame } from 'lucide-react-native';
 import { GlobalToast } from './src/components/GlobalToast';
+import { GenerationPill } from './src/components/GenerationPill';
 import {
   useFonts,
   Sora_400Regular,
@@ -182,6 +183,7 @@ export default function App() {
             <StatusBar style="light" />
             <TabNavigator />
             {(!isReady || !fontsLoaded) && <SplashScreen />}
+            <GenerationPill />
             <GlobalToast />
           </NavigationContainer>
         </SafeAreaProvider>

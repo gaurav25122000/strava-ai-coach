@@ -477,6 +477,9 @@ interface AppState {
   coachChat: Array<{ role: 'user' | 'assistant'; text: string; at: string }>;
   setCoachChat: (messages: Array<{ role: 'user' | 'assistant'; text: string; at: string }>) => void;
   setToast: (toast: ToastOptions | null) => void;
+  /** Transient: a plan generation running in the background (not persisted). */
+  goalGeneration: { title: string; startedAt: number } | null;
+  setGoalGeneration: (gen: { title: string; startedAt: number } | null) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -501,6 +504,8 @@ export const useStore = create<AppState>()(
       // here, so showing a toast never re-renders main-store subscribers or
       // triggers a persist write.
       setToast: (toast) => useToastStore.getState().show(toast),
+      goalGeneration: null,
+      setGoalGeneration: (goalGeneration) => set({ goalGeneration }),
       userStats: {
         currentStreak: 0,
         bestStreak: 0,

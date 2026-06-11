@@ -61,15 +61,39 @@ export const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.colors.border,
     marginBottom: 16,
   },
+  emptyIconRing: {
+    width: 82, height: 82, borderRadius: 41,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 16,
+    ...theme.shadows.glow(theme.colors.primary),
+  },
   emptyIconWrap: {
     width: 76, height: 76, borderRadius: 38,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: withAlpha(theme.colors.primary, 'soft'),
-    borderWidth: 1, borderColor: withAlpha(theme.colors.primary, 'medium'),
-    marginBottom: 14,
+    backgroundColor: theme.colors.surfaceElevated,
   },
   emptyTitle: { ...theme.typography.heading, color: theme.colors.text },
   emptySub: { ...theme.typography.footnote, color: theme.colors.textSecondary, marginTop: 6, textAlign: 'center', maxWidth: 280 },
+  emptyFeatures: {
+    alignSelf: 'stretch',
+    marginTop: 20,
+    gap: 4,
+    backgroundColor: theme.colors.surfaceMuted,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1, borderColor: theme.colors.border,
+    paddingVertical: 6, paddingHorizontal: 12,
+  },
+  emptyFeatureRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 9,
+  },
+  emptyFeatureIcon: {
+    width: 30, height: 30, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: withAlpha(theme.colors.primary, 'soft'),
+  },
+  emptyFeatureText: { ...theme.typography.footnote, color: theme.colors.textSecondary, flex: 1 },
+  emptyFootnote: { ...theme.typography.micro, color: theme.colors.textSecondary, marginTop: 12 },
 
   goalCard: {
     padding: theme.spacing.lg,
@@ -252,28 +276,6 @@ export const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: theme.colors.divider,
   },
-
-  // ── Generating overlay ──
-  genOverlay: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 40,
-    backgroundColor: theme.colors.background,
-  },
-  genIconBg: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    marginBottom: 36,
-    ...theme.shadows.glow(theme.colors.families.plan.accent),
-  },
-  genTitle: { ...theme.typography.title, textAlign: 'center', color: theme.colors.text, marginBottom: 8 },
-  genMessage: { ...theme.typography.body, textAlign: 'center', color: theme.colors.textSecondary, marginTop: 24, minHeight: 22 },
-  genHint: { ...theme.typography.caption, textAlign: 'center', color: withAlpha(theme.colors.text, 'strong'), marginTop: 32 },
 
   // ── Chat ──
   chatBubbleUser: {
