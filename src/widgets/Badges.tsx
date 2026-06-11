@@ -1,5 +1,5 @@
-import React, { memo, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import React, { memo, useCallback, useMemo, useState } from 'react';
+import { FlatList, ScrollView, StyleSheet, View } from 'react-native';
 import { Trophy } from 'lucide-react-native';
 import { format, parseISO } from 'date-fns';
 import { WidgetCard } from '../components/WidgetCard';
@@ -10,11 +10,29 @@ import { BadgeMedal } from '../components/BadgeMedal';
 import { BadgeProgressRing, ringBoxSize } from './_badgeProgressRing';
 import { theme, withAlpha } from '../theme';
 import { familyStyle, WIDGET_FAMILY, WIDGET_TITLES } from '../utils/widgetFamilies';
-import { computeMilestoneProgress, getAllMilestoneDefs, MilestoneDef } from '../services/milestones';
+import {
+  computeMilestoneProgress,
+  getAllMilestoneDefs,
+  MilestoneCategory,
+  MilestoneDef,
+} from '../services/milestones';
 import { useStore } from '../store/useStore';
 
 const MEDAL_SIZE = 64;
 const NEW_WINDOW_MS = 7 * 86400000;
+
+// With ~100 badges, an unfiltered wall is noise — category chips keep the
+// strip scannable. 'all' stays the default (earned-first, closest-next).
+const CATEGORY_FILTERS: { key: MilestoneCategory | 'all'; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'distance', label: 'Distance' },
+  { key: 'streak', label: 'Streaks' },
+  { key: 'consistency', label: 'Consistency' },
+  { key: 'frequency', label: 'Sessions' },
+  { key: 'duration', label: 'Time' },
+  { key: 'speed', label: 'Speed' },
+  { key: 'elevation', label: 'Climb' },
+];
 
 /**
  * Earned-first badge strip: earned medals (newest first, NEW pip inside the
@@ -26,6 +44,7 @@ export const BadgesWidget = memo(function BadgesWidget() {
   const milestones = useStore((s) => s.milestones);
   const activities = useStore((s) => s.activities);
   const [selected, setSelected] = useState<MilestoneDef | null>(null);
+  const [filter, setFilter] = useState<MilestoneCategory | 'all'>('all');
 
   const defs = getAllMilestoneDefs();
   const accent = familyStyle('records').accent;
@@ -39,8 +58,9 @@ export const BadgesWidget = memo(function BadgesWidget() {
 
   // Earned first (newest unlock first), then locked closest-to-earned first.
   const ordered = useMemo(() => {
-    const earned = defs.filter((d) => earnedById.has(d.id));
-    const locked = defs.filter((d) => !earnedById.has(d.id));
+    const pool = filter === 'all' ? defs : defs.filter((d) => d.category === filter);
+    const earned = pool.filter((d) => earnedById.has(d.id));
+    const locked = pool.filter((d) => !earnedById.has(d.id));
     earned.sort((a, b) => {
       const ta = new Date(earnedById.get(a.id)!.earnedAt).getTime();
       const tb = new Date(earnedById.get(b.id)!.earnedAt).getTime();
@@ -48,7 +68,7 @@ export const BadgesWidget = memo(function BadgesWidget() {
     });
     locked.sort((a, b) => (progress[b.id]?.pct ?? 0) - (progress[a.id]?.pct ?? 0));
     return [...earned, ...locked];
-  }, [defs, earnedById, progress]);
+  }, [defs, earnedById, progress, filter]);
 
   // Closest unearned milestone by pct — the "next up" nudge in the sheet.
   const nextUp = useMemo(() => {
@@ -64,6 +84,59 @@ export const BadgesWidget = memo(function BadgesWidget() {
 
   const selectedEarned = selected ? earnedById.get(selected.id) : undefined;
   const selectedProgress = selected ? progress[selected.id] : undefined;
+
+  const renderBadge = useCallback(
+    ({ item: def }: { item: MilestoneDef }) => {
+      const earned = earnedById.get(def.id);
+      const prog = progress[def.id];
+      const isNew =
+        !!earned && Date.now() - new Date(earned.earnedAt).getTime() < NEW_WINDOW_MS;
+      const medal = (
+        <BadgeMedal
+          milestone={{
+            title: def.title,
+            description: def.description,
+            icon: def.icon,
+            category: def.category,
+            earnedAt: earned?.earnedAt ?? null,
+          }}
+          size={MEDAL_SIZE}
+          unlocked={!!earned}
+          hideLabel
+        />
+      );
+      return (
+        <PressableScale onPress={() => setSelected(def)} style={styles.cell}>
+          <View style={styles.medalBox}>
+            {earned || !prog ? (
+              medal
+            ) : (
+              <BadgeProgressRing
+                size={MEDAL_SIZE}
+                pct={prog.pct}
+                color={accent}
+                trackColor={theme.colors.surface}
+              >
+                {medal}
+              </BadgeProgressRing>
+            )}
+            {isNew && <View style={[styles.newPip, { backgroundColor: accent }]} />}
+          </View>
+          <Typography style={[styles.cellTitle, !earned && styles.cellTitleLocked]} numberOfLines={2}>
+            {def.title}
+          </Typography>
+          <Typography style={styles.cellSub}>
+            {earned
+              ? format(parseISO(earned.earnedAt), 'MMM yyyy')
+              : prog
+                ? `${Math.round(prog.pct * 100)}%`
+                : 'Locked'}
+          </Typography>
+        </PressableScale>
+      );
+    },
+    [earnedById, progress, accent],
+  );
 
   return (
     <WidgetCard
@@ -81,58 +154,38 @@ export const BadgesWidget = memo(function BadgesWidget() {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.strip}
+        contentContainerStyle={styles.filterRow}
       >
-        {ordered.map((def) => {
-          const earned = earnedById.get(def.id);
-          const prog = progress[def.id];
-          const isNew =
-            !!earned && Date.now() - new Date(earned.earnedAt).getTime() < NEW_WINDOW_MS;
-          const medal = (
-            <BadgeMedal
-              milestone={{
-                title: def.title,
-                description: def.description,
-                icon: def.icon,
-                category: def.category,
-                earnedAt: earned?.earnedAt ?? null,
-              }}
-              size={MEDAL_SIZE}
-              unlocked={!!earned}
-              hideLabel
-            />
-          );
+        {CATEGORY_FILTERS.map((f) => {
+          const active = filter === f.key;
           return (
-            <PressableScale key={def.id} onPress={() => setSelected(def)} style={styles.cell}>
-              <View style={styles.medalBox}>
-                {earned || !prog ? (
-                  medal
-                ) : (
-                  <BadgeProgressRing
-                    size={MEDAL_SIZE}
-                    pct={prog.pct}
-                    color={accent}
-                    trackColor={theme.colors.surface}
-                  >
-                    {medal}
-                  </BadgeProgressRing>
-                )}
-                {isNew && <View style={[styles.newPip, { backgroundColor: accent }]} />}
-              </View>
-              <Typography style={[styles.cellTitle, !earned && styles.cellTitleLocked]} numberOfLines={2}>
-                {def.title}
-              </Typography>
-              <Typography style={styles.cellSub}>
-                {earned
-                  ? format(parseISO(earned.earnedAt), 'MMM yyyy')
-                  : prog
-                    ? `${Math.round(prog.pct * 100)}%`
-                    : 'Locked'}
+            <PressableScale
+              key={f.key}
+              onPress={() => setFilter(f.key)}
+              style={[
+                styles.filterChip,
+                active && { backgroundColor: withAlpha(accent, 'tint'), borderColor: withAlpha(accent, 'strong') },
+              ]}
+            >
+              <Typography style={[styles.filterTxt, active && { color: accent }]}>
+                {f.label}
               </Typography>
             </PressableScale>
           );
         })}
       </ScrollView>
+      <FlatList
+        horizontal
+        data={ordered}
+        keyExtractor={(d) => d.id}
+        renderItem={renderBadge}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.strip}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={5}
+        removeClippedSubviews
+      />
 
       <Sheet
         visible={!!selected}
@@ -181,6 +234,23 @@ const styles = StyleSheet.create({
   },
   countTxt: {
     ...theme.typography.micro,
+  },
+  filterRow: {
+    gap: 8,
+    paddingHorizontal: 4,
+    paddingBottom: 10,
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface,
+  },
+  filterTxt: {
+    ...theme.typography.micro,
+    color: theme.colors.textSecondary,
   },
   strip: {
     gap: 14,

@@ -18,7 +18,7 @@ import { useStore } from '../store/useStore';
 /** "2.3 km to go" / "0:12 /km to shave off" — one motivational line. */
 function motivationLine(p: MilestoneProgress): string {
   if (p.unit === 'min/km') {
-    if (!isFinite(p.current)) return 'Log a run to set your pace baseline';
+    if (!isFinite(p.current)) return 'Log an activity to set your pace baseline';
     const gap = p.current - p.target;
     if (gap <= 0) return 'Almost there!';
     const m = Math.floor(gap);

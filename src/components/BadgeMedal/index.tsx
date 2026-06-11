@@ -11,13 +11,15 @@ import { medalStyles, sharedStyles } from './styles';
 // Each milestone category gets its own metal-tone gradient so the dashboard
 // communicates the achievement *type* at a glance: distance is warm gold,
 // streak is fire orange, speed is electric cyan, elevation is mountain teal,
-// frequency is purple amethyst.
+// frequency is purple amethyst, duration is deep indigo, consistency is rose.
 const CATEGORY_GRADIENT: Record<Milestone['category'], [string, string, string]> = {
-  distance:  ['#FCD34D', '#F59E0B', '#B45309'],
-  streak:    ['#FB923C', '#F97316', '#9A3412'],
-  speed:     ['#67E8F9', '#06B6D4', '#0E7490'],
-  elevation: ['#5EEAD4', '#10B981', '#065F46'],
-  frequency: ['#C4B5FD', '#8B5CF6', '#4C1D95'],
+  distance:    ['#FCD34D', '#F59E0B', '#B45309'],
+  streak:      ['#FB923C', '#F97316', '#9A3412'],
+  speed:       ['#67E8F9', '#06B6D4', '#0E7490'],
+  elevation:   ['#5EEAD4', '#10B981', '#065F46'],
+  frequency:   ['#C4B5FD', '#8B5CF6', '#4C1D95'],
+  duration:    ['#A5B4FC', '#6366F1', '#3730A3'],
+  consistency: ['#FDA4AF', '#F43F5E', '#9F1239'],
 };
 
 interface Props {

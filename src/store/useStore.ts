@@ -267,7 +267,7 @@ export interface Milestone {
   description: string;
   icon: string; // emoji
   earnedAt: string; // ISO date
-  category: 'distance' | 'streak' | 'speed' | 'elevation' | 'frequency';
+  category: 'distance' | 'streak' | 'speed' | 'elevation' | 'frequency' | 'duration' | 'consistency';
 }
 
 export interface BestEffort {
