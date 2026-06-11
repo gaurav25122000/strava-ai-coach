@@ -2,6 +2,7 @@ import React, { memo, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { CalendarDays, Flame, TrendingDown, TrendingUp } from 'lucide-react-native';
 import { WidgetCard } from '../components/WidgetCard';
+import { DonutRing } from '../components/DonutRing';
 import { AnimatedNumber } from '../components/AnimatedNumber';
 import { Typography } from '../components/Typography';
 import { theme, withAlpha } from '../theme';
@@ -22,6 +23,7 @@ const DAY_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
  */
 export const ThisWeekWidget = memo(function ThisWeekWidget() {
   const activities = useStore((s) => s.activities);
+  const weeklyGoalKm = useStore((s) => s.userProfile.weeklyGoalKm);
 
   // One pass: this week's stats + last week's km for the trend chip.
   const stats = useMemo(() => {
@@ -88,6 +90,12 @@ export const ThisWeekWidget = memo(function ThisWeekWidget() {
   const trendColor = up ? theme.colors.success : theme.colors.error;
   const maxKm = Math.max(...last7.map((d) => d.km), 1);
 
+  // Weekly-goal ring, absorbed from the retired Weekly Goal Tracker widget.
+  const hasGoal = weeklyGoalKm > 0;
+  const goalPct = hasGoal ? Math.min(1, stats.km / Math.max(1, weeklyGoalKm)) : 0;
+  const goalMet = hasGoal && stats.km >= weeklyGoalKm;
+  const ringColor = goalMet ? theme.colors.success : accent;
+
   return (
     <WidgetCard family={WIDGET_FAMILY.ThisWeek} title={WIDGET_TITLES.ThisWeek} icon={CalendarDays}>
       {activities.length === 0 ? (
@@ -98,27 +106,63 @@ export const ThisWeekWidget = memo(function ThisWeekWidget() {
         />
       ) : (
         <>
-          <View style={bigStat.row}>
-            <View style={bigStat.numWrap}>
-              <AnimatedNumber
-                value={stats.km}
-                decimals={1}
-                style={[bigStat.num, { color: accent }] as any}
-              />
-              <Typography style={bigStat.unit}>km</Typography>
+          {hasGoal ? (
+            <View style={styles.goalRow}>
+              <DonutRing
+                size={108}
+                stroke={11}
+                progress={goalPct}
+                color={ringColor}
+                gradient={goalMet ? theme.colors.gradients.success : familyStyle('activity').gradient}
+                trackColor={theme.colors.background}
+              >
+                <AnimatedNumber value={stats.km} decimals={1} style={styles.ringNum as any} />
+                <Typography style={styles.ringGoal}>of {weeklyGoalKm} km</Typography>
+                <Typography style={[styles.ringPct, { color: ringColor }]}>
+                  {Math.round(goalPct * 100)}%
+                </Typography>
+              </DonutRing>
+              <View style={styles.goalCol}>
+                <StatChip
+                  color={trendColor}
+                  icon={up ? TrendingUp : TrendingDown}
+                  label={`${stats.lastKm.toFixed(1)} km last wk`}
+                />
+                <View style={styles.goalMetrics}>
+                  <MetricBlock label="Time" value={formatDuration(stats.time)} />
+                  <MetricBlock label="Days" value={`${stats.days}`} />
+                </View>
+                <View style={styles.goalMetrics}>
+                  <MetricBlock label="Elev" value={`${stats.elev} m`} />
+                  <MetricBlock label="Acts" value={`${stats.count}`} />
+                </View>
+              </View>
             </View>
-            <StatChip
-              color={trendColor}
-              icon={up ? TrendingUp : TrendingDown}
-              label={`${stats.lastKm.toFixed(1)} km last wk`}
-            />
-          </View>
-          <View style={styles.metricRow}>
-            <MetricBlock label="Time" value={formatDuration(stats.time)} />
-            <MetricBlock label="Elevation" value={`${stats.elev} m`} />
-            <MetricBlock label="Days active" value={`${stats.days}`} />
-            <MetricBlock label="Activities" value={`${stats.count}`} />
-          </View>
+          ) : (
+            <>
+              <View style={bigStat.row}>
+                <View style={bigStat.numWrap}>
+                  <AnimatedNumber
+                    value={stats.km}
+                    decimals={1}
+                    style={[bigStat.num, { color: accent }] as any}
+                  />
+                  <Typography style={bigStat.unit}>km</Typography>
+                </View>
+                <StatChip
+                  color={trendColor}
+                  icon={up ? TrendingUp : TrendingDown}
+                  label={`${stats.lastKm.toFixed(1)} km last wk`}
+                />
+              </View>
+              <View style={styles.metricRow}>
+                <MetricBlock label="Time" value={formatDuration(stats.time)} />
+                <MetricBlock label="Elevation" value={`${stats.elev} m`} />
+                <MetricBlock label="Days active" value={`${stats.days}`} />
+                <MetricBlock label="Activities" value={`${stats.count}`} />
+              </View>
+            </>
+          )}
           <View style={styles.dayRow}>
             {last7.map((d, i) => {
               const has = d.km > 0;
@@ -154,6 +198,38 @@ export const ThisWeekWidget = memo(function ThisWeekWidget() {
 });
 
 const styles = StyleSheet.create({
+  goalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginBottom: 14,
+  },
+  goalCol: {
+    flex: 1,
+    gap: 8,
+    alignItems: 'flex-start',
+  },
+  goalMetrics: {
+    flexDirection: 'row',
+    gap: 8,
+    alignSelf: 'stretch',
+  },
+  ringNum: {
+    fontSize: 22,
+    fontWeight: '900',
+    lineHeight: 26,
+    color: theme.colors.text,
+    letterSpacing: -0.5,
+  },
+  ringGoal: {
+    fontSize: 10,
+    color: theme.colors.textSecondary,
+    fontWeight: '600',
+  },
+  ringPct: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
   metricRow: {
     flexDirection: 'row',
     gap: 8,

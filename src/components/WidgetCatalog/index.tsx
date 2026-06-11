@@ -9,7 +9,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import { Eye, EyeOff, GripVertical, Plus, Search, X } from 'lucide-react-native';
 import { Typography } from '../Typography';
@@ -226,6 +226,9 @@ export function WidgetCatalog({ visible, activeIds, onClose, onSave }: WidgetCat
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      {/* Android: gestures inside an RN Modal need their own gesture root —
+          without it GestureDetector rows never receive touches there. */}
+      <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={[styles.container, { paddingTop: Platform.OS === 'ios' ? 12 : insets.top + 8 }]}>
         <View style={styles.header}>
           <PressableScale onPress={onClose} hitSlop={theme.hitSlop} accessibilityLabel="Close customise">
@@ -291,6 +294,7 @@ export function WidgetCatalog({ visible, activeIds, onClose, onSave }: WidgetCat
           })}
         </ScrollView>
       </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }

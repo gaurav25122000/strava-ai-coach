@@ -6,7 +6,6 @@ import { WeeklyDigestWidget } from './WeeklyDigest';
 import { ActiveGoalsWidget } from './ActiveGoals';
 import { InjuryAlertWidget } from './InjuryAlert';
 import { TrainingLoadWidget } from './TrainingLoad';
-import { WeeklyGoalTrackerWidget } from './WeeklyGoalTracker';
 import { ThisWeekWidget } from './ThisWeek';
 import { ActivityMapWidget } from './ActivityMap';
 import { RecentActivitiesWidget } from './RecentActivities';
@@ -15,7 +14,6 @@ import { ActivityMixWidget } from './ActivityMix';
 import { YearToDateWidget } from './YearToDate';
 import { AllTimeStatsWidget } from './AllTimeStats';
 import { ShoeTrackerWidget } from './ShoeTracker';
-import { StreakGuardWidget } from './StreakGuard';
 import { WeeklyRecapWidget } from './WeeklyRecap';
 import { PRProximityWidget } from './PRProximity';
 import { RestBalanceWidget } from './RestBalance';
@@ -47,7 +45,6 @@ export const WIDGET_REGISTRY: Record<string, React.ComponentType> = {
   ActiveGoals: ActiveGoalsWidget,
   InjuryAlert: InjuryAlertWidget,
   TrainingLoad: TrainingLoadWidget,
-  WeeklyGoalTracker: WeeklyGoalTrackerWidget,
   ThisWeek: ThisWeekWidget,
   ActivityMap: ActivityMapWidget,
   RecentActivities: RecentActivitiesWidget,
@@ -56,7 +53,6 @@ export const WIDGET_REGISTRY: Record<string, React.ComponentType> = {
   YearToDate: YearToDateWidget,
   AllTimeStats: AllTimeStatsWidget,
   ShoeTracker: ShoeTrackerWidget,
-  StreakGuard: StreakGuardWidget,
   WeeklyRecap: WeeklyRecapWidget,
   PRProximity: PRProximityWidget,
   RestBalance: RestBalanceWidget,

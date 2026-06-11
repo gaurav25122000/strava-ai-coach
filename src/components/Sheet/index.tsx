@@ -9,7 +9,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -151,7 +151,8 @@ export function Sheet({
 
   return (
     <Modal transparent statusBarTranslucent visible animationType="none" onRequestClose={startClose}>
-      <View style={styles.root}>
+      {/* Android: gestures inside an RN Modal need their own gesture root. */}
+      <GestureHandlerRootView style={styles.root}>
         <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, backdropStyle]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={startClose} accessibilityLabel="Close sheet" />
         </Animated.View>
@@ -187,7 +188,7 @@ export function Sheet({
             )}
           </Animated.View>
         </KeyboardAvoidingView>
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }

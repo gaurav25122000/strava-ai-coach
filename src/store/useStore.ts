@@ -648,7 +648,8 @@ export const useStore = create<AppState>()(
       // v5 (2026-06): SportSplit→ActivityMix, StravaTotals→AllTimeStats.
       // v6 (2026-06): RecoveryAdvisor→TrainingLoad, BestEfforts→PersonalBests;
       // WeeklyRecap, PRProximity, RestBalance introduced.
-      version: 6,
+      // v7 (2026-06): WeeklyGoalTracker→ThisWeek, StreakGuard→HeroBanner.
+      version: 7,
       migrate: (persistedState: any, fromVersion: number) => {
         if (!persistedState) return persistedState;
         const next = { ...persistedState };
@@ -662,7 +663,7 @@ export const useStore = create<AppState>()(
           next.settings = { ...(next.settings ?? {}), widgetLayout: withHero };
         }
 
-        if (fromVersion < 6) {
+        if (fromVersion < 7) {
           const layout: string[] = next.settings?.widgetLayout ?? [...DEFAULT_WIDGET_LAYOUT];
           const migrated: string[] = [];
           for (const id of layout) {
@@ -674,10 +675,6 @@ export const useStore = create<AppState>()(
             migrated.splice(migrated.indexOf('Badges') + 1, 0, 'NextBadge');
           }
           // v5 additions slot into existing layouts at their default positions.
-          if (!migrated.includes('StreakGuard')) {
-            const anchor = migrated.indexOf('HeroBanner');
-            migrated.splice(anchor >= 0 ? anchor + 1 : 1, 0, 'StreakGuard');
-          }
           if (!migrated.includes('ActiveHours')) {
             const anchor = migrated.indexOf('MonthlyVolume');
             migrated.splice(anchor >= 0 ? anchor + 1 : migrated.length, 0, 'ActiveHours');

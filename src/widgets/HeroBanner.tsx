@@ -8,7 +8,7 @@ import { AnimatedNumber } from '../components/AnimatedNumber';
 import { Pulsing } from '../components/Pulsing';
 import { theme } from '../theme';
 import { familyStyle, WIDGET_FAMILY, WIDGET_TITLES } from '../utils/widgetFamilies';
-import { activityDayKey } from '../utils/dates';
+import { activityDayKey, localDateStr } from '../utils/dates';
 import { useStore } from '../store/useStore';
 
 /**
@@ -18,6 +18,17 @@ import { useStore } from '../store/useStore';
 export const HeroBannerWidget = memo(function HeroBannerWidget() {
   const userStats = useStore((s) => s.userStats);
   const activities = useStore((s) => s.activities);
+
+  // Streak Guard status, absorbed: is today covered, and if not, how long
+  // is left to keep the chain alive?
+  const guard = useMemo(() => {
+    const today = localDateStr(new Date());
+    const activeToday = activities.some((a) => activityDayKey(a) === today);
+    const now = new Date();
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const mins = Math.max(0, Math.round((midnight.getTime() - now.getTime()) / 60_000));
+    return { activeToday, hoursLeft: Math.floor(mins / 60), minsLeft: mins % 60 };
+  }, [activities]);
 
   // % of the last 30 days with at least one activity.
   const consistencyScore = useMemo(() => {
@@ -59,6 +70,15 @@ export const HeroBannerWidget = memo(function HeroBannerWidget() {
               Weekly streak: {userStats.currentWeeklyStreak || 0} wks · {consistencyScore}% consistent
             </Typography>
           </View>
+        </View>
+        <View style={styles.guardStrip}>
+          <Typography style={styles.guardTxt}>
+            {guard.activeToday
+              ? `✓ Streak safe — you already moved today · best ${userStats.bestStreak} days`
+              : userStats.currentStreak > 0
+                ? `⚠ On the line — ${guard.hoursLeft}h ${guard.minsLeft}m left to keep it alive`
+                : `Day one starts today · best ever ${userStats.bestStreak} days`}
+          </Typography>
         </View>
         <View style={styles.heroChipRow}>
           <View style={styles.heroChip}>
@@ -135,6 +155,20 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.7)',
     fontWeight: '600',
     marginTop: 2,
+  },
+  guardStrip: {
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderColor: 'rgba(255,255,255,0.22)',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginBottom: 10,
+  },
+  guardTxt: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: theme.colors.onAccent,
   },
   heroChipRow: {
     flexDirection: 'row',

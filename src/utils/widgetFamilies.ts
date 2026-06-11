@@ -47,7 +47,6 @@ export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   RestBalance:       'recovery',
   // Volume / activity
   HeroBanner:        'activity',
-  WeeklyGoalTracker: 'activity',
   ThisWeek:          'activity',
   WeeklyRecap:       'activity',
   ActivityMap:       'activity',
@@ -57,7 +56,6 @@ export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   YearToDate:        'activity',
   AllTimeStats:      'activity',
   ShoeTracker:       'activity',
-  StreakGuard:       'activity',
   ActiveHours:       'activity',
   TrainerRatio:      'activity',
   // Health / physiology
@@ -100,6 +98,10 @@ export const RETIRED_WIDGETS: Record<string, string | null> = {
   // BestEfforts was fully redundant with Personal Bests' tiles + sheet.
   RecoveryAdvisor: 'TrainingLoad',
   BestEfforts: 'PersonalBests',
+  // v7 (2026-06): weekly-goal ring lives inside This Week; Streak Guard's
+  // today-status strip lives inside Streaks & Totals.
+  WeeklyGoalTracker: 'ThisWeek',
+  StreakGuard: 'HeroBanner',
 };
 
 // The curated default dashboard for fresh installs (and the single source of
@@ -108,8 +110,6 @@ export const RETIRED_WIDGETS: Record<string, string | null> = {
 export const DEFAULT_WIDGET_LAYOUT: string[] = [
   'TodayHero',
   'HeroBanner',
-  'StreakGuard',
-  'WeeklyGoalTracker',
   'ThisWeek',
   'WeeklyRecap',
   'CoachInsight',
@@ -162,8 +162,7 @@ export const WIDGET_TITLES: Record<string, string> = {
   CoachInsight:          'Coach Insight',
   WeeklyDigest:          'AI Weekly Digest',
   InjuryAlert:           'Injury Alert',
-  WeeklyGoalTracker:     'Weekly Goal Tracker',
-  ThisWeek:              'This Week Stats',
+  ThisWeek:              'This Week',
   PaceTrend:             'Pace Trend (8 weeks)',
   Cadence:               'Cadence Tracker',
   IntensityDistribution: 'Intensity Distribution (80/20)',
@@ -182,7 +181,6 @@ export const WIDGET_TITLES: Record<string, string> = {
   Badges:                'Milestones & Badges',
   NextBadge:             'Next Badge',
   StarredSegments:       'Starred Segments',
-  StreakGuard:           'Streak Guard',
   ActiveHours:           'Active Hours',
   WeeklyRecap:           'Weekly Recap',
   PRProximity:           'PR Proximity',
