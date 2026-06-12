@@ -32,6 +32,29 @@ interface ChartDonutProps {
 const START_DEG = -90;
 const GAP_DEG = 3.5;
 
+/**
+ * Round stroke caps paint strokeWidth/2 BEYOND each end of the arc path — at
+ * donut proportions that's ±10–15° per end, which used to smear every segment
+ * across its neighbours. Inset the arc geometry by the cap angle so the
+ * rounded ends finish exactly on the segment's allotted span; slices too thin
+ * to absorb the inset render butt-capped instead (and stay visible rather
+ * than being swallowed by a neighbour's cap).
+ */
+export function donutArcGeometry(
+  spec: { startDeg: number; sweepDeg: number },
+  strokeWidth: number,
+  radius: number,
+): { startDeg: number; sweepDeg: number; rounded: boolean } {
+  const capDeg = (strokeWidth / 2 / radius) * (180 / Math.PI);
+  const rounded = spec.sweepDeg > capDeg * 2 + 2;
+  if (!rounded) return { startDeg: spec.startDeg, sweepDeg: spec.sweepDeg, rounded };
+  return {
+    startDeg: spec.startDeg + capDeg,
+    sweepDeg: Math.max(spec.sweepDeg - capDeg * 2, 0.5),
+    rounded,
+  };
+}
+
 interface ArcSpec {
   startDeg: number;
   sweepDeg: number;
@@ -63,7 +86,9 @@ function DonutArc({
   dimmed: boolean;
   emphasized: boolean;
 }) {
-  const path = useMemo(() => {
+  const { path, rounded } = useMemo(() => {
+    const sw = emphasized ? strokeWidth + 3 : strokeWidth;
+    const geo = donutArcGeometry(spec, sw, radius);
     const p = Skia.Path.Make();
     p.addArc(
       {
@@ -72,11 +97,11 @@ function DonutArc({
         width: radius * 2,
         height: radius * 2,
       },
-      spec.startDeg,
-      spec.sweepDeg,
+      geo.startDeg,
+      geo.sweepDeg,
     );
-    return p;
-  }, [center, radius, spec.startDeg, spec.sweepDeg]);
+    return { path: p, rounded: geo.rounded };
+  }, [center, radius, spec, strokeWidth, emphasized]);
 
   const opacity = useSharedValue(1);
   useEffect(() => {
@@ -95,7 +120,7 @@ function DonutArc({
       path={path}
       style="stroke"
       strokeWidth={emphasized ? strokeWidth + 3 : strokeWidth}
-      strokeCap={spec.sweepDeg >= 8 ? 'round' : 'butt'}
+      strokeCap={rounded ? 'round' : 'butt'}
       color={spec.color}
       opacity={opacity}
       start={0}
