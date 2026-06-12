@@ -199,6 +199,16 @@ export default function CompareActivitiesScreen() {
   const dataB = zb ? donutData(zb) : [];
   const showZones = dataA.length > 0 && dataB.length > 0;
 
+  // Per-zone legend rows: share + minutes for each side, zones with time only.
+  const zoneTime = (bks: { time: number }[] | null, i: number) => bks?.[i]?.time ?? 0;
+  const totalA = za ? za.slice(0, 5).reduce((sum, bk) => sum + bk.time, 0) : 0;
+  const totalB = zb ? zb.slice(0, 5).reduce((sum, bk) => sum + bk.time, 0) : 0;
+  const zoneShare = (t: number, total: number) =>
+    total > 0 ? `${Math.round((t / total) * 100)}% · ${Math.round(t / 60)}m` : '—';
+  const zoneRows = showZones
+    ? [0, 1, 2, 3, 4].filter(i => zoneTime(za, i) > 0 || zoneTime(zb, i) > 0)
+    : [];
+
   // RPE check-ins — shown only when both activities have one logged.
   const rpeA = rpeLog[a.id];
   const rpeB = rpeLog[b.id];
@@ -249,11 +259,15 @@ export default function CompareActivitiesScreen() {
                 <Typography style={[s.donutCenter, { color: COL_B }]}>B</Typography>
               </ChartDonut>
             </View>
-            <View style={s.zoneLegend}>
-              {ZONE_COLORS.map((c, i) => (
-                <View key={i} style={s.zoneLegendItem}>
-                  <View style={[s.zoneLegendDot, { backgroundColor: c }]} />
-                  <Typography style={s.zoneLegendText}>Z{i + 1}</Typography>
+            <View style={s.zoneRows}>
+              {zoneRows.map(i => (
+                <View key={i} style={s.zoneRow}>
+                  <View style={s.zoneRowLabel}>
+                    <View style={[s.zoneLegendDot, { backgroundColor: ZONE_COLORS[i] }]} />
+                    <Typography style={s.zoneLegendText}>Z{i + 1}</Typography>
+                  </View>
+                  <Typography style={s.zoneVal}>{zoneShare(zoneTime(za, i), totalA)}</Typography>
+                  <Typography style={s.zoneVal}>{zoneShare(zoneTime(zb, i), totalB)}</Typography>
                 </View>
               ))}
             </View>
@@ -341,10 +355,14 @@ const s = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
   },
   donutCenter: { fontSize: 20, fontWeight: '900', letterSpacing: -0.4 },
-  zoneLegend: {
-    flexDirection: 'row', justifyContent: 'center', gap: 14, marginTop: 14,
+  zoneRows: { marginTop: 14, gap: 7 },
+  zoneRow: { flexDirection: 'row', alignItems: 'center' },
+  zoneRowLabel: { flexDirection: 'row', alignItems: 'center', gap: 5, width: 46 },
+  // One value column centered under each donut.
+  zoneVal: {
+    flex: 1, textAlign: 'center', fontSize: 12, fontWeight: '700',
+    color: theme.colors.textSecondary, fontVariant: ['tabular-nums'],
   },
-  zoneLegendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   zoneLegendDot: { width: 8, height: 8, borderRadius: 4 },
   zoneLegendText: {
     fontSize: 10, fontWeight: '800', color: theme.colors.textSecondary,

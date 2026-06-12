@@ -114,7 +114,9 @@ export const ZoneMinutesWidget = memo(function ZoneMinutesWidget() {
                   ]}
                 />
               </View>
-              <Typography style={styles.zoneMins}>{`${m}m`}</Typography>
+              <Typography style={styles.zoneMins}>
+                {`${m}m · ${Math.round((m / total) * 100)}%`}
+              </Typography>
             </View>
           ))}
         </View>
@@ -135,5 +137,8 @@ const styles = StyleSheet.create({
     backgroundColor: withAlpha(theme.colors.text, 'faint'),
   },
   barFill: { height: '100%', borderRadius: 4 },
-  zoneMins: { width: 38, fontSize: 11, color: theme.colors.text, fontWeight: '700', textAlign: 'right' },
+  zoneMins: {
+    width: 68, fontSize: 11, color: theme.colors.text, fontWeight: '700',
+    textAlign: 'right', fontVariant: ['tabular-nums'],
+  },
 });

@@ -30,29 +30,30 @@ interface ChartDonutProps {
 }
 
 const START_DEG = -90;
-const GAP_DEG = 3.5;
+const GAP_DEG = 2;
 
 /**
- * Round stroke caps paint strokeWidth/2 BEYOND each end of the arc path — at
- * donut proportions that's ±10–15° per end, which used to smear every segment
- * across its neighbours. Inset the arc geometry by the cap angle so the
- * rounded ends finish exactly on the segment's allotted span; slices too thin
- * to absorb the inset render butt-capped instead (and stay visible rather
- * than being swallowed by a neighbour's cap).
+ * Angular layout for the ring: flat (butt-capped) segments separated by a
+ * hairline gap. Flat ends are deliberate — at donut proportions a round cap
+ * paints ±10–15° past the arc, which either smears segments into each other
+ * (the original bug) or, when inset to compensate, carves wide valleys
+ * between them. A single slice gets the full uninterrupted 360°.
  */
-export function donutArcGeometry(
-  spec: { startDeg: number; sweepDeg: number },
-  strokeWidth: number,
-  radius: number,
-): { startDeg: number; sweepDeg: number; rounded: boolean } {
-  const capDeg = (strokeWidth / 2 / radius) * (180 / Math.PI);
-  const rounded = spec.sweepDeg > capDeg * 2 + 2;
-  if (!rounded) return { startDeg: spec.startDeg, sweepDeg: spec.sweepDeg, rounded };
-  return {
-    startDeg: spec.startDeg + capDeg,
-    sweepDeg: Math.max(spec.sweepDeg - capDeg * 2, 0.5),
-    rounded,
-  };
+export function donutArcLayout(
+  values: number[],
+  gapDeg: number = GAP_DEG,
+): Array<{ startDeg: number; sweepDeg: number }> {
+  const total = values.reduce((s, v) => s + v, 0);
+  if (!values.length || total <= 0) return [];
+  const gap = values.length > 1 ? gapDeg : 0;
+  const usable = 360 - gap * values.length;
+  let cursor = START_DEG + gap / 2;
+  return values.map((v) => {
+    const sweep = (v / total) * usable;
+    const spec = { startDeg: cursor, sweepDeg: sweep };
+    cursor += sweep + gap;
+    return spec;
+  });
 }
 
 interface ArcSpec {
@@ -86,9 +87,7 @@ function DonutArc({
   dimmed: boolean;
   emphasized: boolean;
 }) {
-  const { path, rounded } = useMemo(() => {
-    const sw = emphasized ? strokeWidth + 3 : strokeWidth;
-    const geo = donutArcGeometry(spec, sw, radius);
+  const path = useMemo(() => {
     const p = Skia.Path.Make();
     p.addArc(
       {
@@ -97,11 +96,11 @@ function DonutArc({
         width: radius * 2,
         height: radius * 2,
       },
-      geo.startDeg,
-      geo.sweepDeg,
+      spec.startDeg,
+      spec.sweepDeg,
     );
-    return { path: p, rounded: geo.rounded };
-  }, [center, radius, spec, strokeWidth, emphasized]);
+    return p;
+  }, [center, radius, spec.startDeg, spec.sweepDeg]);
 
   const opacity = useSharedValue(1);
   useEffect(() => {
@@ -120,7 +119,7 @@ function DonutArc({
       path={path}
       style="stroke"
       strokeWidth={emphasized ? strokeWidth + 3 : strokeWidth}
-      strokeCap={rounded ? 'round' : 'butt'}
+      strokeCap="butt"
       color={spec.color}
       opacity={opacity}
       start={0}
@@ -154,21 +153,16 @@ export const ChartDonut = memo(function ChartDonut({
 
   const arcs = useMemo<ArcSpec[]>(() => {
     if (!clean.length || total <= 0) return [];
-    const gap = clean.length > 1 ? GAP_DEG : 0;
-    const usable = 360 - gap * clean.length;
-    let cursor = START_DEG + gap / 2;
+    const layout = donutArcLayout(clean.map((d) => d.value));
     let revealed = 0;
-    return clean.map((d) => {
-      const sweep = (d.value / total) * usable;
-      const frac = d.value / total;
+    return layout.map((geo, i) => {
+      const frac = clean[i].value / total;
       const spec: ArcSpec = {
-        startDeg: cursor,
-        sweepDeg: sweep,
-        color: d.color,
+        ...geo,
+        color: clean[i].color,
         revealFrom: revealed,
         revealTo: revealed + frac,
       };
-      cursor += sweep + gap;
       revealed += frac;
       return spec;
     });
