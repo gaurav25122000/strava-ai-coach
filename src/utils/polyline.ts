@@ -34,3 +34,30 @@ export function decodePolyline(encoded: string): { latitude: number; longitude: 
   }
   return points;
 }
+
+// Encodes coordinates with the same algorithm — health-sourced workout routes
+// are stored as polylines so the Activity shape stays source-agnostic.
+export function encodePolyline(points: { latitude: number; longitude: number }[]): string {
+  let out = '';
+  let prevLat = 0;
+  let prevLng = 0;
+
+  const encodeValue = (delta: number) => {
+    let v = delta < 0 ? ~(delta << 1) : delta << 1;
+    while (v >= 0x20) {
+      out += String.fromCharCode((0x20 | (v & 0x1f)) + 63);
+      v >>= 5;
+    }
+    out += String.fromCharCode(v + 63);
+  };
+
+  for (const p of points) {
+    const lat = Math.round(p.latitude * 1e5);
+    const lng = Math.round(p.longitude * 1e5);
+    encodeValue(lat - prevLat);
+    encodeValue(lng - prevLng);
+    prevLat = lat;
+    prevLng = lng;
+  }
+  return out;
+}

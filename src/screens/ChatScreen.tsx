@@ -34,6 +34,7 @@ import { Sheet } from '../components/Sheet';
 import { useStore } from '../store/useStore';
 import { AIService, ChatMessage } from '../services/ai';
 import { nutritionContext } from '../services/calories';
+import { recoveryContext } from '../services/readiness';
 import { weatherContext } from '../services/weather';
 import { theme, withAlpha } from '../theme';
 import { secureSettingsStorage } from '../store/useStore';
@@ -362,6 +363,11 @@ export default function ChatScreen() {
             useStore.getState().calorieGoal,
           ),
           weather: weatherContext(useStore.getState().weatherCache),
+          recovery: recoveryContext({
+            sleepLog: useStore.getState().sleepLog,
+            activities,
+            dailyHealth: useStore.getState().dailyHealth,
+          }),
           rpeLog: useStore.getState().rpeLog,
         },
       );

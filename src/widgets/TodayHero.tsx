@@ -10,7 +10,8 @@ import { localDateStr, mondayIndex } from '../utils/dates';
 import { workoutIcon } from '../utils/workoutKinds';
 import { CheckIn, useStore, WorkoutKind } from '../store/useStore';
 import { StravaService } from '../services/strava';
-import { performStravaSync } from '../services/syncRunner';
+import { getActivitySource, healthSourceLabel, useActivitySource } from '../services/activitySource';
+import { performActivitySync } from '../services/syncRunner';
 import { computeProgress, prescriptionFor } from '../services/goalProgress';
 
 // Map a free-text key-workout title to a WorkoutKind for the icon pill.
@@ -37,6 +38,7 @@ export const TodayHeroWidget = memo(function TodayHeroWidget() {
   const addCheckIn = useStore((s) => s.addCheckIn);
   const updateGoal = useStore((s) => s.updateGoal);
   const setToast = useStore((s) => s.setToast);
+  const source = useActivitySource();
   const navigation = useNavigation<any>();
 
   // Reactive Strava-auth flag. `StravaService.isAuthenticated()` is sync but
@@ -58,6 +60,10 @@ export const TodayHeroWidget = memo(function TodayHeroWidget() {
       sub.remove();
     };
   }, []);
+
+  // Health has no auth handshake — never show the "not connected" state and
+  // keep the sync pill live (performActivitySync dispatches on the source).
+  const connected = source === 'health' ? true : stravaConnected;
 
   const activeGoal = useMemo(
     () => goals.find((g) => !g.isSimple && (g.phases?.length || 0) > 0),
@@ -123,9 +129,17 @@ export const TodayHeroWidget = memo(function TodayHeroWidget() {
   );
 
   const handleSync = useCallback(() => {
-    performStravaSync({ force: true }).catch(() =>
-      setToast({ title: 'Error', message: 'Failed to sync activities', type: 'error' }),
-    );
+    performActivitySync({ force: true })
+      .then((res) => {
+        // A forced health sync returns null only when the native module is
+        // missing (old binary) — surface that instead of silently no-oping.
+        if (res === null && getActivitySource() === 'health') {
+          setToast({ title: 'Update needed', message: `This build doesn't include ${healthSourceLabel()} support yet.`, type: 'error' });
+        }
+      })
+      .catch(() =>
+        setToast({ title: 'Error', message: 'Failed to sync activities', type: 'error' }),
+      );
   }, [setToast]);
 
   const planAccent = familyStyle('plan').accent;
@@ -143,7 +157,7 @@ export const TodayHeroWidget = memo(function TodayHeroWidget() {
         activeGoal={activeGoal}
         currentStreak={currentStreak}
         lastSyncedAt={lastSyncedAt}
-        stravaConnected={stravaConnected}
+        stravaConnected={connected}
         onMarkDone={() => handleQuickCheckIn(true)}
         onSkip={() => handleQuickCheckIn(false)}
         onSync={handleSync}

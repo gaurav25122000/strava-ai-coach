@@ -18,7 +18,7 @@ import { StaggerItem } from '../components/Stagger';
 import { FieldBlock, SectionLabel, SegmentedControl } from '../components/SheetUI';
 import { familyStyle } from '../utils/widgetFamilies';
 import { useStore } from '../store/useStore';
-import { performStravaSync } from '../services/syncRunner';
+import { performActivitySync } from '../services/syncRunner';
 import {
   Plus, AlertCircle, Footprints, Heart,
   Pencil, Activity, Check, Trash2, ChevronLeft,
@@ -115,7 +115,7 @@ export default function GearHealthScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const result = await performStravaSync({ force: true });
+      const result = await performActivitySync({ force: true });
       if (result && result.synced > 0) {
         setToast({ title: 'Synced', message: `${result.synced} activities updated.`, type: 'success' });
       }

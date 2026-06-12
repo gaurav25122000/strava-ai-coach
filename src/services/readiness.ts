@@ -1,4 +1,4 @@
-import { Activity, SleepEntry } from '../store/useStore';
+import { Activity, DailyHealthEntry, SleepEntry } from '../store/useStore';
 import { activityDayKey, localDateStr } from '../utils/dates';
 
 // ── Readiness score ──────────────────────────────────────────────────────────
@@ -7,18 +7,26 @@ import { activityDayKey, localDateStr } from '../utils/dates';
 //   sleep  45% — last night's hours vs an 8 h target, nudged by quality
 //   load   35% — acute (7d) vs chronic (28d) daily-strain ratio
 //   strain 20% — yesterday's strain vs the 28-day daily average
-// Missing sleep doesn't fake a value — the score renormalises over the
-// remaining parts and parts.sleep comes back null so the UI can say so.
+// When Watch recovery data is available (health source), a fourth signal
+// joins and the weights shift to sleep 35 / load 30 / strain 15 / recovery 20:
+//   recovery — resting HR and HRV vs their 28-day baselines
+// Missing signals don't fake values — the score renormalises over the
+// remaining parts and the part comes back null so the UI can say so.
 
 const SLEEP_TARGET_HOURS = 8;
 const QUALITY_MODIFIER = 10;
 const WEIGHTS = { sleep: 45, load: 35, strain: 20 } as const;
+const WEIGHTS_WITH_RECOVERY = { sleep: 35, load: 30, strain: 15, recovery: 20 } as const;
+/** Minimum baseline days before RHR/HRV deviations are trusted. */
+const RECOVERY_BASELINE_MIN_DAYS = 5;
 
 export type ReadinessLabel = 'Primed' | 'Ready' | 'Steady' | 'Tired' | 'Run down';
 
 export interface ReadinessInput {
   sleepLog: Record<string, SleepEntry>;
   activities: Activity[];
+  /** Daily Watch rollups (health source) — enables the recovery part. */
+  dailyHealth?: Record<string, DailyHealthEntry>;
   /** Defaults to now — injectable for tests. */
   today?: Date;
 }
@@ -26,8 +34,9 @@ export interface ReadinessInput {
 export interface ReadinessResult {
   /** 0–100, rounded. */
   score: number;
-  /** Per-signal 0–100 sub-scores. sleep is null when nothing was logged today. */
-  parts: { sleep: number | null; load: number; strain: number };
+  /** Per-signal 0–100 sub-scores. sleep is null when nothing was logged
+   *  today; recovery is null without recent RHR/HRV data. */
+  parts: { sleep: number | null; load: number; strain: number; recovery: number | null };
   /** Acute(7d) : chronic(28d) daily-strain ratio behind parts.load. */
   loadRatio: number;
   label: ReadinessLabel;
@@ -67,6 +76,49 @@ function strainPart(yesterday: number, dailyAvg: number): number {
   return Math.max(0, 100 - (yesterday / dailyAvg - 1) * 40);
 }
 
+/**
+ * Resting HR + HRV vs their 28-day baselines → 0–100, or null without a
+ * recent (≤2-day-old) reading on a trustworthy (≥5-day) baseline.
+ * Elevated RHR costs 8 points per % above baseline; suppressed HRV costs
+ * 2 points per % below — both classic overnight fatigue flags. At-or-better
+ * than baseline scores 100.
+ */
+export function recoveryPart(
+  dailyHealth: Record<string, DailyHealthEntry> | undefined,
+  today: Date,
+): number | null {
+  if (!dailyHealth) return null;
+
+  const score = (metric: 'restingHR' | 'hrv', costPerPct: number, higherIsWorse: boolean): number | null => {
+    let latest: number | undefined;
+    const baseline: number[] = [];
+    for (let i = 0; i < 28; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const v = dailyHealth[localDateStr(d)]?.[metric];
+      if (v === undefined) continue;
+      if (latest === undefined && i <= 2) {
+        latest = v;
+      } else {
+        baseline.push(v);
+      }
+    }
+    if (latest === undefined || baseline.length < RECOVERY_BASELINE_MIN_DAYS) return null;
+    const base = baseline.reduce((a, b) => a + b, 0) / baseline.length;
+    if (base <= 0) return null;
+    const deltaPct = ((latest - base) / base) * 100;
+    const badPct = higherIsWorse ? Math.max(0, deltaPct) : Math.max(0, -deltaPct);
+    return Math.max(0, Math.min(100, 100 - badPct * costPerPct));
+  };
+
+  const rhr = score('restingHR', 8, true);
+  const hrv = score('hrv', 2, false);
+  if (rhr === null && hrv === null) return null;
+  if (rhr === null) return Math.round(hrv!);
+  if (hrv === null) return Math.round(rhr);
+  return Math.round((rhr + hrv) / 2);
+}
+
 const ADVICE: Record<ReadinessLabel, (weak: string) => string> = {
   Primed: (weak) => `All systems green — even ${weak} held up. Go big today.`,
   Ready: (weak) => `Good to train hard — just keep an eye on ${weak}.`,
@@ -74,6 +126,61 @@ const ADVICE: Record<ReadinessLabel, (weak: string) => string> = {
   Tired: (weak) => `Keep it easy today — ${weak} needs a lighter day.`,
   'Run down': (weak) => `Recovery day: ${weak} is in the red. Sleep, eat, walk.`,
 };
+
+/**
+ * Compact recovery block for AI prompts (chat + plan generation). Empty
+ * string when no daily health data exists — Strava-source prompts stay
+ * byte-identical.
+ */
+export function recoveryContext(input: ReadinessInput): string {
+  const dh = input.dailyHealth ?? {};
+  if (!Object.keys(dh).length) return '';
+  const today = input.today ?? new Date();
+
+  const last7 = (pick: (e: DailyHealthEntry) => number | undefined): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const v = dh[localDateStr(d)] && pick(dh[localDateStr(d)]);
+      if (v !== undefined) out.push(v);
+    }
+    return out;
+  };
+  const avg = (xs: number[]) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10 : undefined);
+
+  const rhr = avg(last7((e) => e.restingHR));
+  const hrv = avg(last7((e) => e.hrv));
+  const sleep = avg(
+    Object.entries(input.sleepLog)
+      .filter(([day]) => {
+        const diff = (today.getTime() - new Date(day).getTime()) / 86400000;
+        return diff >= 0 && diff < 7;
+      })
+      .map(([, e]) => e.hours),
+  );
+  const vo2 = last7((e) => e.vo2max)[0];
+
+  const r = readinessScore(input);
+  const lines = [`Readiness today: ${r.score}/100 (${r.label})`];
+  if (rhr !== undefined) lines.push(`7-day avg resting HR: ${rhr} bpm`);
+  if (hrv !== undefined) lines.push(`7-day avg HRV: ${hrv} ms`);
+  if (sleep !== undefined) lines.push(`7-day avg sleep: ${sleep} h/night`);
+  if (vo2 !== undefined) lines.push(`Latest VO2max: ${vo2} ml/kg/min`);
+
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const y = dh[localDateStr(yesterday)];
+  if (y && (y.activeEnergy || y.exerciseMin || y.steps)) {
+    const bits = [
+      y.activeEnergy ? `${y.activeEnergy} kcal active` : null,
+      y.exerciseMin ? `${y.exerciseMin} exercise min` : null,
+      y.steps ? `${y.steps} steps` : null,
+    ].filter(Boolean);
+    lines.push(`Yesterday: ${bits.join(', ')}`);
+  }
+  return lines.join('\n');
+}
 
 export function readinessScore(input: ReadinessInput): ReadinessResult {
   const today = input.today ?? new Date();
@@ -115,11 +222,20 @@ export function readinessScore(input: ReadinessInput): ReadinessResult {
     sleep = Math.max(0, Math.min(100, s));
   }
 
-  let weighted = WEIGHTS.load * load + WEIGHTS.strain * strain;
-  let totalWeight = WEIGHTS.load + WEIGHTS.strain;
+  const recovery = recoveryPart(input.dailyHealth, today);
+
+  // Without recovery data the weights are EXACTLY the original three-part
+  // split, so Strava-source scores are unchanged.
+  const W = recovery !== null ? WEIGHTS_WITH_RECOVERY : { ...WEIGHTS, recovery: 0 };
+  let weighted = W.load * load + W.strain * strain;
+  let totalWeight = W.load + W.strain;
   if (sleep !== null) {
-    weighted += WEIGHTS.sleep * sleep;
-    totalWeight += WEIGHTS.sleep;
+    weighted += W.sleep * sleep;
+    totalWeight += W.sleep;
+  }
+  if (recovery !== null) {
+    weighted += W.recovery * recovery;
+    totalWeight += W.recovery;
   }
   const score = Math.round(weighted / totalWeight);
 
@@ -131,12 +247,13 @@ export function readinessScore(input: ReadinessInput): ReadinessResult {
     ["yesterday's effort", strain],
   ];
   if (sleep !== null) candidates.push(['sleep', sleep]);
+  if (recovery !== null) candidates.push(['recovery', recovery]);
   candidates.sort((a, b) => a[1] - b[1]);
   const advice = ADVICE[label](candidates[0][0]);
 
   return {
     score,
-    parts: { sleep, load, strain },
+    parts: { sleep, load, strain, recovery },
     loadRatio: Math.round(ratio * 100) / 100,
     label,
     advice,

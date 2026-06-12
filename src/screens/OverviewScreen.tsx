@@ -12,7 +12,14 @@ import { PressableScale } from '../components/PressableScale';
 import { Typography } from '../components/Typography';
 import { theme, withAlpha } from '../theme';
 import { StravaService } from '../services/strava';
-import { performStravaSync } from '../services/syncRunner';
+import {
+  HEALTH_HIDDEN_WIDGETS,
+  getActivitySource,
+  sourceLabel,
+  useActivitySource,
+  visibleWidgetIds,
+} from '../services/activitySource';
+import { performActivitySync } from '../services/syncRunner';
 import { computeBestEfforts, computeMilestones } from '../services/milestones';
 import { maybeGenerateWeeklyDigest } from '../services/weeklyDigest';
 import { refreshWeather } from '../services/weather';
@@ -40,6 +47,7 @@ const WidgetSlot = memo(function WidgetSlot({ id }: { id: string }) {
 function useDashboardUpkeep(onNewMilestone: (m: Milestone) => void) {
   const activities = useStore((s) => s.activities);
   const lastSyncedAt = useStore((s) => s.lastSyncedAt);
+  const source = useActivitySource();
   // Tracks ids we've already celebrated this session so a re-derivation
   // doesn't replay the confetti.
   const celebrated = useRef<Set<string> | null>(null);
@@ -88,6 +96,9 @@ function useDashboardUpkeep(onNewMilestone: (m: Milestone) => void) {
   // shoes for ShoeTracker, starred segments). Fetch once when connected and
   // missing; pull-to-refresh re-fetches.
   useEffect(() => {
+    // Strava-side data only (zone definitions, segments) — under the health
+    // source HR zones resolve from the profile via resolveHrZones instead.
+    if (source === 'health') return;
     let alive = true;
     (async () => {
       await StravaService.initialize();
@@ -105,12 +116,14 @@ function useDashboardUpkeep(onNewMilestone: (m: Milestone) => void) {
       }
     })();
     return () => { alive = false; };
-  }, [lastSyncedAt]);
+  }, [lastSyncedAt, source]);
 }
 
 // Refresh side-cars: lifetime stats + shoes + starred segments. Separate from
-// performStravaSync because they're dashboard concerns, not core sync.
+// performActivitySync because they're dashboard concerns, not core sync.
 async function refreshAuxiliaryData() {
+  // Athlete stats/shoes, zones and segments are all Strava-only capabilities.
+  if (getActivitySource() === 'health') return;
   if (!StravaService.isAuthenticated()) return;
   const store = useStore.getState();
   try {
@@ -146,6 +159,7 @@ export default function OverviewScreen() {
   const widgetLayout = useStore((s) => s.settings.widgetLayout);
   const updateSettings = useStore((s) => s.updateSettings);
   const setToast = useStore((s) => s.setToast);
+  const source = useActivitySource();
 
   const [refreshing, setRefreshing] = useState(false);
   const [customizing, setCustomizing] = useState(false);
@@ -153,16 +167,18 @@ export default function OverviewScreen() {
 
   useDashboardUpkeep(setCelebrating);
 
-  const layout = widgetLayout ?? [];
+  // Render-only filter: Strava-only widgets disappear while the health source
+  // is active, but the saved widgetLayout itself is never rewritten.
+  const layout = visibleWidgetIds(widgetLayout ?? [], source);
 
   const onRefresh = useCallback(async () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setRefreshing(true);
     try {
-      const result = await performStravaSync({ force: true });
+      const result = await performActivitySync({ force: true });
       await refreshAuxiliaryData();
-      if (result === null && !StravaService.isAuthenticated()) {
-        setToast({ title: 'Strava not connected', message: 'Connect in Settings to sync activities.', type: 'info' });
+      if (result === null && (getActivitySource() === 'health' || !StravaService.isAuthenticated())) {
+        setToast({ title: `${sourceLabel()} not connected`, message: 'Connect in Settings to sync activities.', type: 'info' });
       }
     } catch (e: any) {
       setToast({ title: 'Sync failed', message: e?.message ?? 'Try again in a minute.', type: 'error' });
@@ -173,7 +189,21 @@ export default function OverviewScreen() {
 
   const saveLayout = useCallback(
     (ids: string[]) => {
-      updateSettings({ widgetLayout: ids });
+      let next = ids;
+      if (getActivitySource() === 'health') {
+        // The catalog edited the health-filtered view — carry the hidden
+        // Strava-only widgets through at their saved positions so the layout
+        // survives a switch back to Strava intact.
+        const saved = useStore.getState().settings.widgetLayout ?? [];
+        const merged = [...ids];
+        saved.forEach((id, idx) => {
+          if (HEALTH_HIDDEN_WIDGETS.has(id) && !merged.includes(id)) {
+            merged.splice(Math.min(idx, merged.length), 0, id);
+          }
+        });
+        next = merged;
+      }
+      updateSettings({ widgetLayout: next });
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     },
     [updateSettings],

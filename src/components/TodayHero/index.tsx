@@ -8,6 +8,7 @@ import { PressableScale } from '../PressableScale';
 import { addDays, differenceInMinutes, format, parseISO, startOfWeek } from 'date-fns';
 import { Typography } from '../Typography';
 import { theme } from '../../theme';
+import { sourceLabel } from '../../services/activitySource';
 import { Goal, WorkoutKind } from '../../store/useStore';
 import { WORKOUT_COLORS, WORKOUT_LABELS, workoutIcon } from '../../utils/workoutKinds';
 import { styles } from './styles';
@@ -228,15 +229,15 @@ export function TodayHero({
             disabled={!stravaConnected}
             haptic={stravaConnected ? 'light' : 'none'}
             accessibilityRole="button"
-            accessibilityLabel={stravaConnected ? 'Sync Strava' : 'Strava not connected'}
+            accessibilityLabel={stravaConnected ? `Sync ${sourceLabel()}` : `${sourceLabel()} not connected`}
           >
             <View style={[styles.syncDot, { backgroundColor: stravaConnected ? theme.colors.success : theme.colors.warning }]} />
             <Typography style={styles.syncText}>
-              {stravaConnected ? syncLabel(lastSyncedAt) : 'Strava not connected'}
+              {stravaConnected ? syncLabel(lastSyncedAt) : `${sourceLabel()} not connected`}
             </Typography>
           </PressableScale>
           {stravaConnected && (
-            <PressableScale onPress={onSync} haptic="light" hitSlop={10} accessibilityRole="button" accessibilityLabel="Sync Strava">
+            <PressableScale onPress={onSync} haptic="light" hitSlop={10} accessibilityRole="button" accessibilityLabel={`Sync ${sourceLabel()}`}>
               <Icon icon={RefreshCw} variant="plain" size="sm" color="rgba(255,255,255,0.7)" />
             </PressableScale>
           )}

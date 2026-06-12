@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Goal, secureSettingsStorage, useStore } from '../store/useStore';
 import { AIService } from './ai';
+import { recoveryContext } from './readiness';
 
 export const GENERATING_MESSAGES = [
   'Reading your training history…',
@@ -76,7 +77,16 @@ export async function startGoalGeneration(params: {
         settings.coachPersonality,
         state.injuries,
         state.userProfile,
-        { bestEfforts: state.bestEfforts, targetFinishTime: params.targetFinishTime, unit: settings.unit },
+        {
+          bestEfforts: state.bestEfforts,
+          targetFinishTime: params.targetFinishTime,
+          unit: settings.unit,
+          recovery: recoveryContext({
+            sleepLog: state.sleepLog,
+            activities: state.activities,
+            dailyHealth: state.dailyHealth,
+          }),
+        },
       ),
     );
 

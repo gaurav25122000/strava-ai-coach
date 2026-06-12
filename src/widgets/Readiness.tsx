@@ -46,6 +46,7 @@ function partColor(part: number | null): string {
 export const ReadinessWidget = memo(function ReadinessWidget() {
   const activities = useStore((s) => s.activities);
   const sleepLog = useStore((s) => s.sleepLog);
+  const dailyHealth = useStore((s) => s.dailyHealth);
   const setSleep = useStore((s) => s.setSleep);
   const setToast = useStore((s) => s.setToast);
 
@@ -54,7 +55,7 @@ export const ReadinessWidget = memo(function ReadinessWidget() {
   const [quality, setQuality] = useState<1 | 2 | 3 | undefined>(undefined);
   const [importing, setImporting] = useState(false);
 
-  const result = useMemo(() => readinessScore({ sleepLog, activities }), [sleepLog, activities]);
+  const result = useMemo(() => readinessScore({ sleepLog, activities, dailyHealth }), [sleepLog, activities, dailyHealth]);
 
   const todayKey = localDateStr(new Date());
   const todayEntry = sleepLog[todayKey];
@@ -149,6 +150,9 @@ export const ReadinessWidget = memo(function ReadinessWidget() {
               />
               <StatChip color={partColor(result.parts.load)} label={`Load ${result.loadRatio.toFixed(1)}`} />
               <StatChip color={partColor(result.parts.strain)} label={`Strain ${strainWord}`} />
+              {result.parts.recovery !== null && (
+                <StatChip color={partColor(result.parts.recovery)} label={`Recovery ${Math.round(result.parts.recovery)}`} />
+              )}
             </View>
           </>
         )}

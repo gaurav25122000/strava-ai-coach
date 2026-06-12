@@ -8,11 +8,14 @@ import { Typography } from '../components/Typography';
 import { familyStyle, WIDGET_FAMILY, WIDGET_TITLES } from '../utils/widgetFamilies';
 import { activityDayKey, localDateStr } from '../utils/dates';
 import { useStore } from '../store/useStore';
+import { useActivitySource } from '../services/activitySource';
 import { EmptyHint } from './common';
 import { bigStat, StatChip } from './_shared';
 
 export const EnergyExpenditureWidget = memo(function EnergyExpenditureWidget() {
   const activities = useStore((s) => s.activities);
+  const dailyHealth = useStore((s) => s.dailyHealth);
+  const source = useActivitySource();
 
   const energy = useMemo(() => {
     const now = new Date();
@@ -26,18 +29,31 @@ export const EnergyExpenditureWidget = memo(function EnergyExpenditureWidget() {
     }
     const byDay = new Map<string, number>(days.map((d) => [d.key, 0]));
     let hasEstimates = false;
+    // Health source: the Watch's true all-day active energy beats summing
+    // workout calories. Days without a rollup fall back to workout sums.
+    const useDaily = source === 'health';
+    const covered = new Set<string>();
+    if (useDaily) {
+      for (const d of days) {
+        const kcal = dailyHealth[d.key]?.activeEnergy;
+        if (kcal) {
+          byDay.set(d.key, kcal);
+          covered.add(d.key);
+        }
+      }
+    }
     for (const a of activities) {
       const kcal = a.calories || 0;
       if (!kcal) continue;
       const k = activityDayKey(a);
-      if (!byDay.has(k)) continue;
+      if (!byDay.has(k) || covered.has(k)) continue;
       byDay.set(k, (byDay.get(k) || 0) + kcal);
       if (a.caloriesEstimated) hasEstimates = true;
     }
     const bars = days.map((d) => ({ label: d.label, value: Math.round(byDay.get(d.key) || 0) }));
     const total = bars.reduce((s, b) => s + b.value, 0);
     return { bars, total, avg: Math.round(total / 7), hasEstimates };
-  }, [activities]);
+  }, [activities, dailyHealth, source]);
 
   const family = WIDGET_FAMILY.EnergyExpenditure;
   const accent = familyStyle(family).accent;

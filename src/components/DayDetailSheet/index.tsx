@@ -10,6 +10,8 @@ import { Typography } from '../Typography';
 import { theme, withAlpha } from '../../theme';
 import { Activity, CheckIn, DailyPrescription, WorkoutKind } from '../../store/useStore';
 import { activityDayKey, localDateStr } from '../../utils/dates';
+import { healthSourceLabel } from '../../services/activitySource';
+import { isHealthActivityId } from '../../services/healthActivities';
 import { REST_LABELS, WORKOUT_COLORS, WORKOUT_LABELS, workoutIcon } from '../../utils/workoutKinds';
 import { styles } from './styles';
 
@@ -155,7 +157,9 @@ export function DayDetailSheet({ day, activities, onClose, onCheckIn }: Props) {
             </Typography>
           </View>
           <Typography variant="caption" style={styles.verdictText}>
-            {ci.notes || 'Auto-matched from Strava'}
+            {/* The matched activity's own id says which source it came from —
+                the active source may have changed since the check-in. */}
+            {ci.notes || `Auto-matched from ${ci.activityId && isHealthActivityId(ci.activityId) ? healthSourceLabel() : 'Strava'}`}
           </Typography>
         </View>
       )}

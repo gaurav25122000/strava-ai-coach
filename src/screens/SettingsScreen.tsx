@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, View, StyleSheet, ScrollView, TextInput, Platform, Linking as RNLinking } from 'react-native';
+import { ActivityIndicator, Alert, View, StyleSheet, ScrollView, TextInput, Platform, Linking as RNLinking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
@@ -18,7 +18,10 @@ import { familyStyle, WidgetFamily } from '../utils/widgetFamilies';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import { StravaService } from '../services/strava';
-import { performStravaSync } from '../services/syncRunner';
+import { performActivitySync } from '../services/syncRunner';
+import { healthSourceLabel, sourceLabel } from '../services/activitySource';
+import { HealthActivities } from '../services/healthActivities';
+import { registerHealthBackgroundSync } from '../services/backgroundSync';
 import { NotificationService } from '../services/notifications';
 import { armMorningBriefing } from '../services/briefing';
 import axios from 'axios';
@@ -217,19 +220,29 @@ export default function SettingsScreen() {
   };
 
   const runSync = async (fullResync: boolean) => {
-    const result = await performStravaSync(fullResync ? { fullResync: true } : { force: true });
+    const onHealth = (settings.activitySource ?? 'strava') === 'health';
+    const result = await performActivitySync(fullResync ? { fullResync: true } : { force: true });
 
-    try {
-      const res = await StravaService.fetchAthleteStats();
-      setAthleteStats(res);
-    } catch (statsErr) {
-      console.warn('Could not fetch lifetime stats:', statsErr);
+    if (!onHealth) {
+      try {
+        const res = await StravaService.fetchAthleteStats();
+        setAthleteStats(res);
+      } catch (statsErr) {
+        console.warn('Could not fetch lifetime stats:', statsErr);
+      }
+    }
+
+    // Under health a forced sync only returns null when the native module is
+    // missing (old binary) — that's an error, not "up to date".
+    if (!result && onHealth) {
+      setToast({ title: 'Update needed', message: `This build doesn't include ${healthSourceLabel()} support yet.`, type: 'error' });
+      return;
     }
 
     successHaptic();
     setToast({
       title: 'Success',
-      message: result ? `Synced ${result.synced} activities from Strava!` : 'Already up to date.',
+      message: result ? `Synced ${result.synced} activities from ${sourceLabel()}!` : 'Already up to date.',
       type: 'success',
     });
   };
@@ -270,11 +283,58 @@ export default function SettingsScreen() {
   const handleDisconnect = async () => {
     await StravaService.disconnect();
     setIsAuthenticated(false);
-    setActivities([]);
+    // Under the health source the activity list isn't Strava's — keep it.
+    if ((settings.activitySource ?? 'strava') === 'strava') setActivities([]);
     setAthleteStats(null);
     setConfirmDisconnect(false);
     successHaptic();
     setToast({ title: 'Disconnected', message: 'Strava account disconnected', type: 'success' });
+  };
+
+  // ----- Activity data source switch -----
+  // Availability/permission checks run AFTER the user confirms but BEFORE the
+  // setting flips, so a cancelled or failed switch leaves everything untouched
+  // (the controlled SegmentedControl simply snaps back).
+  const activitySource = settings.activitySource ?? 'strava';
+
+  const applySourceSwitch = async (next: 'strava' | 'health') => {
+    if (next === 'health') {
+      if (!(await HealthActivities.isAvailable())) {
+        setToast({ title: 'Update needed', message: `This build doesn't include ${healthSourceLabel()} support yet.`, type: 'error' });
+        return;
+      }
+      if (!(await HealthActivities.requestPermissions())) {
+        setToast({ title: 'Permission needed', message: `Allow workout access in ${healthSourceLabel()}.`, type: 'error' });
+        return;
+      }
+    }
+    updateSettings({ activitySource: next });
+    await HealthActivities.clearSyncCursor();
+    setActivities([]);
+    // Repopulate from the new source in the background — don't block the UI.
+    performActivitySync({ fullResync: true }).catch(() => {
+      setToast({ title: 'Error', message: `Failed to sync activities from ${sourceLabel(next)}`, type: 'error' });
+    });
+    registerHealthBackgroundSync();
+  };
+
+  const handleSourceChange = (next: 'strava' | 'health') => {
+    if (next === activitySource) return;
+    Alert.alert(
+      `Switch to ${sourceLabel(next)}?`,
+      `Your activity list will be replaced with data from ${sourceLabel(next)}. Your Strava connection and credentials are kept.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Switch',
+          onPress: () => {
+            applySourceSwitch(next).catch(() => {
+              setToast({ title: 'Error', message: 'Could not switch activity source', type: 'error' });
+            });
+          },
+        },
+      ],
+    );
   };
 
   const handleEnableNotifications = async () => {
@@ -362,6 +422,19 @@ export default function SettingsScreen() {
         {/* ---------- Account ---------- */}
         <StaggerItem index={0}>
           <WidgetCard family="plan" title="Account" icon={Link2} caption="Strava connection">
+            <View style={styles.inputGroup}>
+              <Typography style={styles.label}>Activity Data Source</Typography>
+              <SegmentedControl<'strava' | 'health'>
+                family="plan"
+                segments={[
+                  { value: 'strava', label: 'Strava' },
+                  { value: 'health', label: healthSourceLabel() },
+                ]}
+                value={activitySource}
+                onChange={handleSourceChange}
+              />
+            </View>
+
             <View style={styles.infoBox}>
               <Typography style={styles.infoText}>
                 1. Go to Strava Settings {'>'} API{'\n'}

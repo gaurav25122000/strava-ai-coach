@@ -6,9 +6,9 @@ import TabNavigator from './src/navigation/TabNavigator';
 import { theme } from './src/theme';
 import { StravaService } from './src/services/strava';
 import { syncAllNotifications } from './src/services/notificationSync';
-import { registerBackgroundSync } from './src/services/backgroundSync';
-import { performStravaSync } from './src/services/syncRunner';
-import { useStore } from './src/store/useStore';
+import { registerBackgroundSync, registerHealthBackgroundSync } from './src/services/backgroundSync';
+import { performActivitySync } from './src/services/syncRunner';
+import { useStore, waitForHydration } from './src/store/useStore';
 import React, { useEffect, useState } from 'react';
 import Animated, { FadeOut, FadeIn } from 'react-native-reanimated';
 import { AppState, StyleSheet, View } from 'react-native';
@@ -122,6 +122,10 @@ export default function App() {
       try {
         await StravaService.initialize();
         await registerBackgroundSync();
+        // No-ops unless the Apple Health source is active on iOS; needs the
+        // hydrated settings to know the source.
+        waitForHydration().then(() => registerHealthBackgroundSync())
+          .catch(e => console.warn('Health observer error:', e));
       } catch (e) {
         console.warn('Strava init error:', e);
       }
@@ -131,9 +135,9 @@ export default function App() {
 
     // Launch sync — AppState 'change' never fires for the initial cold start,
     // so without this the dashboard only refreshes on foreground returns.
-    // performStravaSync waits for hydration itself and skips when <30 min
+    // performActivitySync waits for hydration itself and skips when <30 min
     // fresh, so this is safe to fire-and-forget without blocking the splash.
-    performStravaSync().catch(e => console.warn('[LaunchSync] error:', e));
+    performActivitySync().catch(e => console.warn('[LaunchSync] error:', e));
 
     // Initial sync after store hydrates
     const notifTimer = setTimeout(() => {
@@ -156,7 +160,7 @@ export default function App() {
       if (state !== 'active') return;
       syncAllNotifications().catch(e => console.warn('notif sync error:', e));
       try {
-        await performStravaSync();
+        await performActivitySync();
       } catch (e) {
         console.warn('[ForegroundSync] error:', e);
       }

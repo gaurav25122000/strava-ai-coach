@@ -17,7 +17,9 @@ import { Button } from '../components/Button';
 import { Sheet } from '../components/Sheet';
 import { useStore, Activity } from '../store/useStore';
 import { StravaService } from '../services/strava';
-import { performStravaSync } from '../services/syncRunner';
+import { healthSourceLabel, sourceLabel, useActivitySource } from '../services/activitySource';
+import { HealthActivities } from '../services/healthActivities';
+import { performActivitySync } from '../services/syncRunner';
 import { familyStyle } from '../utils/widgetFamilies';
 import { formatPace as formatPaceMinKm, activityDayKey, mondayOf } from '../utils/dates';
 import { sportIcon } from '../utils/sportIcon';
@@ -273,6 +275,7 @@ function HeroPill({
 // ─── Empty / Loading ─────────────────────────────────────────────────────────
 function EmptyState({ onConnect }: { onConnect: () => void }) {
   const fam = familyStyle('activity');
+  const label = sourceLabel(useActivitySource());
   return (
     <View style={s.emptyWrap}>
       <LinearGradient
@@ -285,10 +288,12 @@ function EmptyState({ onConnect }: { onConnect: () => void }) {
       </LinearGradient>
       <Typography style={s.emptyTitle}>No activities yet</Typography>
       <Typography style={s.emptySub}>
-        Connect Strava to pull your runs, rides, and walks into one place.
+        {label === 'Strava'
+          ? 'Connect Strava to pull your runs, rides, and walks into one place.'
+          : `Connect ${label} to pull your workouts into one place.`}
       </Typography>
       <Button
-        title="Connect Strava"
+        title={`Connect ${label}`}
         icon={LinkIcon}
         size="lg"
         onPress={onConnect}
@@ -319,6 +324,7 @@ export default function ActivitiesScreen() {
   const activities = useStore(st => st.activities);
   const setToast = useStore(st => st.setToast);
   const lastSyncedAt = useStore(st => st.lastSyncedAt);
+  const source = useActivitySource();
   const navigation = useNavigation<Nav>();
   const [search, setSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
@@ -334,7 +340,7 @@ export default function ActivitiesScreen() {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       const before = useStore.getState().activities.length;
-      const result = await performStravaSync({ force: true });
+      const result = await performActivitySync({ force: true });
       if (result) {
         const added = useStore.getState().activities.length - before;
         if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -459,6 +465,25 @@ export default function ActivitiesScreen() {
     (navigation as any).getParent()?.navigate('Menu', { screen: 'Settings', initial: false });
   }
 
+  // Health connect CTA: ask for platform permissions, then pull workouts.
+  const connectHealth = useCallback(async () => {
+    try {
+      const granted = await HealthActivities.requestPermissions();
+      if (!granted) {
+        setToast?.({ title: 'Permission needed', message: `Allow access in ${healthSourceLabel()} to sync workouts.`, type: 'error' });
+        return;
+      }
+      const res = await performActivitySync({ force: true });
+      // Forced health syncs only return null when the native module is
+      // missing (old binary).
+      if (!res) {
+        setToast?.({ title: 'Update needed', message: `This build doesn't include ${healthSourceLabel()} support yet.`, type: 'error' });
+      }
+    } catch (err: any) {
+      setToast?.({ title: 'Sync failed', message: err?.message || 'Try again', type: 'error' });
+    }
+  }, [setToast]);
+
   const renderItem = useCallback(({ item, index }: { item: Activity; index: number }) => (
     // `index` from SectionList is local to the section, so the cascade
     // restarts per date bucket and stays in the visible window.
@@ -490,9 +515,12 @@ export default function ActivitiesScreen() {
     });
     return () => { alive = false; };
   }, []);
+  // Health has no auth handshake — "connected" simply means workouts landed;
+  // still empty means show the connect CTA.
+  const connected = source === 'health' ? activities.length > 0 : stravaReady;
   const showSkeleton =
     isEmpty &&
-    (refreshing || lastSyncMs < 30_000 || (stravaReady === null) || (stravaReady && !lastSyncedAt));
+    (refreshing || lastSyncMs < 30_000 || (connected === null) || (connected && !lastSyncedAt));
 
   // Hero rendered as the first ListHeader so it scrolls with the list.
   const HeroHeader = (
@@ -507,7 +535,7 @@ export default function ActivitiesScreen() {
           <View style={{ flex: 1 }}>
             <Typography style={s.heroTitle}>Activities</Typography>
             <Typography style={s.heroSub}>
-              {selectMode ? 'Pick 2 activities to compare' : `${activities.length} synced from Strava`}
+              {selectMode ? 'Pick 2 activities to compare' : `${activities.length} synced from ${sourceLabel(source)}`}
             </Typography>
           </View>
           {activities.length >= 2 && (
@@ -614,7 +642,7 @@ export default function ActivitiesScreen() {
 
       {/* Body */}
       {isEmpty ? (
-        showSkeleton ? <LoadingSkeleton /> : <EmptyState onConnect={openSettings} />
+        showSkeleton ? <LoadingSkeleton /> : <EmptyState onConnect={source === 'health' ? connectHealth : openSettings} />
       ) : (
         <SectionList
           style={{ flex: 1 }}

@@ -233,6 +233,12 @@ export interface UserProfile {
 }
 
 interface Settings {
+  /**
+   * Where activities come from — exclusive switch. 'health' = Apple Health
+   * (iOS) / Health Connect (Android). Optional because persisted settings
+   * from older installs lack it; readers default to 'strava'.
+   */
+  activitySource?: 'strava' | 'health';
   stravaClientId: string;
   stravaClientSecret: string;
   llmProvider: 'openai' | 'anthropic' | 'gemini';
@@ -401,6 +407,16 @@ export interface HRZone {
   max: number; // -1 means ∞
 }
 
+/** One day of Watch/Fitness rollups imported from the platform health store. */
+export interface DailyHealthEntry {
+  restingHR?: number;   // bpm
+  hrv?: number;         // ms (SDNN on iOS, RMSSD on Android)
+  vo2max?: number;      // ml/kg/min
+  activeEnergy?: number; // kcal
+  exerciseMin?: number; // Apple exercise-ring minutes (iOS only)
+  steps?: number;       // all-day steps
+}
+
 // Lifetime / recent rollups + athlete profile, as returned by Strava's
 // `/athletes/{id}/stats` + `/athlete` endpoints. Cached so widgets like
 // StravaTotals can render instantly without a refetch.
@@ -556,6 +572,8 @@ interface AppState {
   upsertActivities: (incoming: Activity[]) => void;
   /** Patch one activity with detail-fetch enrichment (calories, polyline…). */
   enrichActivity: (activityId: string, patch: Partial<Activity>) => void;
+  /** Drop activities deleted at the source (HealthKit anchored sync reports deletions). */
+  removeActivities: (ids: string[]) => void;
   // Attach per-activity zone distribution (cached). No-op if the activity
   // isn't in the store (e.g. it was pruned).
   setActivityZones: (activityId: string, zones: ActivityZoneDistribution[]) => void;
@@ -613,6 +631,10 @@ interface AppState {
   /** Sleep per YYYY-MM-DD (the night ending that morning). */
   sleepLog: Record<string, SleepEntry>;
   setSleep: (day: string, entry: SleepEntry | null) => void;
+  /** Daily Watch/Fitness rollups per YYYY-MM-DD (health source only). */
+  dailyHealth: Record<string, DailyHealthEntry>;
+  /** Merge a batch of days in; prunes beyond the newest 60 days. */
+  mergeDailyHealth: (days: Record<string, DailyHealthEntry>) => void;
   weatherCache: WeatherSnapshot | null;
   setWeatherCache: (snap: WeatherSnapshot | null) => void;
   morningBriefingEnabled: boolean;
@@ -708,6 +730,16 @@ export const useStore = create<AppState>()(
         if (entry) sleepLog[day] = entry;
         else delete sleepLog[day];
         return { sleepLog };
+      }),
+      dailyHealth: {},
+      mergeDailyHealth: (days) => set((state) => {
+        const merged: Record<string, DailyHealthEntry> = { ...state.dailyHealth };
+        for (const [day, entry] of Object.entries(days)) {
+          merged[day] = { ...merged[day], ...entry };
+        }
+        const keys = Object.keys(merged).sort();
+        for (const k of keys.slice(0, Math.max(0, keys.length - 60))) delete merged[k];
+        return { dailyHealth: merged };
       }),
       weatherCache: null,
       setWeatherCache: (weatherCache) => set({ weatherCache }),
@@ -813,6 +845,13 @@ export const useStore = create<AppState>()(
           a.id === activityId ? { ...a, ...patch } : a,
         ),
       })),
+      removeActivities: (ids) => set((state) => {
+        if (!ids.length) return state;
+        const drop = new Set(ids);
+        const remaining = state.activities.filter((a) => !drop.has(a.id));
+        if (remaining.length === state.activities.length) return state;
+        return { activities: remaining, userStats: deriveStats(remaining, state.userStats) };
+      }),
       setGoals: (goals) => set({ goals }),
       setUserStats: (userStats) => set({ userStats }),
       addGoal: (goal) => set((state) => ({ goals: [...state.goals, goal] })),
@@ -1029,6 +1068,7 @@ export const useStore = create<AppState>()(
         weightLog: state.weightLog,
         mealRemindersEnabled: state.mealRemindersEnabled,
         sleepLog: state.sleepLog,
+        dailyHealth: state.dailyHealth,
         weatherCache: state.weatherCache,
         morningBriefingEnabled: state.morningBriefingEnabled,
         savedMeals: state.savedMeals,

@@ -1,30 +1,23 @@
 import { Activity, useStore, secureSettingsStorage } from '../store/useStore';
 import axios from 'axios';
+import { deriveSteps, estimateCalories } from './activityDerive';
 
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
 let expiresAt: number | null = null;
 
-const RUN_TYPES = new Set(['Run', 'TrailRun', 'VirtualRun']);
-const RIDE_TYPES = new Set(['Ride', 'VirtualRide', 'GravelRide', 'MountainBikeRide', 'EBikeRide']);
-
 /** Map one Strava SummaryActivity onto our Activity shape. Exported for tests. */
 export function mapSummaryActivity(item: any, weightKg: number): Activity {
-  const durationMins = item.moving_time / 60;
   // sport_type is Strava's current field; `type` is deprecated and collapses
   // TrailRun→Run etc. Prefer the precise one.
   const type: string = item.sport_type || item.type || '';
-  const isRun = RUN_TYPES.has(type);
 
-  let calculatedSteps: number | undefined;
-  if (item.average_cadence && item.moving_time) {
-    calculatedSteps = Math.round(
-      isRun ? item.average_cadence * 2 * durationMins : item.average_cadence * durationMins,
-    );
-  } else if (item.distance && item.moving_time && (isRun || type === 'Walk' || type === 'Hike')) {
-    const strideM = isRun ? 1.4 : 0.75;
-    calculatedSteps = Math.round(item.distance / strideM);
-  }
+  const calculatedSteps = deriveSteps({
+    type,
+    movingTime: item.moving_time,
+    distance: item.distance,
+    averageCadence: item.average_cadence,
+  });
 
   // SummaryActivity has no `calories`. Rides: kilojoules ≈ kcal. Otherwise:
   // MET estimate from real body weight, flagged as estimated so the UI can
@@ -34,18 +27,13 @@ export function mapSummaryActivity(item: any, weightKg: number): Activity {
   if (item.kilojoules) {
     calories = Math.round(item.kilojoules);
   } else {
-    const hours = (item.moving_time || 0) / 3600;
-    if (hours > 0) {
-      const met = isRun
-        ? (item.average_speed > 3.5 ? 11.0 : item.average_speed > 2.7 ? 9.8 : 8.0)
-        : RIDE_TYPES.has(type)
-          ? (item.average_speed > 8.3 ? 10.0 : item.average_speed > 5.5 ? 8.0 : 6.0)
-          : type === 'Walk' || type === 'Hike'
-            ? 3.8
-            : 5.0;
-      calories = Math.round(met * weightKg * hours);
-      caloriesEstimated = true;
-    }
+    calories = estimateCalories({
+      type,
+      movingTime: item.moving_time,
+      averageSpeed: item.average_speed,
+      weightKg,
+    });
+    if (calories !== undefined) caloriesEstimated = true;
   }
 
   // Strava sends [] (not null) for treadmill/trainer activities.

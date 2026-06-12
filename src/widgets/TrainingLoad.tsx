@@ -11,6 +11,7 @@ import { theme, withAlpha } from '../theme';
 import { familyStyle, WIDGET_FAMILY, WIDGET_TITLES } from '../utils/widgetFamilies';
 import { activityDayKey, localDateStr, mondayOf, weekKey } from '../utils/dates';
 import { computeTrainingLoadSeries } from '../services/milestones';
+import { sourceCapabilities, sourceLabel, useActivitySource } from '../services/activitySource';
 import { useStore } from '../store/useStore';
 import { EmptyHint } from './common';
 import { bigStat, StatChip } from './_shared';
@@ -45,6 +46,11 @@ export const TrainingLoadWidget = memo(function TrainingLoadWidget() {
   const activities = useStore((s) => s.activities);
   const [mode, setMode] = useState<'load' | 'weekly'>('load');
   const [infoOpen, setInfoOpen] = useState(false);
+
+  // "Weekly effort" is strictly Strava Relative Effort — without suffer
+  // scores (health source) the toggle hides and the ATL/CTL view stays.
+  const hasSufferScore = sourceCapabilities(useActivitySource()).sufferScore;
+  const shownMode = hasSufferScore ? mode : 'load';
 
   // ONE pass over the activity list for the whole ATL/CTL window — the old
   // screen recomputed the full EWMA per visible day.
@@ -129,7 +135,7 @@ export const TrainingLoadWidget = memo(function TrainingLoadWidget() {
           <EmptyHint
             icon={Zap}
             family={WIDGET_FAMILY.TrainingLoad}
-            text="No training data yet — sync Strava activities to track fitness (CTL), fatigue (ATL) and form (TSB)."
+            text={`No training data yet — sync ${sourceLabel()} activities to track fitness (CTL), fatigue (ATL) and form (TSB).`}
           />
         ) : (
           <>
@@ -146,31 +152,33 @@ export const TrainingLoadWidget = memo(function TrainingLoadWidget() {
               <Typography style={styles.adviceDesc}>{advice.desc}</Typography>
             </View>
 
-            <View style={styles.toggleRow}>
-              {(
-                [
-                  { key: 'load', label: 'Load (ATL/CTL)' },
-                  { key: 'weekly', label: 'Weekly effort' },
-                ] as const
-              ).map((t) => {
-                const active = mode === t.key;
-                return (
-                  <PressableScale
-                    key={t.key}
-                    onPress={() => setMode(t.key)}
-                    style={[styles.toggleChip, active && { backgroundColor: withAlpha(accent, 'tint') }]}
-                  >
-                    <Typography
-                      style={[styles.toggleTxt, active && { color: accent }]}
+            {hasSufferScore && (
+              <View style={styles.toggleRow}>
+                {(
+                  [
+                    { key: 'load', label: 'Load (ATL/CTL)' },
+                    { key: 'weekly', label: 'Weekly effort' },
+                  ] as const
+                ).map((t) => {
+                  const active = mode === t.key;
+                  return (
+                    <PressableScale
+                      key={t.key}
+                      onPress={() => setMode(t.key)}
+                      style={[styles.toggleChip, active && { backgroundColor: withAlpha(accent, 'tint') }]}
                     >
-                      {t.label}
-                    </Typography>
-                  </PressableScale>
-                );
-              })}
-            </View>
+                      <Typography
+                        style={[styles.toggleTxt, active && { color: accent }]}
+                      >
+                        {t.label}
+                      </Typography>
+                    </PressableScale>
+                  );
+                })}
+              </View>
+            )}
 
-            {mode === 'load' ? (
+            {shownMode === 'load' ? (
               <>
                 <ChartLine
                   data={loadData}
@@ -219,7 +227,9 @@ export const TrainingLoadWidget = memo(function TrainingLoadWidget() {
         visible={infoOpen}
         onClose={() => setInfoOpen(false)}
         title="Training Load"
-        caption="Based on your Strava Suffer Scores, these three numbers track your fitness and fatigue like elite coaches do."
+        caption={hasSufferScore
+          ? 'Based on your Strava Suffer Scores, these three numbers track your fitness and fatigue like elite coaches do.'
+          : 'Based on your training load, these three numbers track your fitness and fatigue like elite coaches do.'}
       >
         {INFO_ROWS.map((row) => (
           <View key={row.label} style={styles.infoRow}>

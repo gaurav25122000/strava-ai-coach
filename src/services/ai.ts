@@ -243,6 +243,8 @@ export interface PlanExtras {
   bestEfforts?: Record<number, BestEffort>;
   targetFinishTime?: string;
   unit?: 'metric' | 'imperial';
+  /** Pre-built block from services/readiness.recoveryContext (health source). */
+  recovery?: string | null;
 }
 
 function buildUserPrompt(
@@ -301,7 +303,7 @@ ${log.length ? log.join('\n') : 'No activities recorded in the last 28 days.'}
 ## GOAL
 Target Event: "${goalTitle}"
 Target Date: ${targetDate} — ${daysToGoal} days away (${weeks} weeks)
-${extras.targetFinishTime ? `Target finish time: ${extras.targetFinishTime}` : 'No target finish time — completion and consistency are the goal.'}
+${extras.targetFinishTime ? `Target finish time: ${extras.targetFinishTime}` : 'No target finish time — completion and consistency are the goal.'}${extras.recovery ? `\n## RECOVERY (Watch data)\n${extras.recovery}\nFactor current recovery into the opening week's intensity.` : ''}
 Distances in numeric fields are km. Athlete's display preference: ${extras.unit || 'metric'}.
 
 ## INSTRUCTIONS
@@ -928,6 +930,8 @@ export interface ChatExtras {
   nutrition?: string | null;
   /** Pre-built WEATHER block from services/weather.weatherContext. */
   weather?: string | null;
+  /** Pre-built block from services/readiness.recoveryContext (health source). */
+  recovery?: string | null;
   /** Athlete's subjective post-activity check-ins, keyed by activity id. */
   rpeLog?: Record<string, RpeContextEntry>;
 }
@@ -1032,7 +1036,7 @@ RECENT LOG (14 days, newest first)${extras.rpeLog && Object.keys(extras.rpeLog).
 ${log.length ? log.join('\n') : 'No recent activities.'}
 ${goalContext}
 ${extras.nutrition ? `\n${extras.nutrition}\nUse this when fueling/recovery/energy comes up — flag big deficits on hard-training days and low protein. Don't mention the tracker unprompted if intake looks fine.` : ''}
-${extras.weather ? `\n${extras.weather}\nUse this to time workouts and to flag heat-hydration or rain alternatives — only when relevant to the question. Don't recite the forecast otherwise.` : ''}
+${extras.weather ? `\n${extras.weather}\nUse this to time workouts and to flag heat-hydration or rain alternatives — only when relevant to the question. Don't recite the forecast otherwise.` : ''}${extras.recovery ? `\nRECOVERY (Watch data)\n${extras.recovery}\nUse this when training intensity, rest, or fatigue comes up — flag elevated resting HR or suppressed HRV before prescribing hard sessions.` : ''}
 
 Units: athlete prefers ${extras.unit || 'metric'}. Answer concisely in markdown. Be direct, specific, and data-driven; reference the actual log when relevant.`;
 

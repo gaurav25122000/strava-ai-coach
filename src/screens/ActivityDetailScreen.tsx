@@ -17,6 +17,16 @@ import { ChartLine } from '../components/charts';
 import { SkeletonHero, SkeletonChart, SkeletonStatGrid } from '../components/SkeletonPresets';
 import { Activity, BestEffort, RpeEntry, useStore } from '../store/useStore';
 import { StravaService } from '../services/strava';
+import {
+  HealthActivities,
+  isHealthActivityId,
+  buildStreams,
+  computeHrZoneBuckets,
+  cadenceFromSteps,
+  computeSplitsFromRoute,
+  elevationGainFromRoute,
+  hrStatsFromSamples,
+} from '../services/healthActivities';
 import { decodePolyline } from '../utils/polyline';
 import { familyStyle, WidgetFamily } from '../utils/widgetFamilies';
 import { resolveHrZones, zoneOf, ZONE_LABELS, ResolvedZones } from '../utils/hrZones';
@@ -537,6 +547,102 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
   }, [act.startDate, act.name, setBestEfforts]);
 
   const loadFromStrava = useCallback(async (opts?: { allowCacheSkip?: boolean }) => {
+    // ── Health-sourced activities (HealthKit / Health Connect) ──────────
+    // Everything is read locally from the platform health store — none of
+    // the Strava endpoints exist for these ids, so skip them entirely.
+    if (isHealthActivityId(act.id)) {
+      try {
+        const d = await HealthActivities.fetchWorkoutDetail(act.id);
+        if (d) {
+          setStreams(buildStreams(
+            d.hrSamples,
+            d.route,
+            new Date(act.startDate).getTime(),
+            act.elapsedTime || act.movingTime,
+          ));
+
+          // Health splits → the snake_case shape SplitsVisual consumes.
+          const healthSplits = computeSplitsFromRoute(d.route).map(s => ({
+            split: s.split,
+            distance: s.distance,
+            moving_time: s.movingTime,
+            elevation_difference: s.elevationDifference,
+            average_speed: s.averageSpeed,
+          }));
+
+          // Minimal detail payload — only what the health store can fill,
+          // so every Strava-only section (segments, kudos, photos, gear,
+          // weather, laps, best efforts, …) stays hidden via its existing
+          // empty checks.
+          setDetail({
+            splits_metric: healthSplits,
+            device_name: d.deviceName,
+            calories: d.calories,
+            map: d.polyline ? { polyline: d.polyline } : undefined,
+          });
+
+          // Persist enrichment so revisits and list-level widgets get the
+          // real values without re-reading the health store.
+          const row = useStore.getState().activities.find(a => a.id === act.id);
+          const patch: Partial<Activity> = {};
+          if (d.polyline && !row?.polyline) patch.polyline = d.polyline;
+          if (d.calories != null) {
+            patch.calories = d.calories;
+            patch.caloriesEstimated = false;
+          }
+          if (row && !row.totalElevationGain) {
+            const gain = elevationGainFromRoute(d.route);
+            if (gain > 0) patch.totalElevationGain = gain;
+          }
+          if (!row?.startLatlng && d.route.length) {
+            patch.startLatlng = [d.route[0].latitude, d.route[0].longitude];
+          }
+          // Rows beyond the sync-time enrichment window arrive without HR —
+          // fill avg/max from the samples we just read.
+          if (d.hrSamples.length && row && row.averageHeartRate === undefined) {
+            const stats = hrStatsFromSamples(d.hrSamples);
+            if (stats.avg) patch.averageHeartRate = stats.avg;
+            if (stats.max) patch.maxHeartRate = stats.max;
+          }
+          // Real workout steps beat the stride estimate; cadence derives from
+          // them (per-leg for runs, Strava convention).
+          if (d.steps && row) {
+            patch.steps = d.steps;
+            const cad = cadenceFromSteps(act.type, d.steps, act.movingTime);
+            if (cad && row.averageCadence === undefined) patch.averageCadence = cad;
+          }
+          if (Object.keys(patch).length) enrichActivity(act.id, patch);
+
+          // Local time-in-zone buckets — persisted exactly like the Strava
+          // zones fetch so Compare/Insights pick them up. Z1 floor is 0 so
+          // easy-effort time below the nominal Z1 bound still counts.
+          if (d.hrSamples.length) {
+            const { hrZones: storeZones, userProfile: profile } = useStore.getState();
+            const b = resolveHrZones(storeZones, profile).bounds;
+            const buckets = computeHrZoneBuckets(d.hrSamples, [
+              { min: 0, max: b[1] },
+              { min: b[1], max: b[2] },
+              { min: b[2], max: b[3] },
+              { min: b[3], max: b[4] },
+              { min: b[4], max: -1 },
+            ]);
+            if (buckets.some(bk => bk.time > 0)) {
+              setActivityZones(act.id, [{ type: 'heartrate', buckets, fetchedAt: new Date().toISOString() }]);
+            }
+          }
+        }
+        // null detail (native module missing / workout gone) → leave the
+        // graceful empty states; fetchStatus stays 'idle' so the
+        // Strava-worded sync pill never renders for health activities.
+      } catch {
+        // local read failed — same graceful empty states
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+      return;
+    }
+
     // Cache hit (real calories + polyline already enriched into the store row)
     // → skip the detail fetch entirely so a revisit opens instantly. The nav
     // refresh / pull-to-refresh always forces the full fetch.
@@ -598,7 +704,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
     } catch {
       // ignore — zones are optional
     }
-  }, [act.id, setActivityZones, enrichActivity, mergeBestEfforts]);
+  }, [act.id, act.startDate, act.elapsedTime, act.movingTime, setActivityZones, enrichActivity, mergeBestEfforts]);
 
   useEffect(() => {
     setLoading(true);
@@ -643,6 +749,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
   const family = familyForType(act.type);
   const fam = familyStyle(family);
   const isRide = act.type === 'Ride';
+  const isHealth = isHealthActivityId(act.id);
 
   const splits: any[] = detail?.splits_metric || [];
   const splitsImperial: any[] = detail?.splits_standard || [];
@@ -835,8 +942,10 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
     },
     {
       icon: Mountain,
-      value: `${Math.round(act.totalElevationGain)}`,
-      numericValue: Math.round(act.totalElevationGain),
+      // Health rows get elevation enriched from the route during this load —
+      // read the live store row so the tile reflects it without a reopen.
+      value: `${Math.round(isHealth ? liveAct.totalElevationGain : act.totalElevationGain)}`,
+      numericValue: Math.round(isHealth ? liveAct.totalElevationGain : act.totalElevationGain),
       unit: 'M', label: 'ELEVATION', accent: fam.accent, gradient: fam.gradient,
     },
   ];
@@ -845,7 +954,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
   const secondaryChips: Array<{ icon: LucideIcon; value: string; unit?: string; label: string; accent: string; show: boolean }> = [
     { icon: Pause, value: restLabel, label: 'PAUSED', accent: theme.colors.textSecondary, show: hasRest },
     { icon: Gauge, value: maxSpeedKmh.toFixed(1), unit: 'KM/H', label: 'MAX SPEED', accent: theme.colors.secondary, show: maxSpeedKmh > 0 },
-    { icon: Heart, value: act.maxHeartRate ? `${Math.round(act.maxHeartRate)}` : '', unit: 'BPM', label: 'MAX HR', accent: theme.colors.primary, show: !!act.maxHeartRate },
+    { icon: Heart, value: (isHealth ? liveAct : act).maxHeartRate ? `${Math.round((isHealth ? liveAct : act).maxHeartRate!)}` : '', unit: 'BPM', label: 'MAX HR', accent: theme.colors.primary, show: !!(isHealth ? liveAct : act).maxHeartRate },
     {
       icon: Footprints,
       value: act.averageCadence ? `${Math.round(act.averageCadence * (act.type === 'Run' ? 2 : 1))}` : '',
@@ -1328,7 +1437,11 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
         )}
 
         {/* ── HR Zones ───────────────────────────────────────────────────── */}
-        {splits.length > 0 && act.averageHeartRate ? (
+        {/* Health activities render only from locally computed zone buckets —
+            their splits carry no HR, so the splits fallback would show five
+            empty rows. HR values read the live store row so the enrichment
+            from this very load shows without a reopen. */}
+        {(isHealth ? !!activityHrZones && !!liveAct.averageHeartRate : splits.length > 0 && !!act.averageHeartRate) ? (
           <StaggerItem index={next()} style={sc.widgetGap}>
             <WidgetCard
               family="health"
@@ -1337,20 +1450,20 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
             >
               <View style={{ flexDirection: 'row', gap: 14, marginBottom: 18 }}>
                 <View style={sc.hrStat}>
-                  <Typography style={[sc.hrStatVal, { color: theme.colors.error }]}>{Math.round(act.averageHeartRate)}</Typography>
+                  <Typography style={[sc.hrStatVal, { color: theme.colors.error }]}>{Math.round((isHealth ? liveAct.averageHeartRate : act.averageHeartRate)!)}</Typography>
                   <Typography style={sc.hrStatUnit}>BPM</Typography>
                   <Typography style={sc.hrStatLbl}>AVG</Typography>
                 </View>
-                {act.maxHeartRate ? (
+                {(isHealth ? liveAct.maxHeartRate : act.maxHeartRate) ? (
                   <View style={sc.hrStat}>
-                    <Typography style={[sc.hrStatVal, { color: theme.colors.primary }]}>{Math.round(act.maxHeartRate)}</Typography>
+                    <Typography style={[sc.hrStatVal, { color: theme.colors.primary }]}>{Math.round((isHealth ? liveAct.maxHeartRate : act.maxHeartRate)!)}</Typography>
                     <Typography style={sc.hrStatUnit}>BPM</Typography>
                     <Typography style={sc.hrStatLbl}>PEAK</Typography>
                   </View>
                 ) : null}
               </View>
               <HRZonesChart splits={splits} resolved={resolvedZones} activityZones={activityHrZones} />
-              {activityHrZones && (
+              {activityHrZones && !isHealth && (
                 <View style={sc.liveStravaPill}>
                   <Icon icon={Zap} variant="plain" size="xs" color={theme.colors.gradients.primary[1]} />
                   <Typography style={sc.liveStravaText}>LIVE FROM STRAVA</Typography>

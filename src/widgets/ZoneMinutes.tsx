@@ -6,6 +6,8 @@ import { Typography } from '../components/Typography';
 import { theme, withAlpha } from '../theme';
 import { WIDGET_FAMILY, WIDGET_TITLES } from '../utils/widgetFamilies';
 import { StravaService } from '../services/strava';
+import { HealthActivities, computeHrZoneBuckets, isHealthActivityId } from '../services/healthActivities';
+import { resolveHrZones } from '../utils/hrZones';
 import { useStore } from '../store/useStore';
 import { EmptyHint } from './common';
 
@@ -48,20 +50,36 @@ export const ZoneMinutesWidget = memo(function ZoneMinutesWidget() {
   const fetchedRef = useRef(false);
   useEffect(() => {
     if (fetchedRef.current || !pendingIds.length) return;
-    if (!StravaService.isAuthenticated()) return;
+    // Health workouts bucket locally from HR samples — no Strava auth needed.
+    if (!pendingIds.some(isHealthActivityId) && !StravaService.isAuthenticated()) return;
     fetchedRef.current = true;
     let cancelled = false;
     (async () => {
       for (const id of pendingIds) {
         if (cancelled) return;
-        const res = await StravaService.fetchActivityZones(id).catch(() => null);
-        if (cancelled || !res) continue;
-        // Cache on the activity so future mounts (and other surfaces) skip the fetch.
-        const fetchedAt = new Date().toISOString();
-        setActivityZones(
-          id,
-          res.map((z) => ({ type: z.type, buckets: z.distribution_buckets, fetchedAt })),
-        );
+        if (isHealthActivityId(id)) {
+          const detail = await HealthActivities.fetchWorkoutDetail(id).catch(() => null);
+          if (cancelled || !detail) continue;
+          const { hrZones, userProfile } = useStore.getState();
+          const { bounds } = resolveHrZones(hrZones, userProfile);
+          // Z1 floor is 0 so easy-effort time below the nominal Z1 bound counts.
+          const bands = bounds.map((min, i) => ({ min: i === 0 ? 0 : min, max: i < 4 ? bounds[i + 1] : -1 }));
+          const buckets = computeHrZoneBuckets(detail.hrSamples, bands);
+          if (!buckets.some((b) => b.time > 0)) continue;
+          // Cache on the activity so future mounts (and other surfaces) skip the fetch.
+          const fetchedAt = new Date().toISOString();
+          setActivityZones(id, [{ type: 'heartrate', buckets, fetchedAt }]);
+        } else {
+          if (!StravaService.isAuthenticated()) continue;
+          const res = await StravaService.fetchActivityZones(id).catch(() => null);
+          if (cancelled || !res) continue;
+          // Cache on the activity so future mounts (and other surfaces) skip the fetch.
+          const fetchedAt = new Date().toISOString();
+          setActivityZones(
+            id,
+            res.map((z) => ({ type: z.type, buckets: z.distribution_buckets, fetchedAt })),
+          );
+        }
       }
     })();
     return () => {

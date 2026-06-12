@@ -111,3 +111,71 @@ describe('readinessScore', () => {
     expect(r.advice).toContain('sleep');
   });
 });
+
+describe('recovery part (daily Watch data)', () => {
+  function dailyHealth(over: Record<string, { restingHR?: number; hrv?: number }> = {}) {
+    // 10 baseline days of RHR 50 / HRV 60 ending 3 days ago.
+    const dh: Record<string, { restingHR?: number; hrv?: number }> = {};
+    for (let i = 3; i <= 12; i++) {
+      const d = new Date(TODAY);
+      d.setDate(d.getDate() - i);
+      dh[localDateStr(d)] = { restingHR: 50, hrv: 60 };
+    }
+    return { ...dh, ...over };
+  }
+
+  const todayKey = localDateStr(TODAY);
+
+  it('is null without dailyHealth — weights identical to the original 3-part split', () => {
+    const base = readinessScore({ sleepLog: sleep(8), activities: balanced, today: TODAY });
+    const withEmpty = readinessScore({ sleepLog: sleep(8), activities: balanced, dailyHealth: {}, today: TODAY });
+    expect(base.parts.recovery).toBeNull();
+    expect(withEmpty.score).toBe(base.score);
+  });
+
+  it('scores 100 when RHR and HRV sit at baseline', () => {
+    const dh = dailyHealth({ [todayKey]: { restingHR: 50, hrv: 60 } });
+    const r = readinessScore({ sleepLog: sleep(8), activities: balanced, dailyHealth: dh, today: TODAY });
+    expect(r.parts.recovery).toBe(100);
+  });
+
+  it('penalises elevated resting HR and suppressed HRV', () => {
+    // RHR +10% → 100-80=20; HRV -20% → 100-40=60; avg = 40.
+    const dh = dailyHealth({ [todayKey]: { restingHR: 55, hrv: 48 } });
+    const r = readinessScore({ sleepLog: sleep(8), activities: balanced, dailyHealth: dh, today: TODAY });
+    expect(r.parts.recovery).toBe(40);
+  });
+
+  it('needs a recent (≤2d) reading — stale-only data gives null', () => {
+    const r = readinessScore({ sleepLog: sleep(8), activities: balanced, dailyHealth: dailyHealth(), today: TODAY });
+    expect(r.parts.recovery).toBeNull();
+  });
+
+  it('needs a 5-day baseline before trusting deviations', () => {
+    const thin: Record<string, { restingHR: number }> = { [todayKey]: { restingHR: 60 } };
+    for (let i = 3; i <= 5; i++) {
+      const d = new Date(TODAY);
+      d.setDate(d.getDate() - i);
+      thin[localDateStr(d)] = { restingHR: 50 };
+    }
+    const r = readinessScore({ sleepLog: sleep(8), activities: balanced, dailyHealth: thin, today: TODAY });
+    expect(r.parts.recovery).toBeNull();
+  });
+
+  it('bad recovery drags the blended score down', () => {
+    const good = readinessScore({
+      sleepLog: sleep(8),
+      activities: balanced,
+      dailyHealth: dailyHealth({ [todayKey]: { restingHR: 50, hrv: 60 } }),
+      today: TODAY,
+    });
+    const bad = readinessScore({
+      sleepLog: sleep(8),
+      activities: balanced,
+      dailyHealth: dailyHealth({ [todayKey]: { restingHR: 60, hrv: 30 } }),
+      today: TODAY,
+    });
+    expect(bad.score).toBeLessThan(good.score);
+    expect(bad.parts.recovery).toBe(0);
+  });
+});

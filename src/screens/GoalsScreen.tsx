@@ -22,7 +22,7 @@ import { AIService, ChatMessage } from '../services/ai';
 import { computeProgress, expectedTrainingDays, prescriptionFor } from '../services/goalProgress';
 import { startGoalGeneration } from '../services/goalGeneration';
 import { phaseForDate, scheduleForDate } from '../services/planSchedule';
-import { performStravaSync } from '../services/syncRunner';
+import { performActivitySync } from '../services/syncRunner';
 import { familyStyle } from '../utils/widgetFamilies';
 import { workoutIcon, WORKOUT_COLORS, WORKOUT_LABELS, REST_LABELS } from '../utils/workoutKinds';
 import { localDateStr, mondayIndex, weekKey } from '../utils/dates';
@@ -321,7 +321,7 @@ export default function GoalsScreen() {
     setSyncingGoalId(goal.id);
     const before = (goal.checkIns || []).filter(c => c.source === 'STRAVA').length;
     try {
-      const result = await performStravaSync({ force: true });
+      const result = await performActivitySync({ force: true });
       let fresh = useStore.getState().goals.find(g => g.id === goal.id);
       if (!result && fresh) {
         // Not connected to Strava — still re-derive from local activities.

@@ -24,6 +24,7 @@ import {
   WidgetFamily,
 } from '../../utils/widgetFamilies';
 import { WIDGET_REGISTRY } from '../../widgets/registry';
+import { getActivitySource, HEALTH_HIDDEN_WIDGETS } from '../../services/activitySource';
 
 const ROW_H = 62; // fixed row height — drag math depends on it (56 row + 6 gap)
 
@@ -182,9 +183,12 @@ export function WidgetCatalog({ visible, activeIds, onClose, onSave }: WidgetCat
 
   const hidden = useMemo(() => {
     const active = new Set(draft);
+    const healthSource = getActivitySource() === 'health';
     const byFamily = new Map<WidgetFamily, string[]>();
     for (const id of Object.keys(WIDGET_REGISTRY)) {
       if (active.has(id)) continue;
+      // Strava-only widgets aren't offered while the health source is active.
+      if (healthSource && HEALTH_HIDDEN_WIDGETS.has(id)) continue;
       const fam = WIDGET_FAMILY[id] ?? 'plan';
       byFamily.set(fam, [...(byFamily.get(fam) ?? []), id]);
     }
