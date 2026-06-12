@@ -129,6 +129,12 @@ export default function App() {
     };
     init();
 
+    // Launch sync — AppState 'change' never fires for the initial cold start,
+    // so without this the dashboard only refreshes on foreground returns.
+    // performStravaSync waits for hydration itself and skips when <30 min
+    // fresh, so this is safe to fire-and-forget without blocking the splash.
+    performStravaSync().catch(e => console.warn('[LaunchSync] error:', e));
+
     // Initial sync after store hydrates
     const notifTimer = setTimeout(() => {
       syncAllNotifications().catch(e => console.warn('notif sync error:', e));
