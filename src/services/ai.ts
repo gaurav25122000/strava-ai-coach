@@ -164,8 +164,30 @@ Format example (fictional, shows shape only — your plan will have many weeks):
 Tone for descriptions: short, declarative, second-person. Say "do" or "skip", never "you should consider". Do not repeat the athlete's stats back. Output nothing outside the JSON.`;
 }
 
+// 5→great … 1→rough; mirrors the RPE sheet's mood scale.
+const MOOD_WORDS: Record<1 | 2 | 3 | 4 | 5, string> = {
+  1: 'rough', 2: 'meh', 3: 'ok', 4: 'good', 5: 'great',
+};
+
+type RpeContextEntry = { rpe?: number; mood?: 1 | 2 | 3 | 4 | 5; note?: string };
+
+/** ' · RPE 7/10 · felt: great (note)' suffix for a log line, '' when no entry. */
+export function rpeAnnotation(entry: RpeContextEntry | undefined): string {
+  if (!entry) return '';
+  let out = '';
+  if (entry.rpe) out += ` · RPE ${entry.rpe}/10`;
+  if (entry.mood) out += ` · felt: ${MOOD_WORDS[entry.mood]}`;
+  if (entry.note) out += ` (${entry.note})`;
+  return out;
+}
+
 // Compact per-run log line: "Mon 05-18: Run 8.2 km @ 5:42/km, HR 148, +85 m"
-function runLogLines(activities: Activity[], days: number, max: number): string[] {
+function runLogLines(
+  activities: Activity[],
+  days: number,
+  max: number,
+  rpeLog?: Record<string, RpeContextEntry>,
+): string[] {
   const cutoff = Date.now() - days * 86400000;
   const recent = activities
     .filter((a) => new Date(a.startDate).getTime() >= cutoff)
@@ -179,7 +201,7 @@ function runLogLines(activities: Activity[], days: number, max: number): string[
     if (a.averageSpeed > 0) bits.push(`@ ${formatPace(1000 / a.averageSpeed / 60)}/km`);
     if (a.averageHeartRate) bits.push(`HR ${Math.round(a.averageHeartRate)}`);
     if (a.totalElevationGain > 20) bits.push(`+${Math.round(a.totalElevationGain)} m`);
-    return bits.join(', ');
+    return bits.join(', ') + rpeAnnotation(rpeLog?.[a.id]);
   });
 }
 
@@ -740,6 +762,124 @@ async function requestDigest(provider: Provider, apiKey: string, context: string
   }
 }
 
+// ── Meal suggestions ─────────────────────────────────────────────────────────
+// "What should I eat?" for the calorie tracker: 3 structured single-plate
+// ideas that fit the remaining daily budget. Same schema discipline as food.
+
+const MEAL_SUGGESTION_SCHEMA = {
+  type: 'object',
+  properties: {
+    suggestions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name:        { type: 'string' },  // "Paneer bhurji + 2 rotis"
+          description: { type: 'string' },  // one sentence: what's on the plate
+          calories:    { type: 'number' },  // kcal for the whole plate
+          protein:     { type: 'number' },  // grams
+          carbs:       { type: 'number' },
+          fat:         { type: 'number' },
+        },
+        required: ['name', 'description', 'calories', 'protein', 'carbs', 'fat'],
+      },
+    },
+  },
+  required: ['suggestions'],
+};
+
+export interface MealSuggestion {
+  name: string;
+  description: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
+const MEAL_SUGGEST_SYSTEM = `You are a sports nutritionist suggesting the athlete's next meal. Rules:
+- Return EXACTLY 3 realistic single-plate suggestions someone can cook or order without fuss. Mix cuisines, and include Indian home food — the athlete's food library leans Indian.
+- Each plate's calories (and protein, when a protein target is given) must fit the remaining budget. Macros are grams for the whole plate.
+- name ≤ 6 words; description is one concrete sentence of what's on the plate.
+Output nothing outside the structured response.`;
+
+export function normaliseMealSuggestions(raw: any): MealSuggestion[] {
+  return (Array.isArray(raw?.suggestions) ? raw.suggestions : [])
+    .filter((s: any) => s?.name && typeof s.calories === 'number' && s.calories >= 0)
+    .slice(0, 3)
+    .map((s: any) => ({
+      name: String(s.name).slice(0, 60),
+      description: String(s.description || '').slice(0, 200),
+      calories: Math.round(s.calories),
+      protein: Math.round(Number(s.protein) || 0),
+      carbs: Math.round(Number(s.carbs) || 0),
+      fat: Math.round(Number(s.fat) || 0),
+    }));
+}
+
+async function requestMealSuggestions(provider: Provider, apiKey: string, prompt: string): Promise<any> {
+  try {
+    if (provider === 'gemini') {
+      const resp = await geminiGenerate(
+        {
+          system_instruction: { parts: [{ text: MEAL_SUGGEST_SYSTEM }] },
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: MEAL_SUGGESTION_SCHEMA,
+            maxOutputTokens: 2048,
+          },
+        },
+        apiKey,
+        CHAT_TIMEOUT_MS,
+      );
+      return JSON.parse(resp.data.candidates[0].content.parts[0].text);
+    }
+    if (provider === 'openai') {
+      const resp = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          model: MODELS.openai,
+          max_completion_tokens: 1024,
+          response_format: {
+            type: 'json_schema',
+            json_schema: { name: 'meal_suggestions', schema: MEAL_SUGGESTION_SCHEMA },
+          },
+          messages: [
+            { role: 'system', content: MEAL_SUGGEST_SYSTEM },
+            { role: 'user', content: prompt },
+          ],
+        },
+        { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, timeout: CHAT_TIMEOUT_MS },
+      );
+      return JSON.parse(resp.data.choices[0].message.content);
+    }
+    // Anthropic — forced tool use, tool input IS the suggestion list.
+    const resp = await axios.post(
+      'https://api.anthropic.com/v1/messages',
+      {
+        model: MODELS.anthropic,
+        max_tokens: 1024,
+        system: MEAL_SUGGEST_SYSTEM,
+        tools: [{
+          name: 'submit_meal_suggestions',
+          description: 'Submit the three meal suggestions.',
+          input_schema: MEAL_SUGGESTION_SCHEMA,
+        }],
+        tool_choice: { type: 'tool', name: 'submit_meal_suggestions' },
+        messages: [{ role: 'user', content: prompt }],
+      },
+      { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }, timeout: CHAT_TIMEOUT_MS },
+    );
+    const toolUse = (resp.data.content || []).find((b: any) => b.type === 'tool_use');
+    if (!toolUse?.input) throw new Error('anthropic: no structured suggestions returned');
+    return toolUse.input;
+  } catch (e: any) {
+    if (e?.message?.startsWith(provider)) throw e;
+    throw providerError(provider, e);
+  }
+}
+
 // ── Plan summaries (compact context instead of full-JSON history bloat) ─────
 
 function planSummaryText(phases: Phase[] | undefined): string {
@@ -786,6 +926,10 @@ export interface ChatExtras {
   unit?: 'metric' | 'imperial';
   /** Pre-built NUTRITION LOG block from services/calories.nutritionContext. */
   nutrition?: string | null;
+  /** Pre-built WEATHER block from services/weather.weatherContext. */
+  weather?: string | null;
+  /** Athlete's subjective post-activity check-ins, keyed by activity id. */
+  rpeLog?: Record<string, RpeContextEntry>;
 }
 
 export const AIService = {
@@ -819,6 +963,24 @@ export const AIService = {
     };
   },
 
+  /** 3 structured meal ideas that fit what's left of today's budget. */
+  suggestMeal: async (
+    opts: { remainingKcal: number; remainingProtein: number | null; mealType: string; nutrition: string | null },
+    provider: Provider,
+    apiKey: string,
+  ): Promise<MealSuggestion[]> => {
+    if (!apiKey) throw new Error('API Key is missing');
+    const prompt = [
+      `The athlete has ${Math.round(opts.remainingKcal)} kcal${
+        opts.remainingProtein != null ? ` and ${Math.round(opts.remainingProtein)} g protein` : ''
+      } left in today's budget and wants a ${opts.mealType}.`,
+      opts.nutrition ? `\n${opts.nutrition}` : null,
+      '\nSuggest exactly 3 single-plate meals that fit.',
+    ].filter(Boolean).join('\n');
+    const raw = await requestMealSuggestions(provider, apiKey, prompt);
+    return normaliseMealSuggestions(raw);
+  },
+
   chatWithCoach: async (
     messages: ChatMessage[],
     provider: Provider,
@@ -832,7 +994,7 @@ export const AIService = {
     const snap = trainingSnapshot(activities, extras.bestEfforts);
     const age = userProfile.dob ? Math.floor((Date.now() - new Date(userProfile.dob).getTime()) / (365.25 * 86400000)) : null;
     const today = new Date();
-    const log = runLogLines(activities, 14, 14);
+    const log = runLogLines(activities, 14, 14, extras.rpeLog);
 
     let goalContext = '';
     if (goal) {
@@ -866,10 +1028,11 @@ Avg weekly RUN km (last 4 weeks): ${snap.avgWeeklyRunKm.toFixed(1)} km
 Longest run (60d): ${snap.longestRecentRunKm.toFixed(1)} km
 ${snap.prLines.length ? snap.prLines.join('\n') : 'No PRs recorded yet.'}
 
-RECENT LOG (14 days, newest first):
+RECENT LOG (14 days, newest first)${extras.rpeLog && Object.keys(extras.rpeLog).length ? ' — RPE/felt marks are the athlete\'s own subjective check-ins' : ''}:
 ${log.length ? log.join('\n') : 'No recent activities.'}
 ${goalContext}
 ${extras.nutrition ? `\n${extras.nutrition}\nUse this when fueling/recovery/energy comes up — flag big deficits on hard-training days and low protein. Don't mention the tracker unprompted if intake looks fine.` : ''}
+${extras.weather ? `\n${extras.weather}\nUse this to time workouts and to flag heat-hydration or rain alternatives — only when relevant to the question. Don't recite the forecast otherwise.` : ''}
 
 Units: athlete prefers ${extras.unit || 'metric'}. Answer concisely in markdown. Be direct, specific, and data-driven; reference the actual log when relevant.`;
 

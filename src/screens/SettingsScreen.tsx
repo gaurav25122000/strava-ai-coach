@@ -20,6 +20,7 @@ import * as Linking from 'expo-linking';
 import { StravaService } from '../services/strava';
 import { performStravaSync } from '../services/syncRunner';
 import { NotificationService } from '../services/notifications';
+import { armMorningBriefing } from '../services/briefing';
 import axios from 'axios';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -40,6 +41,7 @@ import {
   KeyRound,
   RefreshCw,
   Sparkles,
+  Sunrise,
   ChevronLeft,
   ChevronRight,
   Check,
@@ -116,6 +118,8 @@ export default function SettingsScreen() {
   const setActivities = useStore(s => s.setActivities);
   const setAthleteStats = useStore(s => s.setAthleteStats);
   const setToast = useStore(s => s.setToast);
+  const morningBriefingEnabled = useStore(s => s.morningBriefingEnabled);
+  const setMorningBriefingEnabled = useStore(s => s.setMorningBriefingEnabled);
   const navigation = useNavigation<any>();
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -288,6 +292,21 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleMorningBriefingToggle = async (enabled: boolean) => {
+    if (enabled) {
+      const granted = await NotificationService.requestPermission();
+      setNotifGranted(granted);
+      if (!granted) {
+        // Store value never flips, so the Toggle snaps back — that's the revert.
+        setToast({ title: 'Permission needed', message: 'Enable notifications in system settings.', type: 'error' });
+        return;
+      }
+    }
+    setMorningBriefingEnabled(enabled);
+    // Schedules tomorrow's 07:00 briefing — or cancels it when disabling.
+    armMorningBriefing().catch(() => {});
+  };
+
   const handleExport = async () => {
     try {
       const { activities, settings: latestSettings } = useStore.getState();
@@ -313,6 +332,7 @@ export default function SettingsScreen() {
 
   const healthFam = familyStyle('health');
   const recordsFam = familyStyle('records');
+  const progressFam = familyStyle('progress');
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -546,7 +566,6 @@ export default function SettingsScreen() {
                 ? 'Workout reminders, streaks and weekly recaps are on'
                 : 'Workout reminders, streak alerts, weekly recaps'}
               onPress={notifGranted ? undefined : handleEnableNotifications}
-              isLast
               right={notifGranted
                 ? (
                   <View style={styles.grantedPill}>
@@ -555,6 +574,21 @@ export default function SettingsScreen() {
                   </View>
                 )
                 : <Button title="Enable" size="sm" variant="secondary" family="progress" onPress={handleEnableNotifications} />}
+            />
+            <SettingsRow
+              icon={Sunrise}
+              family="progress"
+              label="Morning briefing"
+              caption="Your workout + weather at 7:00"
+              isLast
+              right={
+                <Toggle
+                  value={morningBriefingEnabled}
+                  onValueChange={(val) => { handleMorningBriefingToggle(val); }}
+                  accent={progressFam.accent}
+                  accessibilityLabel="Morning briefing"
+                />
+              }
             />
           </WidgetCard>
         </StaggerItem>

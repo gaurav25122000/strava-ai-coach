@@ -24,7 +24,7 @@ import { sportIcon } from '../utils/sportIcon';
 import { Icon } from '../components/Icon';
 import {
   Search, SlidersHorizontal, Activity as ActivityIcon,
-  Flame, Link as LinkIcon, Check,
+  Flame, Link as LinkIcon, Check, ArrowLeftRight,
 } from 'lucide-react-native';
 import {
   format, parseISO, isToday, isYesterday, isThisWeek, isThisYear,
@@ -36,6 +36,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 type ActivitiesStackParamList = {
   ActivitiesList: undefined;
   ActivityDetail: { activity: Activity };
+  CompareActivities: { ids: [string, string] };
 };
 
 const TYPES = ['All', 'Run', 'Ride', 'Walk', 'Workout'];
@@ -110,9 +111,11 @@ interface RowProps {
   /** Only play the entrance cascade the first time this content appears; a
    *  no-op on scroll recycling, filter, and refresh re-renders. */
   animate: boolean;
+  /** Compare select mode: row is one of the (max 2) picked activities. */
+  selected?: boolean;
 }
 
-function ActivityRow({ act, maxDistance, onPress, staggerIndex, animate }: RowProps) {
+function ActivityRow({ act, maxDistance, onPress, staggerIndex, animate, selected }: RowProps) {
   const fam = familyStyle(familyForType(act.type));
   const km = act.distance / 1000;
   const distanceFrac = maxDistance > 0 ? Math.max(0.08, km / maxDistance) : 0.1;
@@ -225,6 +228,18 @@ function ActivityRow({ act, maxDistance, onPress, staggerIndex, animate }: RowPr
             />
           </View>
         </View>
+
+        {/* Compare-mode selection overlay */}
+        {selected ? (
+          <View
+            pointerEvents="none"
+            style={[s.selectOverlay, { borderColor: fam.accent, backgroundColor: withAlpha(fam.accent, 'soft') }]}
+          >
+            <View style={[s.selectBadge, { backgroundColor: fam.accent }]}>
+              <Icon icon={Check} variant="plain" size="xs" color={theme.colors.onAccent} />
+            </View>
+          </View>
+        ) : null}
       </PressableScale>
     </Animated.View>
   );
@@ -311,6 +326,8 @@ export default function ActivitiesScreen() {
   const [sort, setSort] = useState<SortKey>('date');
   const [showSort, setShowSort] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -419,6 +436,25 @@ export default function ActivitiesScreen() {
     navigation.navigate('ActivityDetail', { activity: act });
   }, [navigation]);
 
+  const toggleSelectMode = useCallback(() => {
+    setSelectMode(v => !v);
+    setSelected([]);
+  }, []);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelected(prev => prev.includes(id)
+      ? prev.filter(x => x !== id)
+      : prev.length >= 2 ? prev : [...prev, id]);
+  }, []);
+
+  const onCompare = useCallback(() => {
+    if (selected.length !== 2) return;
+    const ids: [string, string] = [selected[0], selected[1]];
+    setSelectMode(false);
+    setSelected([]);
+    navigation.navigate('CompareActivities', { ids });
+  }, [selected, navigation]);
+
   function openSettings() {
     (navigation as any).getParent()?.navigate('Menu', { screen: 'Settings', initial: false });
   }
@@ -431,9 +467,10 @@ export default function ActivitiesScreen() {
       staggerIndex={index}
       animate={newlyRevealed.has(item.id)}
       maxDistance={maxDistance}
-      onPress={() => openDetail(item)}
+      selected={selectMode && selected.includes(item.id)}
+      onPress={() => (selectMode ? toggleSelect(item.id) : openDetail(item))}
     />
-  ), [newlyRevealed, maxDistance, openDetail]);
+  ), [newlyRevealed, maxDistance, openDetail, selectMode, selected, toggleSelect]);
 
   const isEmpty = !activities.length;
   const fam = familyStyle('activity');
@@ -470,9 +507,20 @@ export default function ActivitiesScreen() {
           <View style={{ flex: 1 }}>
             <Typography style={s.heroTitle}>Activities</Typography>
             <Typography style={s.heroSub}>
-              {activities.length} synced from Strava
+              {selectMode ? 'Pick 2 activities to compare' : `${activities.length} synced from Strava`}
             </Typography>
           </View>
+          {activities.length >= 2 && (
+            <PressableScale
+              style={s.compareBtn}
+              onPress={toggleSelectMode}
+              accessibilityRole="button"
+              accessibilityLabel={selectMode ? 'Cancel compare' : 'Compare two activities'}
+            >
+              <Icon icon={ArrowLeftRight} variant="plain" size="xs" color={theme.colors.onAccent} />
+              <Typography style={s.compareBtnText}>{selectMode ? 'CANCEL' : 'COMPARE'}</Typography>
+            </PressableScale>
+          )}
         </View>
 
         <View style={s.heroPillRow}>
@@ -605,6 +653,19 @@ export default function ActivitiesScreen() {
             />
           }
         />
+      )}
+
+      {/* Floating compare CTA — appears once both slots are picked */}
+      {selectMode && selected.length === 2 && (
+        <View style={s.compareCtaWrap} pointerEvents="box-none">
+          <Button
+            title="Compare"
+            icon={ArrowLeftRight}
+            size="lg"
+            fullWidth
+            onPress={onCompare}
+          />
+        </View>
       )}
 
       {/* Sort options */}
@@ -817,6 +878,29 @@ const s = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   distanceBarFill: { width: '100%', borderRadius: 2 },
+
+  // ── Compare select mode ────────────────────────────────────────────────
+  selectOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 16, borderWidth: 2,
+  },
+  selectBadge: {
+    position: 'absolute', top: 10, right: 10,
+    width: 22, height: 22, borderRadius: 11,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  compareBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
+    backgroundColor: withAlpha(theme.colors.background, 'medium'),
+  },
+  compareBtnText: {
+    fontSize: 11, fontWeight: '900', color: theme.colors.onAccent,
+    letterSpacing: 1,
+  },
+  compareCtaWrap: {
+    position: 'absolute', left: 16, right: 16, bottom: 104,
+  },
 
   // ── Empty ──────────────────────────────────────────────────────────────
   emptyWrap: { alignItems: 'center', paddingHorizontal: 32, paddingTop: 80, gap: 14 },

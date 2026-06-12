@@ -40,6 +40,11 @@ import { MacroSplitWidget } from './MacroSplit';
 import { WaterTrackerWidget } from './WaterTracker';
 import { WeightTrendWidget } from './WeightTrend';
 import { FuelForecastWidget } from './FuelForecast';
+import { WeatherWindowWidget } from './WeatherWindow';
+import { TaperCountdownWidget } from './TaperCountdown';
+import { ReadinessWidget } from './Readiness';
+import { ZoneMinutesWidget } from './ZoneMinutes';
+import { PBProgressionWidget } from './PBProgression';
 
 /**
  * id → component for every dashboard widget. Keys MUST mirror
@@ -88,4 +93,9 @@ export const WIDGET_REGISTRY: Record<string, React.ComponentType> = {
   WaterTracker: WaterTrackerWidget,
   WeightTrend: WeightTrendWidget,
   FuelForecast: FuelForecastWidget,
+  WeatherWindow: WeatherWindowWidget,
+  TaperCountdown: TaperCountdownWidget,
+  Readiness: ReadinessWidget,
+  ZoneMinutes: ZoneMinutesWidget,
+  PBProgression: PBProgressionWidget,
 };

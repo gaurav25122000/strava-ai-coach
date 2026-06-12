@@ -15,6 +15,8 @@ import { StravaService } from '../services/strava';
 import { performStravaSync } from '../services/syncRunner';
 import { computeBestEfforts, computeMilestones } from '../services/milestones';
 import { maybeGenerateWeeklyDigest } from '../services/weeklyDigest';
+import { refreshWeather } from '../services/weather';
+import { armMorningBriefing } from '../services/briefing';
 import { NotificationService } from '../services/notifications';
 
 // One dashboard slot. memo + registry component (each widget is itself memoised
@@ -75,6 +77,11 @@ function useDashboardUpkeep(onNewMilestone: (m: Milestone) => void) {
 
     // AI weekly digest — no-ops unless a new week rolled over.
     maybeGenerateWeeklyDigest().catch(() => {});
+
+    // Forecast cache + tomorrow-07:00 briefing — both cheap no-ops when the
+    // cache is fresh / the toggle is off.
+    refreshWeather().catch(() => {});
+    armMorningBriefing().catch(() => {});
   }, [activities, onNewMilestone]);
 
   // Auxiliary Strava data that several widgets read (zones for HR widgets,

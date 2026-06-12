@@ -62,6 +62,8 @@ export interface Activity {
   startDate: string;
   /** Athlete wall-clock (Strava start_date_local). Day-bucket with this. */
   startDateLocal?: string;
+  /** [lat, lng] of the start point (Strava start_latlng) — powers weather. */
+  startLatlng?: [number, number];
   averageSpeed: number; // m/s
   maxSpeed: number;
   averageHeartRate?: number;
@@ -316,6 +318,75 @@ export interface WeightEntry {
   kg: number;
 }
 
+export interface SleepEntry {
+  /** Hours slept the night ending on the keyed day ("2026-06-12" = last night). */
+  hours: number;
+  /** 1 = rough, 2 = okay, 3 = great. */
+  quality?: 1 | 2 | 3;
+}
+
+/** Daily macro targets in grams; unset fields mean calorie-only tracking. */
+export interface MacroGoals {
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+}
+
+export interface SavedMealItem {
+  name: string;
+  calories: number; // total kcal for this item as saved
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+  serving?: string;
+  quantity: number;
+}
+
+/** A reusable bundle of foods ("my usual breakfast") logged in one tap. */
+export interface SavedMeal {
+  id: string;
+  name: string;
+  items: SavedMealItem[];
+}
+
+/** Post-activity subjective check-in. */
+export interface RpeEntry {
+  /** Session RPE 1–10. */
+  rpe?: number;
+  /** Mood 1 (rough) – 5 (great). */
+  mood?: 1 | 2 | 3 | 4 | 5;
+  note?: string;
+  loggedAt: string; // ISO
+}
+
+export interface WeatherHour {
+  time: string; // ISO local hour (Open-Meteo timezone=auto)
+  tempC: number;
+  apparentC: number;
+  precipProb: number; // 0–100
+  windKph: number;
+  code: number; // WMO weather code
+}
+
+export interface WeatherDay {
+  date: string; // YYYY-MM-DD
+  tMaxC: number;
+  tMinC: number;
+  precipProb: number; // daily max, 0–100
+  code: number;
+  sunrise: string;
+  sunset: string;
+}
+
+/** Open-Meteo forecast cached around the athlete's last activity location. */
+export interface WeatherSnapshot {
+  fetchedAt: string; // ISO
+  lat: number;
+  lon: number;
+  hourly: WeatherHour[]; // ~48 h
+  daily: WeatherDay[]; // today + next 2 days
+}
+
 export interface WeeklyDigest {
   /** Monday of the recapped week, YYYY-MM-DD (utils/dates weekKey format). */
   weekKey: string;
@@ -539,6 +610,27 @@ interface AppState {
   addWeightEntry: (date: string, kg: number) => void;
   mealRemindersEnabled: boolean;
   setMealRemindersEnabled: (on: boolean) => void;
+  /** Sleep per YYYY-MM-DD (the night ending that morning). */
+  sleepLog: Record<string, SleepEntry>;
+  setSleep: (day: string, entry: SleepEntry | null) => void;
+  weatherCache: WeatherSnapshot | null;
+  setWeatherCache: (snap: WeatherSnapshot | null) => void;
+  morningBriefingEnabled: boolean;
+  setMorningBriefingEnabled: (on: boolean) => void;
+  savedMeals: SavedMeal[];
+  addSavedMeal: (meal: SavedMeal) => void;
+  removeSavedMeal: (id: string) => void;
+  macroGoals: MacroGoals;
+  setMacroGoals: (goals: MacroGoals) => void;
+  /** Auto-adjust the calorie goal by the day's planned training load. */
+  calorieCycling: boolean;
+  setCalorieCycling: (on: boolean) => void;
+  /** Post-activity RPE / mood check-ins, keyed by activity id. */
+  rpeLog: Record<string, RpeEntry>;
+  setRpe: (activityId: string, entry: RpeEntry | null) => void;
+  /** Ticked taper-checklist item ids per goal. */
+  taperChecks: Record<string, string[]>;
+  toggleTaperCheck: (goalId: string, itemId: string) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -610,6 +702,49 @@ export const useStore = create<AppState>()(
       }),
       mealRemindersEnabled: false,
       setMealRemindersEnabled: (mealRemindersEnabled) => set({ mealRemindersEnabled }),
+      sleepLog: {},
+      setSleep: (day, entry) => set((state) => {
+        const sleepLog = { ...state.sleepLog };
+        if (entry) sleepLog[day] = entry;
+        else delete sleepLog[day];
+        return { sleepLog };
+      }),
+      weatherCache: null,
+      setWeatherCache: (weatherCache) => set({ weatherCache }),
+      morningBriefingEnabled: false,
+      setMorningBriefingEnabled: (morningBriefingEnabled) => set({ morningBriefingEnabled }),
+      savedMeals: [],
+      // Same-name saves overwrite, mirroring addCustomFood.
+      addSavedMeal: (meal) => set((state) => ({
+        savedMeals: [
+          ...state.savedMeals.filter(
+            (m) => m.id !== meal.id && m.name.toLowerCase() !== meal.name.toLowerCase(),
+          ),
+          meal,
+        ],
+      })),
+      removeSavedMeal: (id) => set((state) => ({
+        savedMeals: state.savedMeals.filter((m) => m.id !== id),
+      })),
+      macroGoals: {},
+      setMacroGoals: (macroGoals) => set({ macroGoals }),
+      calorieCycling: false,
+      setCalorieCycling: (calorieCycling) => set({ calorieCycling }),
+      rpeLog: {},
+      setRpe: (activityId, entry) => set((state) => {
+        const rpeLog = { ...state.rpeLog };
+        if (entry) rpeLog[activityId] = entry;
+        else delete rpeLog[activityId];
+        return { rpeLog };
+      }),
+      taperChecks: {},
+      toggleTaperCheck: (goalId, itemId) => set((state) => {
+        const cur = state.taperChecks[goalId] ?? [];
+        const next = cur.includes(itemId)
+          ? cur.filter((i) => i !== itemId)
+          : [...cur, itemId];
+        return { taperChecks: { ...state.taperChecks, [goalId]: next } };
+      }),
       userStats: {
         currentStreak: 0,
         bestStreak: 0,
@@ -757,7 +892,9 @@ export const useStore = create<AppState>()(
       // v8 (2026-06): calorie tracker — QuickNav, CaloriesToday, CalorieWeek
       // widgets slot into existing layouts.
       // v9 (2026-06): WaterTracker + WeightTrend widgets.
-      version: 9,
+      // v10 (2026-06): WeatherWindow, TaperCountdown, Readiness, ZoneMinutes
+      // and PBProgression widgets slot into existing layouts.
+      version: 10,
       migrate: (persistedState: any, fromVersion: number) => {
         if (!persistedState) return persistedState;
         const next = { ...persistedState };
@@ -836,6 +973,26 @@ export const useStore = create<AppState>()(
           next.settings = { ...(next.settings ?? {}), widgetLayout: migrated };
         }
 
+        if (fromVersion < 10) {
+          const layout: string[] = next.settings?.widgetLayout ?? [...DEFAULT_WIDGET_LAYOUT];
+          const migrated = [...layout];
+          // Each new widget slots in right after its default-layout neighbour.
+          const inserts: Array<[string, string]> = [
+            ['WeatherWindow', 'TodayHero'],
+            ['TaperCountdown', 'WeatherWindow'],
+            ['Readiness', 'TrainingLoad'],
+            ['ZoneMinutes', 'IntensityDistribution'],
+            ['PBProgression', 'PRProximity'],
+          ];
+          for (const [id, anchor] of inserts) {
+            if (!migrated.includes(id)) {
+              const at = migrated.indexOf(anchor);
+              migrated.splice(at >= 0 ? at + 1 : migrated.length, 0, id);
+            }
+          }
+          next.settings = { ...(next.settings ?? {}), widgetLayout: migrated };
+        }
+
         // Final defensive cleanup against the live widget registry.
         const layout: string[] = next.settings?.widgetLayout ?? [];
         next.settings = {
@@ -871,6 +1028,14 @@ export const useStore = create<AppState>()(
         waterLog: state.waterLog,
         weightLog: state.weightLog,
         mealRemindersEnabled: state.mealRemindersEnabled,
+        sleepLog: state.sleepLog,
+        weatherCache: state.weatherCache,
+        morningBriefingEnabled: state.morningBriefingEnabled,
+        savedMeals: state.savedMeals,
+        macroGoals: state.macroGoals,
+        calorieCycling: state.calorieCycling,
+        rpeLog: state.rpeLog,
+        taperChecks: state.taperChecks,
       }),
     }
   )

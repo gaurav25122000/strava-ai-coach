@@ -7,28 +7,26 @@ import { DonutRing } from '../components/DonutRing';
 import { AnimatedNumber } from '../components/AnimatedNumber';
 import { theme, withAlpha } from '../theme';
 import { familyStyle, WIDGET_FAMILY, WIDGET_TITLES } from '../utils/widgetFamilies';
-import { macrosOn, mealsOn, MEAL_LABELS, MEAL_ORDER } from '../services/calories';
+import { macrosOn, macroTargets, mealsOn, MEAL_LABELS, MEAL_ORDER } from '../services/calories';
 import { useStore } from '../store/useStore';
 import { localDateStr } from '../utils/dates';
 
-// Endurance-athlete protein guideline. Falls back to a flat 100 g when the
-// profile has no body weight.
-const G_PER_KG = 1.6;
-const FALLBACK_TARGET_G = 100;
-
 /**
- * Today's protein against a body-weight-scaled target (1.6 g/kg from the
- * Strava-fed profile), with the per-meal split underneath.
+ * Today's protein against the shared macro target (custom goal, else
+ * 1.6 g/kg from the Strava-fed profile), with the per-meal split underneath.
  */
 export const ProteinTrackerWidget = memo(function ProteinTrackerWidget() {
   const foodLog = useStore((s) => s.foodLog);
   const weight = useStore((s) => s.userProfile.weight);
+  const macroGoals = useStore((s) => s.macroGoals);
+  const calorieGoal = useStore((s) => s.calorieGoal);
 
   const today = localDateStr(new Date());
   const { protein } = useMemo(() => macrosOn(foodLog, today), [foodLog, today]);
   const meals = useMemo(() => mealsOn(foodLog, today), [foodLog, today]);
 
-  const target = weight > 0 ? Math.round(weight * G_PER_KG) : FALLBACK_TARGET_G;
+  const targets = macroTargets({ weight }, macroGoals, calorieGoal);
+  const target = targets.protein;
   const fam = familyStyle('health');
   const done = protein >= target;
 
@@ -43,7 +41,11 @@ export const ProteinTrackerWidget = memo(function ProteinTrackerWidget() {
       family={WIDGET_FAMILY['ProteinTracker']}
       title={WIDGET_TITLES['ProteinTracker']}
       icon={Beef}
-      caption={weight > 0 ? `target ${G_PER_KG} g/kg` : 'set weight in Profile for a per-kg target'}
+      caption={
+        targets.custom.protein
+          ? 'your goal'
+          : weight > 0 ? 'target 1.6 g/kg' : 'set weight in Profile for a per-kg target'
+      }
     >
       <View style={styles.row}>
         <DonutRing

@@ -3,11 +3,13 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { theme } from '../theme';
 import ActivitiesScreen from '../screens/ActivitiesScreen';
 import { ActivityDetailScreen } from '../screens/ActivityDetailScreen';
+import CompareActivitiesScreen from '../screens/CompareActivitiesScreen';
 import { Activity } from '../store/useStore';
 
 export type ActivitiesStackParamList = {
   ActivitiesList: undefined;
   ActivityDetail: { activity: Activity };
+  CompareActivities: { ids: [string, string] };
 };
 
 const Stack = createNativeStackNavigator<ActivitiesStackParamList>();
@@ -43,6 +45,7 @@ export default function ActivitiesStack() {
           animation: 'slide_from_bottom',
         }}
       />
+      <Stack.Screen name="CompareActivities" component={CompareActivitiesScreen} />
     </Stack.Navigator>
   );
 }

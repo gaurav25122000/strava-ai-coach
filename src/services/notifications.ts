@@ -81,6 +81,42 @@ export const NotificationService = {
     });
   },
 
+  cancelMorningBriefing: async () => {
+    try {
+      await Notifications.cancelScheduledNotificationAsync('morning-briefing');
+    } catch {
+      // identifier may not exist — ignore
+    }
+  },
+
+  // Morning briefing — ONE-SHOT for the next upcoming 07:00: today's if it
+  // hasn't fired yet, else tomorrow's. The caller (briefing.ts) builds the
+  // body from that firing day's prescription + weather; re-armed on every
+  // app open so the content stays fresh.
+  scheduleMorningBriefing: async (body: string) => {
+    const granted = await NotificationService.hasPermission();
+    if (!granted) return;
+
+    await NotificationService.cancelMorningBriefing();
+
+    const next = new Date();
+    next.setHours(7, 0, 0, 0);
+    if (Date.now() >= next.getTime()) next.setDate(next.getDate() + 1);
+
+    await Notifications.scheduleNotificationAsync({
+      identifier: 'morning-briefing',
+      content: {
+        title: '🌅 Morning briefing',
+        body,
+        data: { type: 'morning-briefing' },
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: next,
+      },
+    });
+  },
+
   // Streak-at-risk reminder — ONE-SHOT for tonight 20:00, only when the
   // streak is active and nothing is logged today. Re-armed on each sync; the
   // old DAILY repeating trigger kept congratulating dead streaks for weeks.

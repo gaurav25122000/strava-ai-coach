@@ -6,6 +6,8 @@ import GearHealthScreen from '../screens/GearHealthScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import CalorieTrackerScreen from '../screens/CalorieTrackerScreen';
 import AddFoodScreen from '../screens/AddFoodScreen';
+import TrainingCalendarScreen from '../screens/TrainingCalendarScreen';
+import WrappedScreen from '../screens/WrappedScreen';
 import { theme } from '../theme';
 
 const Stack = createNativeStackNavigator();
@@ -26,6 +28,8 @@ export default function ProfileStack() {
       <Stack.Screen name="Settings" component={SettingsScreen} />
       <Stack.Screen name="CalorieTracker" component={CalorieTrackerScreen} />
       <Stack.Screen name="AddFood" component={AddFoodScreen} />
+      <Stack.Screen name="TrainingCalendar" component={TrainingCalendarScreen} />
+      <Stack.Screen name="Wrapped" component={WrappedScreen} />
     </Stack.Navigator>
   );
 }

@@ -34,6 +34,7 @@ import { Sheet } from '../components/Sheet';
 import { useStore } from '../store/useStore';
 import { AIService, ChatMessage } from '../services/ai';
 import { nutritionContext } from '../services/calories';
+import { weatherContext } from '../services/weather';
 import { theme, withAlpha } from '../theme';
 import { secureSettingsStorage } from '../store/useStore';
 import { familyStyle } from '../utils/widgetFamilies';
@@ -360,6 +361,8 @@ export default function ChatScreen() {
             activities,
             useStore.getState().calorieGoal,
           ),
+          weather: weatherContext(useStore.getState().weatherCache),
+          rpeLog: useStore.getState().rpeLog,
         },
       );
       setCoachChat([

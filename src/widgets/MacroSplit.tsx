@@ -5,10 +5,10 @@ import { Typography } from '../components/Typography';
 import { ChartDonut } from '../components/charts/ChartDonut';
 import { EmptyHint } from './common';
 import { theme } from '../theme';
-import { WIDGET_FAMILY, WIDGET_TITLES } from '../utils/widgetFamilies';
-import { calorieWeekSeries, macrosOn } from '../services/calories';
+import { familyStyle, WIDGET_FAMILY, WIDGET_TITLES } from '../utils/widgetFamilies';
+import { calorieWeekSeries, macrosOn, macroTargets } from '../services/calories';
 import { useStore } from '../store/useStore';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 // kcal per gram of each macro — converts the gram split into energy share.
 const KCAL_PER_G = { protein: 4, carbs: 4, fat: 9 } as const;
@@ -26,6 +26,9 @@ const MACRO_COLORS = {
  */
 export const MacroSplitWidget = memo(function MacroSplitWidget() {
   const foodLog = useStore((s) => s.foodLog);
+  const macroGoals = useStore((s) => s.macroGoals);
+  const weight = useStore((s) => s.userProfile.weight);
+  const calorieGoal = useStore((s) => s.calorieGoal);
 
   const totals = useMemo(() => {
     const days = calorieWeekSeries(foodLog, [], 7);
@@ -52,6 +55,21 @@ export const MacroSplitWidget = memo(function MacroSplitWidget() {
     { label: 'Fat', value: kcal.fat, color: MACRO_COLORS.fat },
   ].filter((d) => d.value > 0);
 
+  const targets = macroTargets({ weight }, macroGoals, calorieGoal);
+  const hasCustom = targets.custom.protein || targets.custom.carbs || targets.custom.fat;
+  const fam = familyStyle(WIDGET_FAMILY['MacroSplit']);
+  // Daily averages vs daily targets. Only the harmful direction warns:
+  // protein under target, fat over target. Carbs has no bad direction here.
+  const avg = {
+    protein: Math.round(totals.protein / 7),
+    fat: Math.round(totals.fat / 7),
+  };
+  const tint = {
+    protein: avg.protein < targets.protein ? theme.colors.warning : fam.accent,
+    carbs: fam.accent,
+    fat: avg.fat > targets.fat ? theme.colors.warning : fam.accent,
+  };
+
   return (
     <WidgetCard
       family={WIDGET_FAMILY['MacroSplit']}
@@ -66,14 +84,32 @@ export const MacroSplitWidget = memo(function MacroSplitWidget() {
           text="Log meals with macros to see where your calories come from."
         />
       ) : (
-        <ChartDonut
-          data={data}
-          size={150}
-          formatValue={(v) => `${Math.round(v)} kcal`}
-        >
-          <Typography style={styles.centerNum}>{Math.round(totalKcal / 7)}</Typography>
-          <Typography style={styles.centerSub}>kcal/day avg</Typography>
-        </ChartDonut>
+        <>
+          <ChartDonut
+            data={data}
+            size={150}
+            formatValue={(v) => `${Math.round(v)} kcal`}
+          >
+            <Typography style={styles.centerNum}>{Math.round(totalKcal / 7)}</Typography>
+            <Typography style={styles.centerSub}>kcal/day avg</Typography>
+          </ChartDonut>
+          {hasCustom && (
+            <View style={styles.targetRow}>
+              <Typography style={[styles.targetItem, { color: tint.protein }]}>
+                P {targets.protein}g
+              </Typography>
+              <Typography style={styles.targetSep}>·</Typography>
+              <Typography style={[styles.targetItem, { color: tint.carbs }]}>
+                C {targets.carbs}g
+              </Typography>
+              <Typography style={styles.targetSep}>·</Typography>
+              <Typography style={[styles.targetItem, { color: tint.fat }]}>
+                F {targets.fat}g
+              </Typography>
+              <Typography style={styles.targetSep}>goals</Typography>
+            </View>
+          )}
+        </>
       )}
     </WidgetCard>
   );
@@ -88,5 +124,20 @@ const styles = StyleSheet.create({
     ...theme.typography.micro,
     color: theme.colors.textSecondary,
     marginTop: 1,
+  },
+  targetRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 10,
+  },
+  targetItem: {
+    ...theme.typography.micro,
+    fontFamily: theme.fonts.bold,
+  },
+  targetSep: {
+    ...theme.typography.micro,
+    color: theme.colors.textSecondary,
   },
 });

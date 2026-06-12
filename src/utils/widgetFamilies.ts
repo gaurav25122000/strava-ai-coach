@@ -43,6 +43,8 @@ export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   ActiveGoals:       'plan',
   QuickNav:          'plan',
   FuelForecast:      'plan',
+  WeatherWindow:     'plan',
+  TaperCountdown:    'plan',
   // Nutrition
   CaloriesToday:     'health',
   CalorieWeek:       'health',
@@ -55,6 +57,7 @@ export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   InjuryAlert:       'recovery',
   TrainingLoad:      'recovery',
   RestBalance:       'recovery',
+  Readiness:         'recovery',
   // Volume / activity
   HeroBanner:        'activity',
   ThisWeek:          'activity',
@@ -71,6 +74,7 @@ export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   // Health / physiology
   HeartRate:         'health',
   IntensityDistribution: 'health',
+  ZoneMinutes:       'health',
   Cadence:           'health',
   PowerZones:        'health',
   EnergyExpenditure: 'health',
@@ -78,6 +82,7 @@ export const WIDGET_FAMILY: Record<string, WidgetFamily> = {
   PaceTrend:         'records',
   PersonalBests:     'records',
   PRProximity:       'records',
+  PBProgression:     'records',
   RacePredictor:     'records',
   Badges:            'records',
   NextBadge:         'records',
@@ -119,6 +124,8 @@ export const RETIRED_WIDGETS: Record<string, string | null> = {
 // Order = narrative: today's plan → this week → recovery → trends → records.
 export const DEFAULT_WIDGET_LAYOUT: string[] = [
   'TodayHero',
+  'WeatherWindow',
+  'TaperCountdown',
   'QuickNav',
   'HeroBanner',
   'ThisWeek',
@@ -134,8 +141,10 @@ export const DEFAULT_WIDGET_LAYOUT: string[] = [
   'CoachInsight',
   'WeeklyDigest',
   'TrainingLoad',
+  'Readiness',
   'RestBalance',
   'IntensityDistribution',
+  'ZoneMinutes',
   'PaceTrend',
   'ActivityMap',
   'RecentActivities',
@@ -144,6 +153,7 @@ export const DEFAULT_WIDGET_LAYOUT: string[] = [
   'HeartRate',
   'PersonalBests',
   'PRProximity',
+  'PBProgression',
   'Badges',
   'NextBadge',
   'ActiveGoals',
@@ -217,4 +227,9 @@ export const WIDGET_TITLES: Record<string, string> = {
   WaterTracker:          'Water Today',
   WeightTrend:           'Weight Trend',
   FuelForecast:          'Fuel Forecast',
+  WeatherWindow:         'Weather Window',
+  TaperCountdown:        'Taper Countdown',
+  Readiness:             'Readiness',
+  ZoneMinutes:           'Zone Time (7d)',
+  PBProgression:         'PB Progression',
 };

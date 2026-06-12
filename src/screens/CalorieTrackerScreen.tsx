@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { format, parseISO } from 'date-fns';
 import {
-  Bell, BellOff, ChevronLeft, ChevronRight, Coffee, Cookie, Copy, Droplets, Flame,
+  Bell, BellOff, Bookmark, ChevronLeft, ChevronRight, Coffee, Cookie, Copy, Droplets, Flame,
   Pencil, Plus, Sandwich, Scale, Sparkles, Trash2, UtensilsCrossed, LucideIcon,
 } from 'lucide-react-native';
 import { Typography } from '../components/Typography';
@@ -13,16 +13,18 @@ import { AnimatedNumber } from '../components/AnimatedNumber';
 import { Button } from '../components/Button';
 import { Sheet } from '../components/Sheet';
 import { FieldBlock } from '../components/SheetUI';
+import { Toggle } from '../components/Toggle';
 import { StaggerItem } from '../components/Stagger';
 import { theme, withAlpha } from '../theme';
 import { familyStyle } from '../utils/widgetFamilies';
 import { localDateStr } from '../utils/dates';
 import {
-  burnedOn, eatenOn, macrosOn, mealsOn, MEAL_LABELS, MEAL_ORDER, defaultMealForNow,
-  formatWeightDelta, suggestedCalorieGoal, weightTrend,
+  burnedOn, cycledGoalFor, eatenOn, macrosOn, macroTargets, mealsOn, MEAL_LABELS, MEAL_ORDER,
+  defaultMealForNow, formatWeightDelta, nutritionContext, suggestedCalorieGoal, weightTrend,
 } from '../services/calories';
+import { AIService, MealSuggestion } from '../services/ai';
 import { NotificationService } from '../services/notifications';
-import { MealType, useStore } from '../store/useStore';
+import { MealType, secureSettingsStorage, useStore } from '../store/useStore';
 
 const WATER_ACCENT = '#38BDF8';
 
@@ -55,7 +57,7 @@ function dayTitle(dayKey: string, today: string): string {
 export default function CalorieTrackerScreen({ navigation }: any) {
   const foodLog = useStore((s) => s.foodLog);
   const activities = useStore((s) => s.activities);
-  const goal = useStore((s) => s.calorieGoal);
+  const baseGoal = useStore((s) => s.calorieGoal);
   const setCalorieGoal = useStore((s) => s.setCalorieGoal);
   const removeFoodEntry = useStore((s) => s.removeFoodEntry);
   const addFoodEntries = useStore((s) => s.addFoodEntries);
@@ -66,13 +68,28 @@ export default function CalorieTrackerScreen({ navigation }: any) {
   const remindersOn = useStore((s) => s.mealRemindersEnabled);
   const setMealRemindersEnabled = useStore((s) => s.setMealRemindersEnabled);
   const userProfile = useStore((s) => s.userProfile);
+  const goals = useStore((s) => s.goals);
+  const calorieCycling = useStore((s) => s.calorieCycling);
+  const setCalorieCycling = useStore((s) => s.setCalorieCycling);
+  const macroGoals = useStore((s) => s.macroGoals);
+  const setMacroGoals = useStore((s) => s.setMacroGoals);
+  const addSavedMeal = useStore((s) => s.addSavedMeal);
 
   const today = localDateStr(new Date());
   const [dayKey, setDayKey] = useState(today);
   const [goalSheet, setGoalSheet] = useState(false);
-  const [goalDraft, setGoalDraft] = useState(String(goal));
+  const [goalDraft, setGoalDraft] = useState(String(baseGoal));
+  const [proteinDraft, setProteinDraft] = useState('');
+  const [carbsDraft, setCarbsDraft] = useState('');
+  const [fatDraft, setFatDraft] = useState('');
   const [weightSheet, setWeightSheet] = useState(false);
   const [weightDraft, setWeightDraft] = useState('');
+  const [suggestSheet, setSuggestSheet] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestions, setSuggestions] = useState<MealSuggestion[] | null>(null);
+  const [suggestMealType, setSuggestMealType] = useState<MealType>('snack');
+  const [saveMealFor, setSaveMealFor] = useState<MealType | null>(null);
+  const [mealNameDraft, setMealNameDraft] = useState('');
 
   const fam = familyStyle('health');
   const burnFam = familyStyle('activity');
@@ -86,6 +103,13 @@ export default function CalorieTrackerScreen({ navigation }: any) {
     }),
     [foodLog, activities, dayKey],
   );
+
+  // Effective goal for the viewed day — flat unless training-day cycling kicks in.
+  const cycled = useMemo(
+    () => cycledGoalFor(dayKey, { calorieGoal: baseGoal, calorieCycling, goals }),
+    [dayKey, baseGoal, calorieCycling, goals],
+  );
+  const goal = cycled.goal;
 
   const net = eaten - burned;
   const over = eaten > goal;
@@ -117,6 +141,12 @@ export default function CalorieTrackerScreen({ navigation }: any) {
     [userProfile, activities],
   );
 
+  // Placeholder values for the macro inputs — what "auto" resolves to.
+  const defaultMacros = useMemo(
+    () => macroTargets(userProfile, {}, baseGoal),
+    [userProfile, baseGoal],
+  );
+
   const shiftDay = (delta: number) => {
     const d = parseISO(dayKey);
     d.setDate(d.getDate() + delta);
@@ -128,6 +158,14 @@ export default function CalorieTrackerScreen({ navigation }: any) {
   const openAdd = (meal?: MealType) =>
     navigation.navigate('AddFood', { date: dayKey, meal: meal ?? defaultMealForNow() });
 
+  const openGoalSheet = () => {
+    setGoalDraft(String(baseGoal));
+    setProteinDraft(macroGoals.protein != null ? String(macroGoals.protein) : '');
+    setCarbsDraft(macroGoals.carbs != null ? String(macroGoals.carbs) : '');
+    setFatDraft(macroGoals.fat != null ? String(macroGoals.fat) : '');
+    setGoalSheet(true);
+  };
+
   const saveGoal = () => {
     const v = parseInt(goalDraft, 10);
     if (!Number.isFinite(v) || v < 800 || v > 8000) {
@@ -138,6 +176,16 @@ export default function CalorieTrackerScreen({ navigation }: any) {
       });
       return;
     }
+    // Blank macro input = "use the automatic split".
+    const grams = (s: string) => {
+      const g = parseInt(s, 10);
+      return Number.isFinite(g) && g > 0 ? g : undefined;
+    };
+    setMacroGoals({
+      protein: grams(proteinDraft),
+      carbs: grams(carbsDraft),
+      fat: grams(fatDraft),
+    });
     setCalorieGoal(v);
     setGoalSheet(false);
   };
@@ -192,6 +240,110 @@ export default function CalorieTrackerScreen({ navigation }: any) {
     useStore.getState().setToast({
       title: 'Weight logged',
       message: `${v} kg recorded for ${midSentence(dayTitle(dayKey, today))}.`,
+      type: 'success',
+    });
+  };
+
+  const openSuggest = async () => {
+    // Same key resolution as the photo-analysis flow in AddFoodScreen.
+    const { settings } = useStore.getState();
+    const apiKey = settings.llmApiKey || (await secureSettingsStorage.getSecret('llmApiKey')) || '';
+    if (!apiKey) {
+      useStore.getState().setToast({
+        title: 'No API key',
+        message: 'Add your LLM API key in Settings to get meal ideas.',
+        type: 'error',
+      });
+      return;
+    }
+    const mealType = defaultMealForNow();
+    setSuggestMealType(mealType);
+    setSuggestions(null);
+    setSuggestSheet(true);
+    setSuggesting(true);
+    try {
+      const targets = macroTargets(userProfile, macroGoals, goal);
+      const remainingProtein = macroGoals.protein != null
+        ? Math.max(0, targets.protein - macros.protein)
+        : null;
+      const items = await AIService.suggestMeal(
+        {
+          remainingKcal: remaining,
+          remainingProtein,
+          mealType,
+          nutrition: nutritionContext(foodLog, activities, goal),
+        },
+        settings.llmProvider,
+        apiKey,
+      );
+      setSuggestions(items);
+    } catch (e: any) {
+      setSuggestSheet(false);
+      useStore.getState().setToast({
+        title: 'Suggestion failed',
+        message: String(e?.message || 'Could not fetch meal ideas.').slice(0, 160),
+        type: 'error',
+      });
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  const logSuggestion = (s: MealSuggestion) => {
+    addFoodEntries([{
+      id: entryId(),
+      date: dayKey,
+      meal: suggestMealType,
+      name: s.name,
+      calories: s.calories,
+      protein: s.protein,
+      carbs: s.carbs,
+      fat: s.fat,
+      quantity: 1,
+      source: 'manual',
+      loggedAt: new Date().toISOString(),
+    }]);
+    setSuggestSheet(false);
+    useStore.getState().setToast({
+      title: 'Logged',
+      message: `${s.name} → ${MEAL_LABELS[suggestMealType]}, ${s.calories} kcal.`,
+      type: 'success',
+    });
+  };
+
+  const openSaveMeal = (m: MealType) => {
+    setMealNameDraft(`My ${MEAL_LABELS[m].toLowerCase()}`);
+    setSaveMealFor(m);
+  };
+
+  const saveMeal = () => {
+    if (!saveMealFor) return;
+    const name = mealNameDraft.trim();
+    if (!name) {
+      useStore.getState().setToast({
+        title: 'Name needed',
+        message: 'Give the meal a name so you can find it later.',
+        type: 'error',
+      });
+      return;
+    }
+    addSavedMeal({
+      id: entryId(),
+      name,
+      items: meals[saveMealFor].map((e) => ({
+        name: e.name,
+        calories: e.calories,
+        protein: e.protein,
+        carbs: e.carbs,
+        fat: e.fat,
+        serving: e.serving,
+        quantity: e.quantity,
+      })),
+    });
+    setSaveMealFor(null);
+    useStore.getState().setToast({
+      title: 'Meal saved',
+      message: `"${name}" is in My Meals — log it in one tap from Add Food.`,
       type: 'success',
     });
   };
@@ -273,7 +425,7 @@ export default function CalorieTrackerScreen({ navigation }: any) {
                 <Typography style={styles.balanceVal}>{net >= 0 ? `+${net}` : net}</Typography>
               </View>
               <PressableScale
-                onPress={() => { setGoalDraft(String(goal)); setGoalSheet(true); }}
+                onPress={openGoalSheet}
                 style={[styles.goalChip, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
                 accessibilityRole="button"
                 accessibilityLabel="Edit daily goal"
@@ -283,6 +435,11 @@ export default function CalorieTrackerScreen({ navigation }: any) {
                 </Typography>
                 <Pencil size={12} color={fam.accent} />
               </PressableScale>
+              {cycled.delta !== 0 && cycled.reason && (
+                <Typography style={styles.cycleCaption}>
+                  {cycled.delta > 0 ? '+' : ''}{cycled.delta} kcal · {cycled.reason}
+                </Typography>
+              )}
             </View>
           </View>
         </StaggerItem>
@@ -375,6 +532,16 @@ export default function CalorieTrackerScreen({ navigation }: any) {
                   {mealKcal > 0 && (
                     <Typography style={styles.mealKcal}>{mealKcal} kcal</Typography>
                   )}
+                  {entries.length > 0 && (
+                    <PressableScale
+                      onPress={() => openSaveMeal(meal)}
+                      hitSlop={theme.hitSlop}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Save ${MEAL_LABELS[meal]} as a meal`}
+                    >
+                      <Bookmark size={15} color={theme.colors.textSecondary} />
+                    </PressableScale>
+                  )}
                   <PressableScale
                     onPress={() => openAdd(meal)}
                     style={[styles.mealAdd, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
@@ -415,6 +582,21 @@ export default function CalorieTrackerScreen({ navigation }: any) {
             </StaggerItem>
           );
         })}
+
+        {/* AI meal idea — only when there's a meaningful budget left to fill. */}
+        {remaining >= 150 && (
+          <PressableScale
+            onPress={openSuggest}
+            style={styles.copyRow}
+            accessibilityRole="button"
+            accessibilityLabel="Suggest a meal"
+          >
+            <Sparkles size={15} color={fam.accent} />
+            <Typography style={styles.copyTxt}>
+              Suggest a meal · {remaining} kcal left
+            </Typography>
+          </PressableScale>
+        )}
 
         {/* Weight */}
         <StaggerItem index={MEAL_ORDER.length + 3}>
@@ -461,6 +643,7 @@ export default function CalorieTrackerScreen({ navigation }: any) {
         onClose={() => setGoalSheet(false)}
         title="Daily calorie goal"
         caption="Intake target the ring fills against."
+        scrollable
       >
         <View style={styles.goalSheetBody}>
           <FieldBlock
@@ -472,7 +655,7 @@ export default function CalorieTrackerScreen({ navigation }: any) {
             numeric
             placeholder="2200"
           />
-          {suggested != null && Math.abs(suggested - goal) > 25 && (
+          {suggested != null && Math.abs(suggested - baseGoal) > 25 && (
             <PressableScale
               onPress={() => setGoalDraft(String(suggested))}
               style={[styles.suggestRow, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
@@ -486,6 +669,57 @@ export default function CalorieTrackerScreen({ navigation }: any) {
               </View>
             </PressableScale>
           )}
+          <View style={styles.toggleRow}>
+            <View style={styles.suggestBody}>
+              <Typography style={styles.suggestTitle}>Adjust for training days</Typography>
+              <Typography style={styles.suggestCaption}>
+                More fuel on hard plan days, a little less on rest days.
+              </Typography>
+            </View>
+            <Toggle
+              value={calorieCycling}
+              onValueChange={setCalorieCycling}
+              accent={fam.accent}
+              accessibilityLabel="Adjust goal for training days"
+            />
+          </View>
+          <Typography style={styles.sheetSection}>Macro goals</Typography>
+          <View style={styles.macroGoalRow}>
+            <View style={styles.macroGoalCol}>
+              <FieldBlock
+                label="Protein g"
+                family="health"
+                value={proteinDraft}
+                onChangeText={setProteinDraft}
+                keyboardType="number-pad"
+                numeric
+                placeholder={String(defaultMacros.protein)}
+              />
+            </View>
+            <View style={styles.macroGoalCol}>
+              <FieldBlock
+                label="Carbs g"
+                family="health"
+                value={carbsDraft}
+                onChangeText={setCarbsDraft}
+                keyboardType="number-pad"
+                numeric
+                placeholder={String(defaultMacros.carbs)}
+              />
+            </View>
+            <View style={styles.macroGoalCol}>
+              <FieldBlock
+                label="Fat g"
+                family="health"
+                value={fatDraft}
+                onChangeText={setFatDraft}
+                keyboardType="number-pad"
+                numeric
+                placeholder={String(defaultMacros.fat)}
+              />
+            </View>
+          </View>
+          <Typography style={styles.sheetHint}>Leave blank to use the automatic split.</Typography>
           <Button title="Save goal" family="health" fullWidth onPress={saveGoal} />
         </View>
       </Sheet>
@@ -508,6 +742,66 @@ export default function CalorieTrackerScreen({ navigation }: any) {
             placeholder="70.0"
           />
           <Button title="Save" family="health" fullWidth onPress={saveWeight} />
+        </View>
+      </Sheet>
+
+      {/* AI meal suggestions */}
+      <Sheet
+        visible={suggestSheet}
+        onClose={() => setSuggestSheet(false)}
+        title="Suggest a meal"
+        caption={`${remaining} kcal left · ideas for ${MEAL_LABELS[suggestMealType].toLowerCase()}`}
+        scrollable
+      >
+        <View style={styles.goalSheetBody}>
+          {suggesting ? (
+            <View style={styles.suggestLoading}>
+              <ActivityIndicator color={fam.accent} />
+              <Typography style={styles.suggestCaption}>Finding plates that fit your budget…</Typography>
+            </View>
+          ) : suggestions && suggestions.length === 0 ? (
+            <Typography style={styles.suggestCaption}>No ideas came back — close and try again.</Typography>
+          ) : (
+            suggestions?.map((s, i) => (
+              <View key={`${s.name}-${i}`} style={styles.suggestCard}>
+                <View style={styles.suggestBody}>
+                  <Typography style={styles.suggestTitle}>{s.name}</Typography>
+                  <Typography style={styles.suggestCaption}>{s.description}</Typography>
+                  <Typography style={styles.suggestMacros}>
+                    {s.calories} kcal · P {s.protein} C {s.carbs} F {s.fat}
+                  </Typography>
+                </View>
+                <PressableScale
+                  onPress={() => logSuggestion(s)}
+                  style={[styles.logChip, { backgroundColor: withAlpha(fam.accent, 'tint') }]}
+                  hitSlop={theme.hitSlop}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Log ${s.name}`}
+                >
+                  <Typography style={[styles.logChipTxt, { color: fam.accent }]}>Log</Typography>
+                </PressableScale>
+              </View>
+            ))
+          )}
+        </View>
+      </Sheet>
+
+      {/* Save a meal section as a reusable bundle */}
+      <Sheet
+        visible={saveMealFor !== null}
+        onClose={() => setSaveMealFor(null)}
+        title="Save as meal"
+        caption="Log this whole set again in one tap from Add Food."
+      >
+        <View style={styles.goalSheetBody}>
+          <FieldBlock
+            label="Meal name"
+            family="health"
+            value={mealNameDraft}
+            onChangeText={setMealNameDraft}
+            placeholder="My breakfast"
+          />
+          <Button title="Save meal" family="health" fullWidth onPress={saveMeal} />
         </View>
       </Sheet>
     </SafeAreaView>
@@ -764,5 +1058,54 @@ const styles = StyleSheet.create({
     ...theme.typography.micro,
     color: theme.colors.textSecondary,
     marginTop: 1,
+  },
+  cycleCaption: {
+    ...theme.typography.micro,
+    color: theme.colors.textSecondary,
+    marginTop: 4,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  sheetSection: {
+    ...theme.typography.micro,
+    color: theme.colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginTop: 2,
+  },
+  macroGoalRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  macroGoalCol: {
+    flex: 1,
+  },
+  sheetHint: {
+    ...theme.typography.micro,
+    color: theme.colors.textSecondary,
+  },
+  suggestLoading: {
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 28,
+  },
+  suggestCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface,
+  },
+  suggestMacros: {
+    ...theme.typography.micro,
+    fontFamily: theme.fonts.bold,
+    color: theme.colors.text,
+    marginTop: 3,
   },
 });

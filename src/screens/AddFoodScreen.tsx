@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ScrollView, SectionList, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  Camera, Check, ChevronLeft, Heart, Image as ImageIcon, Minus, Plus, Search, Sparkles,
+  Camera, Check, ChevronLeft, Heart, Image as ImageIcon, Minus, Plus, Search, Sparkles, Trash2,
 } from 'lucide-react-native';
 import { Typography } from '../components/Typography';
 import { PressableScale } from '../components/PressableScale';
@@ -19,14 +19,16 @@ import {
 import { MEAL_LABELS, MEAL_ORDER } from '../services/calories';
 import { AIService, FoodAnalysisItem } from '../services/ai';
 import {
-  FoodLogEntry, MealType, secureSettingsStorage, useStore,
+  FoodLogEntry, MealType, SavedMeal, secureSettingsStorage, useStore,
 } from '../store/useStore';
 
 type Mode = 'library' | 'manual' | 'photo';
 
-/** Library section: sticky title + keyed food rows (keys must be unique
- *  across sections — a favourited food also appears under "All foods"). */
-type FoodSection = { title: string; data: { k: string; f: FoodItem }[] };
+/** Library section: sticky title + keyed rows (keys must be unique across
+ *  sections — a favourited food also appears under "All foods"). A row is
+ *  either a single food or a saved meal bundle ("meal-" keys). */
+type LibRow = { k: string; f: FoodItem } | { k: string; m: SavedMeal };
+type FoodSection = { title: string; data: LibRow[] };
 
 const CATEGORY_KEYS = Object.keys(FOOD_CATEGORY_LABELS) as FoodCategory[];
 
@@ -53,6 +55,8 @@ export default function AddFoodScreen({ navigation, route }: any) {
   const toggleFavoriteFood = useStore((s) => s.toggleFavoriteFood);
   const customFoods = useStore((s) => s.customFoods);
   const addCustomFood = useStore((s) => s.addCustomFood);
+  const savedMeals = useStore((s) => s.savedMeals);
+  const removeSavedMeal = useStore((s) => s.removeSavedMeal);
   const fam = familyStyle('health');
 
   // ── Library state ─────────────────────────────────────────────────────
@@ -91,9 +95,22 @@ export default function AddFoodScreen({ navigation, route }: any) {
 
   const sections = useMemo<FoodSection[]>(() => {
     const results = searchFoods(query, category, customItems);
-    const allData = results.map((f) => ({ k: `all-${f.name}`, f }));
+    const allData: LibRow[] = results.map((f) => ({ k: `all-${f.name}`, f }));
+
+    // Saved meals sit above everything else; they carry no category, so a
+    // category filter hides them, but a name search still finds them.
+    const q = query.trim().toLowerCase();
+    const mealMatches = category === 'all'
+      ? savedMeals.filter((m) => !q || m.name.toLowerCase().includes(q))
+      : [];
+    const mealSection: FoodSection | null = mealMatches.length
+      ? { title: 'My Meals', data: mealMatches.map((m) => ({ k: `meal-${m.id}`, m })) }
+      : null;
+
     if (query.trim() || category !== 'all') {
-      return allData.length ? [{ title: '', data: allData }] : [];
+      const out: FoodSection[] = mealSection ? [mealSection] : [];
+      if (allData.length) out.push({ title: mealSection ? 'All foods' : '', data: allData });
+      return out;
     }
 
     // Per-serving FoodItem reconstructed from a logged entry — lets manual/
@@ -132,12 +149,12 @@ export default function AddFoodScreen({ navigation, route }: any) {
       seen.add(e.name);
       recents.push(fromEntry(e));
     }
-    const out: FoodSection[] = [];
+    const out: FoodSection[] = mealSection ? [mealSection] : [];
     if (favs.length) out.push({ title: '★ Favourites', data: favs.map((f) => ({ k: `fav-${f.name}`, f })) });
     if (recents.length) out.push({ title: 'Recent', data: recents.map((f) => ({ k: `rec-${f.name}`, f })) });
     out.push({ title: out.length ? 'All foods' : '', data: allData });
     return out;
-  }, [query, category, customItems, favoriteFoods, foodLog]);
+  }, [query, category, customItems, favoriteFoods, foodLog, savedMeals]);
 
   // ── Manual state ──────────────────────────────────────────────────────
   const [mName, setMName] = useState('');
@@ -314,6 +331,60 @@ export default function AddFoodScreen({ navigation, route }: any) {
     );
   };
 
+  // One-tap bundle log: every saved item lands as its own entry, exactly as
+  // it was when saved (serving/quantity/macros preserved).
+  const logSavedMeal = (m: SavedMeal) => {
+    const now = new Date().toISOString();
+    finish(
+      m.items.map((it) => ({
+        id: entryId(),
+        date,
+        meal,
+        name: it.name,
+        calories: it.calories,
+        protein: it.protein,
+        carbs: it.carbs,
+        fat: it.fat,
+        quantity: it.quantity,
+        serving: it.serving,
+        source: 'library' as const,
+        loggedAt: now,
+      })),
+      m.name,
+    );
+  };
+
+  const [mealToDelete, setMealToDelete] = useState<SavedMeal | null>(null);
+
+  const renderSavedMeal = (m: SavedMeal) => {
+    const kcal = Math.round(m.items.reduce((s, it) => s + it.calories, 0));
+    return (
+      <PressableScale
+        onPress={() => logSavedMeal(m)}
+        style={styles.foodRow}
+        accessibilityRole="button"
+        accessibilityLabel={`Log ${m.name}`}
+      >
+        <View style={styles.foodBody}>
+          <Typography style={styles.foodName} numberOfLines={1}>{m.name}</Typography>
+          <Typography style={styles.foodSub}>
+            {m.items.length} item{m.items.length === 1 ? '' : 's'} · saved meal
+          </Typography>
+        </View>
+        <Typography style={[styles.foodKcal, { color: fam.accent }]}>{kcal} kcal</Typography>
+        <Plus size={16} color={fam.accent} />
+        <PressableScale
+          onPress={() => setMealToDelete(m)}
+          hitSlop={theme.hitSlop}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${m.name} from My Meals`}
+        >
+          <Trash2 size={16} color={theme.colors.textSecondary} />
+        </PressableScale>
+      </PressableScale>
+    );
+  };
+
   const renderFood = (item: FoodItem) => {
     const fav = favoriteFoods.includes(item.name);
     return (
@@ -432,7 +503,7 @@ export default function AddFoodScreen({ navigation, route }: any) {
           <SectionList
             sections={sections}
             keyExtractor={(row) => row.k}
-            renderItem={({ item: row }) => renderFood(row.f)}
+            renderItem={({ item: row }) => ('m' in row ? renderSavedMeal(row.m) : renderFood(row.f))}
             renderSectionHeader={({ section }) =>
               section.title ? (
                 <View style={styles.stickyHeader}>
@@ -733,6 +804,32 @@ export default function AddFoodScreen({ navigation, route }: any) {
             </View>
           );
         })()}
+      </Sheet>
+
+      {/* ── Delete saved meal confirm ── */}
+      <Sheet
+        visible={!!mealToDelete}
+        onClose={() => setMealToDelete(null)}
+        title="Delete saved meal?"
+        caption={mealToDelete ? `“${mealToDelete.name}” will be removed from My Meals.` : undefined}
+      >
+        <Button
+          title="Delete"
+          variant="destructive"
+          icon={Trash2}
+          fullWidth
+          onPress={() => {
+            if (mealToDelete) removeSavedMeal(mealToDelete.id);
+            setMealToDelete(null);
+          }}
+        />
+        <View style={{ height: 10 }} />
+        <Button
+          title="Cancel"
+          variant="ghost"
+          fullWidth
+          onPress={() => setMealToDelete(null)}
+        />
       </Sheet>
     </SafeAreaView>
   );

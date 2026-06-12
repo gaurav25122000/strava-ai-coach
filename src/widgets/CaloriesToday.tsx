@@ -9,7 +9,7 @@ import { AnimatedNumber } from '../components/AnimatedNumber';
 import { PressableScale } from '../components/PressableScale';
 import { theme, withAlpha } from '../theme';
 import { familyStyle, WIDGET_FAMILY, WIDGET_TITLES } from '../utils/widgetFamilies';
-import { burnedOn, eatenOn, macrosOn } from '../services/calories';
+import { burnedOn, cycledGoalFor, eatenOn, macrosOn } from '../services/calories';
 import { useStore } from '../store/useStore';
 import { localDateStr } from '../utils/dates';
 
@@ -20,18 +20,22 @@ import { localDateStr } from '../utils/dates';
 export const CaloriesTodayWidget = memo(function CaloriesTodayWidget() {
   const foodLog = useStore((s) => s.foodLog);
   const activities = useStore((s) => s.activities);
-  const goal = useStore((s) => s.calorieGoal);
+  const calorieGoal = useStore((s) => s.calorieGoal);
+  const calorieCycling = useStore((s) => s.calorieCycling);
+  const goals = useStore((s) => s.goals);
   const navigation = useNavigation<any>();
 
   const today = localDateStr(new Date());
-  const { eaten, burned, macros } = useMemo(
+  const { eaten, burned, macros, cycled } = useMemo(
     () => ({
       eaten: eatenOn(foodLog, today),
       burned: burnedOn(activities, today),
       macros: macrosOn(foodLog, today),
+      cycled: cycledGoalFor(today, { calorieGoal, calorieCycling, goals }),
     }),
-    [foodLog, activities, today],
+    [foodLog, activities, today, calorieGoal, calorieCycling, goals],
   );
+  const goal = cycled.goal;
 
   const net = eaten - burned;
   const remaining = Math.max(0, goal - eaten);
@@ -97,6 +101,13 @@ export const CaloriesTodayWidget = memo(function CaloriesTodayWidget() {
           <Typography style={styles.macroLine}>
             P {macros.protein} g · C {macros.carbs} g · F {macros.fat} g
           </Typography>
+          {cycled.delta !== 0 && (
+            <View style={[styles.cycleChip, { backgroundColor: withAlpha(fam.accent, 'tint') }]}>
+              <Typography style={[styles.cycleChipText, { color: fam.accent }]}>
+                {cycled.delta > 0 ? '+' : '−'}{Math.abs(cycled.delta)} · {cycled.reason}
+              </Typography>
+            </View>
+          )}
         </View>
       </PressableScale>
     </WidgetCard>
@@ -148,5 +159,15 @@ const styles = StyleSheet.create({
     ...theme.typography.micro,
     color: theme.colors.textSecondary,
     marginTop: 2,
+  },
+  cycleChip: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  cycleChipText: {
+    ...theme.typography.micro,
+    fontFamily: theme.fonts.bold,
   },
 });

@@ -3,7 +3,7 @@ import { Image, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
-  ChevronRight, Flame, Footprints, LucideIcon, Settings, User,
+  CalendarDays, ChevronRight, Flame, Footprints, LucideIcon, Settings, Sparkles, User,
 } from 'lucide-react-native';
 import { Typography } from '../components/Typography';
 import { PressableScale } from '../components/PressableScale';
@@ -22,9 +22,11 @@ interface MenuItemDef {
 }
 
 const ITEMS: MenuItemDef[] = [
-  { key: 'calories', title: 'Calorie Tracker', sub: 'Log meals, snap photos, track energy balance', icon: Flame,      family: 'health',   screen: 'CalorieTracker' },
-  { key: 'gear',     title: 'Gear Health',     sub: 'Shoes, mileage and injury log',                icon: Footprints, family: 'activity', screen: 'GearHealth' },
-  { key: 'settings', title: 'Settings',        sub: 'Strava, AI provider and preferences',          icon: Settings,   family: 'recovery', screen: 'Settings' },
+  { key: 'calories', title: 'Calorie Tracker',   sub: 'Log meals, snap photos, track energy balance', icon: Flame,        family: 'health',   screen: 'CalorieTracker' },
+  { key: 'calendar', title: 'Training Calendar', sub: 'Planned vs completed, month by month',         icon: CalendarDays, family: 'plan',     screen: 'TrainingCalendar' },
+  { key: 'wrapped',  title: 'Monthly Wrapped',   sub: 'Your month as shareable story cards',          icon: Sparkles,     family: 'records',  screen: 'Wrapped' },
+  { key: 'gear',     title: 'Gear Health',       sub: 'Shoes, mileage and injury log',                icon: Footprints,   family: 'activity', screen: 'GearHealth' },
+  { key: 'settings', title: 'Settings',          sub: 'Strava, AI provider and preferences',          icon: Settings,     family: 'recovery', screen: 'Settings' },
 ];
 
 const recordsFam = familyStyle('records');

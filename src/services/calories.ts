@@ -1,5 +1,6 @@
-import { Activity, FoodLogEntry, MealType, WeightEntry } from '../store/useStore';
+import { Activity, FoodLogEntry, Goal, MacroGoals, MealType, WeightEntry, WorkoutKind } from '../store/useStore';
 import { activityDayKey, localDateStr } from '../utils/dates';
+import { prescriptionForDate } from './planSchedule';
 
 // ── Calorie tracker aggregations ─────────────────────────────────────────────
 //
@@ -130,6 +131,78 @@ export function suggestedCalorieGoal(
   const recent = calorieWeekSeries([], activities, 14, today);
   const avgBurn = recent.reduce((s, d) => s + d.burned, 0) / recent.length;
   return Math.round((bmr * 1.35 + avgBurn) / 50) * 50;
+}
+
+// ── Macro targets ────────────────────────────────────────────────────────────
+
+export interface MacroTargets {
+  protein: number;
+  carbs: number;
+  fat: number;
+  /** Which targets came from the athlete's own macro goals vs our defaults. */
+  custom: { protein: boolean; carbs: boolean; fat: boolean };
+}
+
+/**
+ * Daily macro targets in grams. Explicit macroGoals fields win; defaults are
+ * endurance-athlete protein (1.6 g/kg, 110 g without a body weight), fat at
+ * 25% of the calorie goal, carbs as whatever energy remains (never negative).
+ */
+export function macroTargets(
+  profile: { weight?: number },
+  macroGoals: MacroGoals,
+  calorieGoal: number,
+): MacroTargets {
+  const custom = {
+    protein: macroGoals.protein != null,
+    carbs: macroGoals.carbs != null,
+    fat: macroGoals.fat != null,
+  };
+  const protein = custom.protein
+    ? macroGoals.protein!
+    : profile.weight && profile.weight > 0
+      ? Math.round(profile.weight * 1.6)
+      : 110;
+  const fat = custom.fat ? macroGoals.fat! : Math.round((calorieGoal * 0.25) / 9);
+  const carbs = custom.carbs
+    ? macroGoals.carbs!
+    : Math.max(0, Math.round((calorieGoal - protein * 4 - fat * 9) / 4));
+  return { protein, carbs, fat, custom };
+}
+
+// ── Training-day calorie cycling ─────────────────────────────────────────────
+
+const CYCLE_DELTAS: Record<WorkoutKind, { delta: number; reason: string | null }> = {
+  LONG: { delta: 300, reason: 'hard training day' },
+  INTERVALS: { delta: 300, reason: 'hard training day' },
+  TEMPO: { delta: 300, reason: 'hard training day' },
+  EASY: { delta: 150, reason: 'training day' },
+  CROSS: { delta: 150, reason: 'training day' },
+  STRENGTH: { delta: 150, reason: 'training day' },
+  RECOVERY: { delta: 0, reason: null },
+  REST: { delta: -200, reason: 'rest day' },
+};
+
+/**
+ * The day's calorie goal adjusted for what the training plan prescribes:
+ * hard sessions earn more fuel, rest days trim the budget. Falls back to the
+ * flat goal when cycling is off, no plan goal exists, or the day is outside
+ * the plan calendar.
+ */
+export function cycledGoalFor(
+  dayKey: string,
+  opts: { calorieGoal: number; calorieCycling: boolean; goals: Goal[] },
+): { goal: number; delta: number; reason: string | null } {
+  const { calorieGoal, calorieCycling, goals } = opts;
+  const flat = { goal: calorieGoal, delta: 0, reason: null };
+  if (!calorieCycling) return flat;
+  const planGoal = goals.find((g) => !g.isSimple && g.phases?.length);
+  if (!planGoal) return flat;
+  const [y, m, d] = dayKey.split('-').map(Number);
+  const rx = prescriptionForDate(planGoal, new Date(y, m - 1, d, 12));
+  if (!rx) return flat;
+  const { delta, reason } = CYCLE_DELTAS[rx.kind];
+  return { goal: calorieGoal + delta, delta, reason };
 }
 
 // ── Weight trend ─────────────────────────────────────────────────────────────

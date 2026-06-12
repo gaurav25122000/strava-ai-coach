@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, StyleSheet, ScrollView, TouchableOpacity,
+  View, StyleSheet, ScrollView, TouchableOpacity, TextInput,
   Dimensions, Image, Platform, Animated as RNAnimated, RefreshControl,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -15,7 +15,7 @@ import { AnimatedNumber } from '../components/AnimatedNumber';
 import { WidgetCard } from '../components/WidgetCard';
 import { ChartLine } from '../components/charts';
 import { SkeletonHero, SkeletonChart, SkeletonStatGrid } from '../components/SkeletonPresets';
-import { Activity, BestEffort, useStore } from '../store/useStore';
+import { Activity, BestEffort, RpeEntry, useStore } from '../store/useStore';
 import { StravaService } from '../services/strava';
 import { decodePolyline } from '../utils/polyline';
 import { familyStyle, WidgetFamily } from '../utils/widgetFamilies';
@@ -29,7 +29,7 @@ import {
   ThumbsUp, MessageCircle, Award, Cpu, Bike, Shirt,
   Star, Navigation, BarChart2, Pause, Gauge, Users,
   Image as ImageIcon, Briefcase, Lock, Edit3, Cog,
-  Thermometer, Medal, RefreshCw, CheckCircle2, AlertCircle, type LucideIcon,
+  Thermometer, Medal, RefreshCw, CheckCircle2, AlertCircle, Smile, type LucideIcon,
 } from 'lucide-react-native';
 import { format, parseISO } from 'date-fns';
 
@@ -76,6 +76,10 @@ function familyForType(type: string): WidgetFamily {
   if (type === 'Workout') return 'records';
   return 'activity';
 }
+
+// Mood scale 1–5 for the post-activity check-in.
+const MOOD_EMOJI = ['😖', '😕', '🙂', '😄', '🤩'];
+const RPE_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 // ─── Type defs ────────────────────────────────────────────────────────────────
 interface Props {
@@ -465,6 +469,8 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
   const setActivityZones = useStore(st => st.setActivityZones);
   const enrichActivity = useStore(st => st.enrichActivity);
   const setBestEfforts = useStore(st => st.setBestEfforts);
+  const rpeEntry = useStore(st => st.rpeLog[act.id]);
+  const setRpe = useStore(st => st.setRpe);
   const [detail, setDetail] = useState<any>(null);
   const [streams, setStreams] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -608,6 +614,30 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
     setFetchStatus('idle');
     loadFromStrava();
   }, [loadFromStrava]);
+
+  // Autosave the check-in on every change, merging into the existing entry.
+  // Clearing every field deletes the entry entirely (null), so the log never
+  // accumulates empty rows.
+  const commitRpe = useCallback((patch: Partial<RpeEntry>) => {
+    const cur = useStore.getState().rpeLog[act.id];
+    const merged = { ...cur, ...patch };
+    if (merged.rpe == null && merged.mood == null && !merged.note?.trim()) {
+      setRpe(act.id, null);
+    } else {
+      setRpe(act.id, { ...merged, loggedAt: new Date().toISOString() });
+    }
+  }, [act.id, setRpe]);
+
+  // The note is kept in local state while typing — every set() on the
+  // persisted store serialises the full blob, so we only commit on blur.
+  const [noteDraft, setNoteDraft] = useState(rpeEntry?.note ?? '');
+  useEffect(() => {
+    setNoteDraft(rpeEntry?.note ?? '');
+  }, [rpeEntry?.note]);
+  const commitNote = useCallback(() => {
+    if (noteDraft === (rpeEntry?.note ?? '')) return;
+    commitRpe({ note: noteDraft || undefined });
+  }, [noteDraft, rpeEntry?.note, commitRpe]);
 
   const km = act.distance / 1000;
   const family = familyForType(act.type);
@@ -765,6 +795,7 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
 
   const recordsAccent = familyStyle('records').accent;
   const socialAccent = familyStyle('social').accent;
+  const recoveryAccent = familyStyle('recovery').accent;
 
   // ─── Pre-compute primary stat tiles so we always render 2x3 grid ────────
   const primaryStats: Array<{ icon: LucideIcon; value: string; unit?: string; label: string; accent: string; gradient: [string, string]; numericValue?: number; decimals?: number }> = [
@@ -1177,6 +1208,87 @@ export function ActivityDetailScreen({ activity: act, onClose }: Props) {
 
         {/* Spacer before the first widget card */}
         {!loading && <View style={{ height: 18 }} />}
+
+        {/* ── How did it feel? (RPE / mood check-in) ─────────────────────── */}
+        <StaggerItem index={next()} style={sc.widgetGap}>
+          <WidgetCard
+            family="recovery"
+            title="How did it feel?"
+            caption="Rate it while it's fresh"
+            icon={Smile}
+          >
+            <Typography style={sc.rpeSectionLbl}>EFFORT (RPE 1–10)</Typography>
+            <View style={sc.rpeChipRow}>
+              {RPE_VALUES.map(n => {
+                const active = rpeEntry?.rpe === n;
+                return (
+                  <PressableScale
+                    key={n}
+                    haptic="selection"
+                    accessibilityRole="button"
+                    accessibilityLabel={`Effort ${n} out of 10`}
+                    accessibilityState={{ selected: active }}
+                    style={[
+                      sc.rpeChip,
+                      active && { backgroundColor: recoveryAccent, borderColor: recoveryAccent },
+                    ]}
+                    onPress={() => commitRpe({ rpe: active ? undefined : n })}
+                  >
+                    <Typography style={[sc.rpeChipText, active && { color: theme.colors.onAccent }]}>
+                      {n}
+                    </Typography>
+                  </PressableScale>
+                );
+              })}
+            </View>
+
+            <Typography style={[sc.rpeSectionLbl, { marginTop: 16 }]}>MOOD</Typography>
+            <View style={sc.moodRow}>
+              {MOOD_EMOJI.map((emo, i) => {
+                const val = (i + 1) as 1 | 2 | 3 | 4 | 5;
+                const active = rpeEntry?.mood === val;
+                return (
+                  <PressableScale
+                    key={val}
+                    haptic="selection"
+                    accessibilityRole="button"
+                    accessibilityLabel={`Mood ${val} out of 5`}
+                    accessibilityState={{ selected: active }}
+                    style={[
+                      sc.moodBtn,
+                      active && {
+                        backgroundColor: withAlpha(recoveryAccent, 'tint'),
+                        borderColor: recoveryAccent,
+                      },
+                    ]}
+                    onPress={() => commitRpe({ mood: active ? undefined : val })}
+                  >
+                    <Typography
+                      style={[
+                        sc.moodEmoji,
+                        rpeEntry?.mood != null && !active && { opacity: 0.4 },
+                      ]}
+                    >
+                      {emo}
+                    </Typography>
+                  </PressableScale>
+                );
+              })}
+            </View>
+
+            <TextInput
+              style={sc.rpeNoteInput}
+              placeholder="Add a note (optional)"
+              placeholderTextColor={theme.colors.textSecondary}
+              value={noteDraft}
+              onChangeText={setNoteDraft}
+              onBlur={commitNote}
+              maxLength={120}
+              returnKeyType="done"
+              accessibilityLabel="Check-in note"
+            />
+          </WidgetCard>
+        </StaggerItem>
 
         {/* ── Photo ──────────────────────────────────────────────────────── */}
         {photoUrl && (
@@ -1876,6 +1988,38 @@ const sc = StyleSheet.create({
   splitHCell: { fontSize: 10, fontWeight: '800', color: theme.colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1 },
   splitRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderColor: theme.colors.divider },
   splitCell: { fontSize: 13, color: theme.colors.text, fontWeight: '600', fontVariant: ['tabular-nums'] },
+
+  // How did it feel? — RPE / mood check-in
+  rpeSectionLbl: {
+    fontSize: 10, fontWeight: '800', color: theme.colors.textSecondary,
+    letterSpacing: 1.2, marginBottom: 8,
+  },
+  rpeChipRow: { flexDirection: 'row', gap: 5 },
+  rpeChip: {
+    flex: 1, height: 34, borderRadius: 9,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
+    borderWidth: 1, borderColor: theme.colors.divider,
+  },
+  rpeChipText: {
+    fontSize: 13, fontWeight: '900', color: theme.colors.textSecondary,
+    fontVariant: ['tabular-nums'],
+  },
+  moodRow: { flexDirection: 'row', gap: 8 },
+  moodBtn: {
+    flex: 1, height: 46, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
+    borderWidth: 1, borderColor: theme.colors.divider,
+  },
+  moodEmoji: { fontSize: 22, lineHeight: 28 },
+  rpeNoteInput: {
+    marginTop: 16,
+    backgroundColor: withAlpha(theme.colors.text, 'faint'),
+    borderRadius: 12, borderWidth: 1, borderColor: theme.colors.divider,
+    paddingHorizontal: 12, paddingVertical: 10,
+    fontSize: 14, color: theme.colors.text, fontWeight: '600',
+  },
 
   // Effort blocks
   effortBlock: { flex: 1, alignItems: 'center', padding: 14, borderRadius: 14 },

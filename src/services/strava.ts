@@ -8,8 +8,8 @@ let expiresAt: number | null = null;
 const RUN_TYPES = new Set(['Run', 'TrailRun', 'VirtualRun']);
 const RIDE_TYPES = new Set(['Ride', 'VirtualRide', 'GravelRide', 'MountainBikeRide', 'EBikeRide']);
 
-/** Map one Strava SummaryActivity onto our Activity shape. */
-function mapSummaryActivity(item: any, weightKg: number): Activity {
+/** Map one Strava SummaryActivity onto our Activity shape. Exported for tests. */
+export function mapSummaryActivity(item: any, weightKg: number): Activity {
   const durationMins = item.moving_time / 60;
   // sport_type is Strava's current field; `type` is deprecated and collapses
   // TrailRun→Run etc. Prefer the precise one.
@@ -48,6 +48,13 @@ function mapSummaryActivity(item: any, weightKg: number): Activity {
     }
   }
 
+  // Strava sends [] (not null) for treadmill/trainer activities.
+  const ll = item.start_latlng;
+  const startLatlng: [number, number] | undefined =
+    Array.isArray(ll) && ll.length === 2 && Number.isFinite(ll[0]) && Number.isFinite(ll[1])
+      ? [ll[0], ll[1]]
+      : undefined;
+
   return {
     id: item.id.toString(),
     name: item.name,
@@ -73,6 +80,7 @@ function mapSummaryActivity(item: any, weightKg: number): Activity {
     kudosCount: item.kudos_count,
     trainer: item.trainer,
     gearId: item.gear_id ?? undefined,
+    startLatlng,
     polyline: item.map?.summary_polyline ?? undefined,
     photoCount: item.total_photo_count,
   };
