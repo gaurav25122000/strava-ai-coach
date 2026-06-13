@@ -421,7 +421,7 @@ export default function SettingsScreen() {
 
         {/* ---------- Account ---------- */}
         <StaggerItem index={0}>
-          <WidgetCard family="plan" title="Account" icon={Link2} caption="Strava connection">
+          <WidgetCard family="plan" title="Account" icon={Link2} caption={activitySource === 'health' ? healthSourceLabel() : 'Strava connection'}>
             <View style={styles.inputGroup}>
               <Typography style={styles.label}>Activity Data Source</Typography>
               <SegmentedControl<'strava' | 'health'>
@@ -435,59 +435,31 @@ export default function SettingsScreen() {
               />
             </View>
 
-            <View style={styles.infoBox}>
-              <Typography style={styles.infoText}>
-                1. Go to Strava Settings {'>'} API{'\n'}
-                2. Create an App{'\n'}
-                3. Set Callback Domain to "localhost"{'\n'}
-                4. Copy Client ID & Secret below
-              </Typography>
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Typography style={styles.label}>Client ID</Typography>
-              <TextInput
-                style={styles.input}
-                value={settings.stravaClientId}
-                onChangeText={(text) => updateSettings({ stravaClientId: text })}
-                placeholder="Enter Strava Client ID"
-                placeholderTextColor={theme.colors.textSecondary}
-                autoCapitalize="none"
-              />
-            </View>
-            <View style={styles.inputGroup}>
-              <Typography style={styles.label}>Client Secret</Typography>
-              <TextInput
-                style={styles.input}
-                value={clientSecret}
-                onChangeText={setClientSecret}
-                onEndEditing={() => persistSecret('stravaClientSecret', clientSecret)}
-                placeholder="Enter Strava Client Secret"
-                placeholderTextColor={theme.colors.textSecondary}
-                secureTextEntry
-                autoCapitalize="none"
-              />
-              <Typography style={styles.secureNote}>Stored securely on this device</Typography>
-            </View>
-
-            <Button
-              title={syncing ? 'Syncing…' : isAuthenticated ? 'Sync Activities' : 'Connect Strava'}
-              icon={isAuthenticated ? RefreshCw : Link2}
-              loading={syncing}
-              disabled={!settings.stravaClientId || !clientSecret || fullSyncing}
-              fullWidth
-              onPress={() => (isAuthenticated ? syncStrava() : handleStravaConnect())}
-              style={{ marginTop: 8 }}
-            />
-
-            {isAuthenticated && (
+            {activitySource === 'health' ? (
+              // Health source needs no account/API keys — hide all the Strava
+              // connection setup and just say where the data comes from.
               <>
+                <View style={styles.infoBox}>
+                  <Typography style={styles.infoText}>
+                    Your workouts, heart rate and routes are read from {healthSourceLabel()}. No account or API keys needed.
+                  </Typography>
+                </View>
+
+                <Button
+                  title={syncing ? 'Syncing…' : 'Sync Now'}
+                  icon={RefreshCw}
+                  loading={syncing}
+                  disabled={fullSyncing}
+                  fullWidth
+                  onPress={syncStrava}
+                  style={{ marginTop: 8 }}
+                />
                 <View style={{ marginTop: 6 }}>
                   <SettingsRow
                     icon={RefreshCw}
                     family="plan"
                     label="Full Re-sync"
-                    caption="Re-download your entire history (picks up deletions)"
+                    caption="Re-read your entire history (picks up deletions)"
                     onPress={handleFullResync}
                     disabled={fullSyncing || syncing}
                     isLast
@@ -496,14 +468,80 @@ export default function SettingsScreen() {
                       : undefined}
                   />
                 </View>
+              </>
+            ) : (
+              <>
+                <View style={styles.infoBox}>
+                  <Typography style={styles.infoText}>
+                    1. Go to Strava Settings {'>'} API{'\n'}
+                    2. Create an App{'\n'}
+                    3. Set Callback Domain to "localhost"{'\n'}
+                    4. Copy Client ID & Secret below
+                  </Typography>
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Typography style={styles.label}>Client ID</Typography>
+                  <TextInput
+                    style={styles.input}
+                    value={settings.stravaClientId}
+                    onChangeText={(text) => updateSettings({ stravaClientId: text })}
+                    placeholder="Enter Strava Client ID"
+                    placeholderTextColor={theme.colors.textSecondary}
+                    autoCapitalize="none"
+                  />
+                </View>
+                <View style={styles.inputGroup}>
+                  <Typography style={styles.label}>Client Secret</Typography>
+                  <TextInput
+                    style={styles.input}
+                    value={clientSecret}
+                    onChangeText={setClientSecret}
+                    onEndEditing={() => persistSecret('stravaClientSecret', clientSecret)}
+                    placeholder="Enter Strava Client Secret"
+                    placeholderTextColor={theme.colors.textSecondary}
+                    secureTextEntry
+                    autoCapitalize="none"
+                  />
+                  <Typography style={styles.secureNote}>Stored securely on this device</Typography>
+                </View>
+
                 <Button
-                  title="Disconnect Strava"
-                  variant="destructive"
-                  icon={Unplug}
+                  title={syncing ? 'Syncing…' : isAuthenticated ? 'Sync Activities' : 'Connect Strava'}
+                  icon={isAuthenticated ? RefreshCw : Link2}
+                  loading={syncing}
+                  disabled={!settings.stravaClientId || !clientSecret || fullSyncing}
                   fullWidth
-                  onPress={() => setConfirmDisconnect(true)}
-                  style={{ marginTop: 6 }}
+                  onPress={() => (isAuthenticated ? syncStrava() : handleStravaConnect())}
+                  style={{ marginTop: 8 }}
                 />
+
+                {isAuthenticated && (
+                  <>
+                    <View style={{ marginTop: 6 }}>
+                      <SettingsRow
+                        icon={RefreshCw}
+                        family="plan"
+                        label="Full Re-sync"
+                        caption="Re-download your entire history (picks up deletions)"
+                        onPress={handleFullResync}
+                        disabled={fullSyncing || syncing}
+                        isLast
+                        right={fullSyncing
+                          ? <ActivityIndicator size="small" color={familyStyle('plan').accent} />
+                          : undefined}
+                      />
+                    </View>
+                    <Button
+                      title="Disconnect Strava"
+                      variant="destructive"
+                      icon={Unplug}
+                      fullWidth
+                      onPress={() => setConfirmDisconnect(true)}
+                      style={{ marginTop: 6 }}
+                    />
+                  </>
+                )}
               </>
             )}
           </WidgetCard>
