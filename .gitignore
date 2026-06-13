@@ -1,9 +1,6 @@
 node_modules/
-ios/build/
-ios/Pods/
-android/build/
-android/app/build/
-android/.gradle/
+ios/
+android/
 dist/
 web_start.log
 web_start.pid
