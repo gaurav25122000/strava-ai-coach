@@ -521,7 +521,9 @@ async function syncIOS(fullResync: boolean): Promise<HealthSyncBatch | 'unavaila
 
 // ── Android internals ────────────────────────────────────────────────────────
 
-const HC_PERMISSIONS = [
+// Regular data-type read permissions — these are what the consent screen
+// actually grants.
+const HC_DATA_PERMISSIONS = [
   { accessType: 'read', recordType: 'ExerciseSession' },
   { accessType: 'read', recordType: 'HeartRate' },
   { accessType: 'read', recordType: 'Distance' },
@@ -532,30 +534,39 @@ const HC_PERMISSIONS = [
   { accessType: 'read', recordType: 'Vo2Max' },
   { accessType: 'read', recordType: 'ActiveCaloriesBurned' },
   { accessType: 'read', recordType: 'Steps' },
-  // Full-history requirement: without this, Health Connect only serves the
-  // last 30 days. Background reads similarly need their own grant.
+];
+
+// "Additional access" permissions. Health Connect REJECTS the entire consent
+// screen (it launches and self-finishes in ~10ms with an empty grant) if these
+// are mixed into the first-time data request — they must be requested on their
+// own, after at least one data permission is already granted. Without HISTORY
+// reads are capped at 30 days; BACKGROUND covers headless reads. Both are
+// best-effort: a dismissal here must never block the core grant.
+const HC_EXTRA_PERMISSIONS = [
   { accessType: 'read', recordType: 'ReadHealthDataHistory' },
   { accessType: 'read', recordType: 'BackgroundAccessPermission' },
 ];
 
 async function hcRequestPermissions(hc: any): Promise<boolean> {
+  let granted: any[];
   try {
-    const granted = await hc.requestPermission(HC_PERMISSIONS);
-    return (granted ?? []).some(
-      (p: any) => p.recordType === 'ExerciseSession' && p.accessType === 'read',
-    );
+    granted = (await hc.requestPermission(HC_DATA_PERMISSIONS)) ?? [];
   } catch {
-    // Special permissions (history/background) can reject on older providers —
-    // retry with just the data permissions.
-    try {
-      const granted = await hc.requestPermission(HC_PERMISSIONS.slice(0, -2));
-      return (granted ?? []).some(
-        (p: any) => p.recordType === 'ExerciseSession' && p.accessType === 'read',
-      );
-    } catch {
-      return false;
-    }
+    return false;
   }
+  const ok = granted.some(
+    (p: any) => p.recordType === 'ExerciseSession' && p.accessType === 'read',
+  );
+  if (!ok) return false;
+
+  // Now that a data permission exists, extend coverage to history (>30 days)
+  // and background reads in a SEPARATE request. Swallow any rejection — these
+  // are enhancements, not gates.
+  try {
+    await hc.requestPermission(HC_EXTRA_PERMISSIONS);
+  } catch { /* history/background unavailable — degrade to 30-day foreground */ }
+
+  return true;
 }
 
 async function syncAndroid(fullResync: boolean): Promise<HealthSyncBatch | 'unavailable'> {
